@@ -49,7 +49,6 @@ Clone the repository:
 ```bash
 cd ~
 git clone https://github.com/toshiyuki/TEAL.git
-cd ~/TEAL
 
 ```
 
@@ -65,13 +64,14 @@ tar -xf linux-6.8.12.tar.xz
 cp -r ~/TEAL/kernel/security/teal ~/linux-6.8.12/security/
 cp -r ~/TEAL/kernel/include/linux ~/linux-6.8.12/include/
 
+cd ~/linux-6.8.12/
 ```
 
 Register TEAL with the kernel build system (Kbuild):
 
-* Append to **`security/Kconfig`**:
+* Edit and append to **`security/Kconfig`**:
 `source "security/teal/Kconfig"`
-* Append to the LSM list in **`security/Makefile`**:
+* Edit and append to the LSM list in **`security/Makefile`**:
 `obj-$(CONFIG_SECURITY_TEAL) += teal/`
 
 Force the Rust version to `1.74.1` for **both the source and external build directories**. The C compiler will use **LLVM 17** to match the Rust backend.
@@ -128,18 +128,17 @@ make LLVM=-17 O=../kernel_build_v6.8 -j$(nproc)
 #### Install Kernel and Modules
 
 Install the compiled kernel and modules, then update the GRUB bootloader.
-*Note: We explicitly grant execution permissions to the signing script to avoid permission errors common on Ubuntu.*
 
 ```bash
-# Grant execution permission to the signing script
-chmod +x ../kernel_build_v6.8/debian/scripts/sign-module
-
 # Install modules
-sudo make O=../kernel_build_v6.8 modules_install
+# Using LLVM=17 ensures consistency with the build environment
+sudo make LLVM=-17 O=../kernel_build_v6.8 modules_install
 
-# Install kernel and update GRUB
-sudo make O=../kernel_build_v6.8 install
+# Install kernel
+sudo make LLVM=-17 O=../kernel_build_v6.8 install
 
+# Update GRUB to recognize the new kernel
+sudo update-grub
 ```
 
 #### Build and Install the `teald` Daemon
