@@ -1,0 +1,18 @@
+[package]
+name = "teal_policy_engine"
+version = "0.5.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+globset = "0.4"
+
+# JSON Schema validator（どちらか選択）
+jsonschema = "0.17"   # 例
+# あるいは valico 等でも可
+
+nix = { version = "0.28", features = ["user"] }
+libc = "0.2"
