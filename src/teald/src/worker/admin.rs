@@ -1,5 +1,9 @@
-// src/worker/admin.rs
-
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use std::collections::{HashMap, HashSet};
