@@ -1,5 +1,9 @@
-// teald/src/verify/checker_alloy.rs
-
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use std::collections::HashMap;
 use std::io::Write;
 use std::io::Read;
