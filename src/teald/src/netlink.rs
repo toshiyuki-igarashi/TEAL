@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use anyhow::Result;
 use neli::consts::genl::{Cmd, NlAttrType};
 use neli::consts::nl::{NlmF, NlmFFlags};
