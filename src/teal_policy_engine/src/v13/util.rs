@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use nix::unistd::{Uid, User};
 use anyhow::{Context, Result};
 use std::borrow::Cow;
