@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * TEAL (Trusted Execution Analysis Layer) LSM
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 #include <linux/sched/mm.h>
 #include <linux/lsm_hooks.h>
 #include <linux/security.h>
