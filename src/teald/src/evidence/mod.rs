@@ -1,4 +1,9 @@
-// src/evidence/mod.rs
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 pub mod schema;
 mod context;
 mod storage;
