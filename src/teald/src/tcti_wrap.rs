@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use tss_esapi::tss2_esys::{TSS2_RC, TSS2_TCTI_CONTEXT, size_t};
