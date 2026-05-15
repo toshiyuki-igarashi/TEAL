@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * TEAL (Trusted Execution Analysis Layer) LSM
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 //! TEAL Integrated Kernel Module
 //! Role: Decision Maker Logic Only (Infrastructure is handled by C-LSM)
 
