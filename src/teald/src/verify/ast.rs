@@ -1,5 +1,9 @@
-// teald/src/verify/ast.rs
-
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use serde::Serialize;
 use std::collections::HashSet;
 use teal_policy_engine::types::Effect;
