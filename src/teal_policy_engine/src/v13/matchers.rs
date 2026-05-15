@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use std::path::Path;
 
 use crate::ir::{CompiledRule, AccessContext, SubjectMatcher, ObjectMatcher, ActionMatcher, PathMatcher, Action, ObjectKind};
