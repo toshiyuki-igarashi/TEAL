@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use crate::matchers::rule_matches;
 use crate::ir::{CompiledPolicy, AccessContext, Decision};
 
