@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use teal_policy_engine::ir::Action;
 
 pub fn u32_to_str(op: u32) -> String {
