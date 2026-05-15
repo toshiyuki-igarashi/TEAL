@@ -1,0 +1,52 @@
+[package]
+name = "teald"
+version = "0.5.0"
+edition = "2021"
+
+[[bin]]
+name = "teald"
+path = "src/main.rs"
+
+[[bin]]
+name = "teal-cli"
+path = "src/cli.rs"
+
+[[bin]]
+name = "teal-logview"
+path = "src/logview.rs"
+
+[[bin]]
+name = "teal-bench"
+path = "src/bench.rs"
+
+[dependencies]
+anyhow = "1.0"              # エラーハンドリング (初期化時のファイルオープン失敗などの処理)
+serde = { version = "1.0", features = ["derive"] }      # JSONのシリアライズ・デシリアライズ
+serde_json = "1.0"
+hex = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+hmac = "0.12"
+rand = "=0.8.5"
+rand_core = "0.6"
+ed25519-dalek = { version = "=2.1.1", features = ["rand_core"] }
+blst = { version = "0.3", features = ["portable"] }     # blst: 高速かつ安全なBLS12-381実装
+base64ct = "=1.5.1"
+tiny_http = "0.12"          # 軽量HTTPサーバー
+aes-gcm = "0.10"            # 高速暗号化用
+tss-esapi = "7.6.0"
+tokio = { version = "1.48.0", features = ["full"] }
+libc = "0.2"
+teal_policy_engine = { path = "../teal_policy_engine" }
+nix = { version = "0.28", features = ["user"] }
+uuid = { version = "1.10", features = ["v4", "serde"] } # 監査ID (UUID v7/v4対応)
+chrono = { version = "0.4", features = ["serde"] }      # 時刻操作 (ISO 8601 / Utc対応)
+hostname = "0.3"
+clap = { version = "4.4", features = ["derive"] }       # CLI引数のパース (derive機能を使用)
+humantime = "2.3.0"
+neli = { version = "0.6.4", features = ["async"] }
+futures = "0.3"
+serde_yaml = "0.9"          # CLI: ゴール定義(YAML)のパース用
+quick-xml = "0.31"          # Alloy XMLの高速パース用
+glob = "0.3"                # Rust側でのパスパターン解決用
+colored = "2.1"             # レポートの装飾用
+tempfile = "3.8"            # 一時的な .als / .xml ファイル管理用
