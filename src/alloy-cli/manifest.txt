@@ -1,0 +1,2 @@
+Main-Class: AlloyCli
+Class-Path: alloy.jar
