@@ -1,0 +1,7 @@
+config SECURITY_TEAL
+	bool "TEAL Integrated LSM support"
+	depends on SECURITY
+	depends on RUST
+	default n
+	help
+	  Enables the TEAL (Trust-Enhanced Adaptive Layer) LSM.
