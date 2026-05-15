@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL (Trusted Execution Analysis Layer)
+ * Alloy Policy Validator CLI
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 import edu.mit.csail.sdg.alloy4.A4Reporter;
 import edu.mit.csail.sdg.ast.Command;
 import edu.mit.csail.sdg.ast.Module;
