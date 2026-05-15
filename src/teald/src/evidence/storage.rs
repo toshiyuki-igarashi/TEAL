@@ -1,4 +1,9 @@
-// src/evidence/storage.rs
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write, BufWriter};
 use std::sync::{RwLock, OnceLock, RwLockWriteGuard};
