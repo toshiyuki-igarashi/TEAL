@@ -2,9 +2,11 @@
 
 This guide intentionally pins the build environment instead of supporting arbitrary kernel/Rust/bindgen combinations.
 It has been verified with Ubuntu 24.04 LTS, Linux 6.8.12, LLVM/Clang 17, rustc 1.74.1, and the distribution-provided `rust-bindgen`.
-Before building the kernel, run:
+Before building the kernel, run the following command from the top-level Linux kernel source tree.  
+The `O=../kernel_build_v6.8` option points to the external kernel build output directory.
 
 ```bash
+cd ~/linux-6.8.12/
 make LLVM=-17 O=../kernel_build_v6.8 rustavailable
 ```
 
