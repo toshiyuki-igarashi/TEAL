@@ -40,8 +40,8 @@ Next, install rustup via the official installer to manage the Rust toolchain. Wh
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 . "$HOME/.cargo/env"
-rustup install 1.74.1
-rustup default 1.74.1
+rustup install stable
+rustup default stable
 ```
 
 Clone the repository:
