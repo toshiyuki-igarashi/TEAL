@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 //! TEAL Admin/MPA/Ticket 発行（そのまま貼れる最小実装）
 //!
 //! 前提：
