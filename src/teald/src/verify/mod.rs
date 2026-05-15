@@ -1,5 +1,9 @@
-// src/verify/mod.rs
-
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 pub mod ast;
 pub mod transpiler_alloy;
 pub mod checker_alloy;
