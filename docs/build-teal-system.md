@@ -27,13 +27,21 @@ TEAL is implemented as an experimental Linux Security Module (LSM) integrated in
 
 ### 2 Installation
 
-First, install the necessary build tools:
+First, install the necessary build tools (excluding Rust):
 
 ```bash
 sudo apt update
 sudo apt install -y \
   build-essential bc bison flex libssl-dev libelf-dev dwarves \
-  clang-17 llvm-17 lld-17 rustup curl wget git
+  clang-17 llvm-17 lld-17 curl wget git
+```
+Next, install rustup via the official installer to manage the Rust toolchain. When prompted, choose "1) Proceed with installation (default)".
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+. "$HOME/.cargo/env"
+rustup install 1.74.1
+rustup default 1.74.1
 ```
 
 Clone the repository:
