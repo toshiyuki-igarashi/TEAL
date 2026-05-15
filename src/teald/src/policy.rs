@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashSet;
 use std::path::Path;
