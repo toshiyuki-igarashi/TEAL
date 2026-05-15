@@ -1,4 +1,9 @@
-// src/worker/audit.rs
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use tokio::sync::mpsc;
 use anyhow::Result;
 use std::fs;
