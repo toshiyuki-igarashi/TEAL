@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom, IsTerminal, Read};
 use std::path::Path;
