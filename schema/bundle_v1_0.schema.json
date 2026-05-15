@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "policy_files"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "policy_files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*\\.json$"
+      }
+    }
+  }
+}
+

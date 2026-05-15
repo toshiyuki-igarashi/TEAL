@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/teal/roles.schema.v1.0.json",
+  "title": "TEAL roles.json schema v1.0",
+  "type": "object",
+  "required": ["schema_version", "roles", "assignments", "group_assignments", "defaults"],
+  "additionalProperties": false,
+
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+
+    "roles": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/roleDef" }
+    },
+
+    "assignments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/assignment" }
+    },
+
+    "group_assignments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/groupAssignment" }
+    },
+
+    "defaults": { "$ref": "#/$defs/defaults" }
+  },
+
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+
+    "roleName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_\\-\\.]{0,63}$"
+    },
+
+    "roleDef": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/roleName" },
+        "description": { "type": "string" },
+        "tags": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "permissions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        }
+      }
+    },
+
+    "roleList": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/roleName" }
+    },
+
+    "assignment": {
+      "type": "object",
+      "required": ["roles"],
+      "additionalProperties": false,
+      "properties": {
+        "uid": { "type": "integer", "minimum": 0 },
+        "user": { "$ref": "#/$defs/nonEmptyString" },
+        "roles": { "$ref": "#/$defs/roleList" }
+      },
+      "anyOf": [
+        { "required": ["uid"] },
+        { "required": ["user"] }
+      ]
+    },
+
+    "groupAssignment": {
+      "type": "object",
+      "required": ["roles"],
+      "additionalProperties": false,
+      "properties": {
+        "gid": { "type": "integer", "minimum": 0 },
+        "group": { "$ref": "#/$defs/nonEmptyString" },
+        "roles": { "$ref": "#/$defs/roleList" }
+      },
+      "anyOf": [
+        { "required": ["gid"] },
+        { "required": ["group"] }
+      ]
+    },
+
+    "defaults": {
+      "type": "object",
+      "required": ["roles_for_unknown_user", "deny_if_role_unknown"],
+      "additionalProperties": false,
+      "properties": {
+        "roles_for_unknown_user": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/roleName" }
+        },
+        "deny_if_role_unknown": { "type": "boolean" }
+      }
+    }
+  }
+}
+
