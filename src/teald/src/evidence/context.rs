@@ -1,4 +1,9 @@
-// src/evidence/context.rs
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use std::fs;
 
 pub struct ContextResolver;
