@@ -1,5 +1,9 @@
-// teald/src/verify/transpiler_alloy.rs
-
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
 use std::collections::{HashSet, HashMap};
 use std::fmt::Write;
 use crate::verify::ast::{TealIrModel, IrExpr, IrTerm, IrAssertion};
