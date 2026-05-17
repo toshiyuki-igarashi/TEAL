@@ -155,6 +155,143 @@ sudo install -o root -g root -m 0755 target/release/teal-bench /usr/local/bin/
 
 ```
 
+#### Initialize Configuration Directory & Skeleton Files
+
+Before starting the daemon, the required configuration paths and fixed skeleton files must exist to prevent the core parser from failing on startup.
+
+> **NOTICE:** The following configuration files deploy a pragmatic reference scenario where the root user (`admin`) can control execution states, but engine termination (`stop`) mandates Multi-Party Authorization (MPA) from a Security Officer. **Please adjust these logic structure values according to your specific target deployment system environment and organizational controls.** All generated skeletons strictly conform to TEAL v1.0 and v1.3 strict validation schemas.
+
+```bash
+# Create the structural hierarchy
+sudo mkdir -p /etc/teal.d/policies
+sudo mkdir -p /etc/teal.d/roles
+
+# 1. Deploy Management Policy (Enforces teal-cli start/stop & MPA conditions)
+sudo tee /etc/teal.d/management.json >/dev/null <<'EOF'
+{
+  "roles": [
+    {
+      "name": "admin",
+      "uids": [0],
+      "description": "System Root Administrator"
+    },
+    {
+      "name": "security_officer",
+      "uids": [1000],
+      "description": "Designated Operational Security Approver"
+    }
+  ],
+  "controls": {
+    "start": {
+      "description": "Initiate TEAL core execution engine",
+      "initiator_roles": ["admin"],
+      "mpa": {
+        "enabled": false
+      }
+    },
+    "stop": {
+      "description": "Terminate TEAL core execution engine protection loop",
+      "initiator_roles": ["admin"],
+      "mpa": {
+        "enabled": true,
+        "threshold": 1,
+        "approver_roles": ["security_officer"],
+        "timeout_minutes": 30
+      }
+    }
+  }
+}
+EOF
+
+# 2. Deploy Bundle Entrypoint Loader (Conforms to bundle_v1_0.schema.json)
+sudo tee /etc/teal.d/bundle.json >/dev/null <<'EOF'
+{
+  "schema_version": "1.0",
+  "name": "PoC Baseline Bundle",
+  "policy_files": [
+    "00-base.json"
+  ]
+}
+EOF
+
+# 3. Initialize Roles Map Definition (Conforms to roles_v1_0.schema.json)
+sudo tee /etc/teal.d/roles/roles.json >/dev/null <<'EOF'
+{
+  "schema_version": "1.0",
+  "roles": [
+    {
+      "name": "default_user_role",
+      "description": "Baseline unprivileged execution domain",
+      "tags": ["standard"],
+      "permissions": ["generic_read"]
+    }
+  ],
+  "assignments": [],
+  "group_assignments": [],
+  "defaults": {
+    "roles_for_unknown_user": [
+      "default_user_role"
+    ],
+    "deny_if_role_unknown": false
+  }
+}
+EOF
+
+# 4. Deploy Base Policy Rule Example (Conforms to policy_v1_3.schema.json)
+sudo tee /etc/teal.d/policies/00-base.json >/dev/null <<'EOF'
+{
+  "version": "1.3",
+  "ttl_minutes": 60,
+  "sweep_minutes": 10,
+  "rules": [
+    {
+      "id": "rule-protect-shadow-file",
+      "rule_type": "standard",
+      "subject": {},
+      "object": {
+        "path": "/etc/shadow"
+      },
+      "action": {
+        "ops": ["file_read"]
+      },
+      "effect": "need_approval",
+      "required_roles": [
+        "security_officer"
+      ],
+      "threshold": 1,
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true
+      }
+    }
+  ]
+}
+EOF
+
+```
+
+##### Configuration & Policy Directory Structure
+
+TEAL processes rules using a structured, multi-layered directory design. Except for individual dynamic policy files inside the sub-directories, **all core file and directory names are strictly fixed**.
+
+```text
+/etc/teal.d/
+├── bundle.json          # FIXED: Top-level entrypoint mapping active policy targets [schema v1.0]
+├── management.json      # FIXED: Management Governance Policy (Governs teal-cli start/stop & MPA)
+├── policies/            # FIXED: Target storage directory for granular policy rules
+│   └── 00-base.json     # DYNAMIC: Arbitrary policy file specified inside bundle.json array [schema v1.3]
+└── roles/               # FIXED: Target storage directory for system user roles mapping
+    └── roles.json       # FIXED: Standard role assignments registry file [schema v1.0]
+
+```
+
+##### Configuration Component Definitions
+
+* **`bundle.json` (Fixed Name):** The foundational configuration loader validation profile. It specifies the schema version tracking metadata along with an array list of target JSON files stored within the `policies/` directory that must be dynamically interpreted and locked into the engine state.
+* **`management.json` (Fixed Name):** **The Management Governance Policy.** This crucial file controls the execution authorization for administrative commands (`teal-cli start` and `teal-cli stop`). It explicitly defines which system UIDs map to administrative management roles, who can initiate state changes, and what Multi-Party Authorization (MPA) thresholds (e.g., specific approver roles and quorum size) are required to execute them.
+* **`policies/` Directory:** Holds your granular runtime interception domain logic. Files here use arbitrary string names matching the schema constraints (e.g., `00-base.json`), specified by their direct names within the `bundle.json` targets tracking array.
+* **`roles/roles.json` (Fixed Path & Name):** Defines administrative Subject-to-Role mappings, system assignment constraints, default roles for unmapped system entities, and fallback enforcement modes.
+
 #### Create a systemd Service for `teald`
 
 Create a systemd unit file for the `teald` authorization daemon:
@@ -168,7 +305,7 @@ After=network.target
 [Service]
 Type=simple
 ExecStart=/usr/local/sbin/teald
-Restart=on-failure
+Restart=always
 RestartSec=2
 User=root
 Group=root
@@ -178,12 +315,9 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable teald
-sudo systemctl start teald
+sudo systemctl enable --now teald
+
 ```
-
-Make sure that the TEAL policy/configuration files are installed before starting the service.
-
 
 ### 3 Starting the Daemon
 
