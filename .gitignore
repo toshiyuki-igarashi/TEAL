@@ -32,3 +32,7 @@ target
 *.order
 .tmp_versions/
 .*.cmd
+
+# TEAL Alloy CLI Build Artifacts and Dependencies
+src/alloy-cli/*.class
+src/alloy-cli/*.jar
