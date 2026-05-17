@@ -21,7 +21,7 @@ This document bypasses enterprise-grade identity federation configurations to fo
 
 Before using this guide, **the TEAL kernel module, user-space daemon (`teald`), and management CLI utilities must be fully compiled and installed on your host system.** If you have not yet compiled the custom kernel or configured the baseline systemd units, please follow the comprehensive step-by-step documentation in the build deployment framework guide:
 
-👉 **[TEAL System Build & Compilation Guide (build-teal-system.md)](../build-teal-system.md)**
+👉 **[TEAL System Build & Compilation Guide (build-teal-system.md)](./build-teal-system.md)**
 
 Once you have successfully executed the kernel build, verified `make rustavailable` passes under LLVM 17 / Rust 1.74.1, and activated the service layer via `systemctl enable --now teald`, return here to begin live runtime policy deployment.
 
