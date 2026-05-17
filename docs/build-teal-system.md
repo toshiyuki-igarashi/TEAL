@@ -252,7 +252,7 @@ sudo tee /etc/teal.d/policies/00-base.json >/dev/null <<'EOF'
         "path": "/etc/shadow"
       },
       "action": {
-        "ops": ["file_read"]
+        "ops": ["READ"]
       },
       "effect": "need_approval",
       "required_roles": [
