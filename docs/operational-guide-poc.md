@@ -23,7 +23,7 @@ Before using this guide, **the TEAL kernel module, user-space daemon (`teald`), 
 
 👉 **[TEAL System Build & Compilation Guide (build-teal-system.md)](./build-teal-system.md)**
 
-Once you have successfully executed the kernel build, verified `make rustavailable` passes under LLVM 17 / Rust 1.74.1, and activated the service layer via `systemctl enable --now teald`, return here to begin live runtime policy deployment.
+Once you have successfully executed the system build setup and confirmed that the authorization daemon layer is fully running (`systemctl enable --now teald`), return here to begin live runtime policy deployment.
 
 ### 2.1 Configuration & Policy Directory Structure
 
