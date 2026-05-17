@@ -86,25 +86,24 @@ Under the hood, the OS kernel has intercepted the read system call via the TEAL 
 
 ### Step 4: Human-in-the-Loop Authorization
 
-Return to your **primary terminal**. Check the pending authorization queue:
+Return to your **primary terminal**. Check the pending authorization queue using the standard tracking list matrix:
 
 ```bash
-teal-cli pending
+teal-cli list
 
 ```
 
 *Output Example:*
 
 ```text
-[ID: 1042] Process 'cat' (PID: 8543, UID: 0) requested file_read on /etc/shadow.
-Status: PENDING_APPROVAL (Process suspended in kernel)
+ID: 237 | PID: 87 | Target: /etc/shadow | Status: false | Reason: NEED APPROVAL by rule=rule-protect-shadow-file | MPA: 0/1 | Roles: {"security_officer"}
 
 ```
 
-Approve the pending operation:
+Approve the pending operation using the matched tracking ID token:
 
 ```bash
-teal-cli approve 1042
+teal-cli approve 237
 
 ```
 
