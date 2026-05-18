@@ -263,3 +263,20 @@ In TEAL’s zero-trust execution control architecture, the policy (access rule-s
 
 This demonstration illustrates the automated verification pipeline leveraging the Alloy transpiler and SAT solver embedded within TEAL’s companion CLI utility (`teal-cli verify`). This workflow mathematically evaluates whether a defined deployment policy strictly aligns with the system administrator's security intent (Goals) or if it introduces logical inconsistencies.
 
+#### B.2 Verification Scenario and Input Data
+
+The verification scenario populates the Alloy analysis pipeline using the target "Security Policy (JSON)" alongside the definitive "Security Goals (YAML)."
+
+**1. Target Security Policy (`test_policy.json`) Excerpt**
+The active policy plane contains three distinct rules configured to balance administrative capability with active malware containment:
+
+* `rule-allow-admin-read`: Permits subjects assigned the `admin` role to execute `READ` operations against `/etc/shadow`.
+* `rule-deny-malware`: Denies `READ`/`WRITE` access to `/etc/shadow` for any process originating from the `/tmp/malware` binary path.
+* `rule-lockdown-vault`: Denies access to `/secure/vault` for any subject assigned the `guest` role.
+
+**2. Verification Goals (`test_goal.yaml`)**
+These objectives represent the absolute system invariants defined by the security architect that must hold true across all possible execution contexts:
+
+* **Goal 1:** The `/secure/vault` resource directory must be unconditionally protected from unauthorized access.
+* **Goal 2:** Any process originating from `/tmp/malware` must be strictly prevented from executing a `READ` operation against `/etc/shadow`—even if the process operates under an active execution context that has assumed the `admin` role.
+
