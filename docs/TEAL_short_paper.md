@@ -255,3 +255,11 @@ The TLA+ specifications were evaluated using the TLC Model Checker (Version 2.19
 #### A.5 Conclusion
 
 This formal verification does not represent an exhaustive mathematical proof of the entire TEAL software stack. The scope of the specification is deliberately restricted to an abstract state-machine modeling the MPA approval counter, system authorization status, and ticket consumption lifecycles. Within this boundaries, the TLC model checker rigorously demonstrated that foundational safety violations—such as unauthorized transitions below the approval threshold, re-activation of consumed tickets, or data inconsistencies regarding the usage flag—are completely impossible. These model-driven results serve as a rigorous architectural baseline to preemptively eliminate logical deadlocks and race conditions prior to low-level implementation.
+### Appendix B: Demonstration of Policy Inconsistency Detection via Alloy
+
+#### B.1 Demonstration Objectives
+
+In TEAL’s zero-trust execution control architecture, the policy (access rule-set) forms the absolute foundation of the system's security posture. However, as infrastructure complexity scales, unintended privilege leakages caused by "conflicting rules," "configuration ordering errors," or "unintended attribute combinations" (commonly known as Shadowed or Conflicting Rules) become notoriously difficult to detect through manual human code reviews alone.
+
+This demonstration illustrates the automated verification pipeline leveraging the Alloy transpiler and SAT solver embedded within TEAL’s companion CLI utility (`teal-cli verify`). This workflow mathematically evaluates whether a defined deployment policy strictly aligns with the system administrator's security intent (Goals) or if it introduces logical inconsistencies.
+
