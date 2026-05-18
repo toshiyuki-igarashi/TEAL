@@ -229,3 +229,15 @@ Within the scope of this abstract specification, there exists no valid state tra
 
 $$\text{Safety} \triangleq (status \in \{\text{"Approved", "Consumed"}\}) \implies (approvals \geq Threshold)$$
 
+##### 2. Double-Spend Prevention
+
+Within this abstract specification, any state wherein a ticket has transitioned to the `Consumed` state without the invalidation flag being simultaneously true is strictly unreachable.
+
+$$\text{NoDoubleSpend} \triangleq (status = \text{"Consumed"}) \implies (ticket\_used = \text{TRUE})$$
+
+##### 3. Irreversibility of State Transitions (Temporal Property)
+
+Utilizing Linear Temporal Logic (LTL), we verified that once a ticket enters the `Consumed` state, it can never regress back to the `Approved` state through any subsequent state transitions defined within the model.
+
+$$\text{ConsumedIsIrreversible} \triangleq \Box(status = \text{"Consumed"} \implies \Box(status \neq \text{"Approved"}))$$
+
