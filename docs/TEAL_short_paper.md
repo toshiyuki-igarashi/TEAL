@@ -65,3 +65,7 @@ It is critical to note that Human-Gated Execution is not designed to naively dem
 
 While a standard attack lifecycle spans from Initial Access all the way to Impact, the most critical junctions reside in the final three steps: **Collection ➔ Exfiltration ➔ Impact**. TEAL focuses its architectural enforcement explicitly on severing this "Actions on Objectives" phase.
 
+#### 2.2 Positioning as a Post-LPE Mitigation: A CVE Case Study
+
+As demonstrated by recent Linux Local Privilege Escalation (LPE) exploits, vulnerabilities that allow transitions from unprivileged user access to elevated privileges continue to emerge invariably. CVE-2026-31431 ("Copy Fail") serves as a prime example. The core thesis of TEAL is not to preemptively block this class of LPE vulnerabilities themselves. Rather, its objective is to establish a secondary gating architecture within the OS execution control layer, intercepting the subsequent, high-impact actions an adversary attempts post-LPE—such as reading sensitive files, tampering with system configurations, establishing outbound data transmissions, or executing destructive operations.
+
