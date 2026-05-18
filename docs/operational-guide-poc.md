@@ -139,25 +139,20 @@ TEAL uses a declarative JSON format inside `/etc/teal.d/policies/` to map out ru
 
 ---
 
-## 5. Optional: Build Alloy-based Policy Verifier
+## 5. Optional: Policy Logical Verification (Alloy-based)
 
-For advanced evaluation environments requiring formal verification of target execution paths, compile the native Java-based Alloy specification runtime CLI tool:
+TEAL supports formal logical verification of your JSON policies using the Alloy Analyzer to detect rule conflicts, dead rules, or missing constraints before deploying them into enforcement mode.
+
+### Prerequisites & Toolchain Setup
+To use the verification command (`teal-cli verify`), you must have the Alloy toolchain component compiled and configured in your environment.
+
+Please refer to the detailed toolchain construction steps in [System Build Guide](./build-teal-system.md#alloy-toolchain-installation) to download Alloy v6.2.0, generate the required JAR files, and export the `TEAL_ALLOY_JAR` path.
+
+### Execution Example
+Once the toolchain setup is verified, you can run the logical verification against your sample policy:
 
 ```bash
-cd ~/TEAL/src/alloy-cli
-wget [https://github.com/AlloyTools/org.alloytools.alloy/releases/download/v6.2.0/org.alloytools.alloy.dist.jar](https://github.com/AlloyTools/org.alloytools.alloy/releases/download/v6.2.0/org.alloytools.alloy.dist.jar) -O alloy.jar
-
-javac -cp alloy.jar AlloyCli.java
-jar cvfm alloy-cli.jar manifest.txt AlloyCli*.class
-
-mkdir -p $HOME/.local/lib/teal
-cp alloy-cli.jar alloy.jar $HOME/.local/lib/teal/
-
-if ! grep -q "TEAL_ALLOY_JAR" ~/.bashrc; then
-  echo 'export TEAL_ALLOY_JAR="$HOME/.local/lib/teal/alloy-cli.jar"' >> ~/.bashrc
-  source ~/.bashrc
-fi
-
+teal-cli verify examples/policies/00-base.json --goal examples/policies/goals.yaml
 ```
 
 ---
