@@ -59,3 +59,9 @@ Meanwhile, advanced integrations—including TPM state binding, FIDO2 authentica
 
 It is critical to note that Human-Gated Execution is not designed to naively demand manual human approval for every consecutive `read`, `exec`, or `write` system call. During nominal operations, the architecture issues short-lived authorization tickets for validated subject-object-operation tuples, processing them with near-zero overhead via the in-kernel Fast Path mechanism. Active human-in-the-loop intervention is strictly restricted to vectors explicitly designated as high-risk, such as anomalous access to protected resources, alterations to privilege boundaries, runtime policy synchronization, or destructive system actions.
 
+### 2. Threat Model and the Reality of the Attack Chain
+
+#### 2.1 Attack Structure Mapping to MITRE ATT&CK
+
+While a standard attack lifecycle spans from Initial Access all the way to Impact, the most critical junctions reside in the final three steps: **Collection ➔ Exfiltration ➔ Impact**. TEAL focuses its architectural enforcement explicitly on severing this "Actions on Objectives" phase.
+
