@@ -349,3 +349,12 @@ This appendix details the macro-benchmark specifications used to evaluate the ru
 
 The core objective of this evaluation is to verify whether TEAL’s zero-trust execution control architecture can sustain commercially viable performance metrics under demanding workloads characterized by extreme process generation frequencies and heavy file I/O operations. A full compilation of the Linux kernel source tree (`make -j$(nproc)`; build targets: `bzImage modules`) was selected as the definitive stress-test workload, and the comprehensive execution latency (real time) was precisely measured.
 
+#### C.2 Evaluation Environment and Experimental Parameters
+
+The macro-benchmark was executed across the following hardware infrastructure and methodological prerequisites:
+
+* **Hardware Configuration**: Intel Core i7-8700 CPU (3.20GHz), 16GB System Memory, NVMe SSD storage.
+* **Guaranteeing Pristine Initial Conditions**: To ensure strict empirical consistency and fairness across all experimental iterations, a `make clean` primitive was explicitly executed prior to each benchmarking cycle, forcing the build engine to initiate from a state entirely devoid of historical object caches or pre-compiled build artifacts.
+* **Policy Configuration and Optimizations**: The runtime process tree originating from the parent `make` execution vertex was governed under a dedicated domain-specific security policy. This policy layer explicitly activated TEAL’s core architectural optimization mechanisms—specifically **Ticket Inheritance** (`inherit: true`) and **I/O Log Suppression** (`silent_io: true`)—to evaluate their joint impact on overall throughput performance.
+
+  
