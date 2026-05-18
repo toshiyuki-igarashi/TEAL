@@ -321,3 +321,15 @@ Root Cause Analysis:
 
 ```
 
+#### B.4 Post-Verification Analysis (Root Cause Analysis)
+
+Following the state-space exploration conducted by the SAT solver, Goal 1 was successfully verified with zero counter-examples discovered within the designated model scope. Conversely, Goal 2 triggered a definitive counter-example, exposing an unintended access path.
+
+1. **Successful Protection of the Vault (Goal 1)**
+No viable access path toward `/secure/vault` could be synthesized under any permutation of system state combinations. The security objective holds true and remains unviolated within the specified model bounds.
+2. **Discovery of a Critical Vulnerability in Shadow File Protection (Goal 2)**
+While a human administrator might intuitively assume the system is secure because a dedicated malware deny rule exists, the solver instantly generated a valid counter-example demonstrating a fatal logical bypass.
+
+* **Exposed Attack Vector**: Occurs if a privileged user operating under the `admin` role inadvertently triggers the execution of the `/tmp/malware` binary, or if an adversary successfully injects malicious payloads into a running, authorized `admin` process context.
+* **Root Cause of the Inconsistency**: The scope of `rule-allow-admin-read` is defined too broadly. Consequently, despite the explicit coexistence of the malware rejection rule, overlapping logical conditions or evaluation priority ambiguities within the policy plane allow the `READ` primitive to successfully resolve to an allowed state.
+
