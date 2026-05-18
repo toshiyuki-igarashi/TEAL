@@ -211,3 +211,21 @@ Within the safety paradigm of TEAL, the Multi-Party Authorization (MPA) workflow
 
 To optimize verification depth, this model is deliberately abstracted. It does not represent a comprehensive mathematical proof of the entire production code stack; rather, it is strictly positioned as a rigorous **architectural sanity check** to validate the foundational soundness of the MPA approval logic and ticket state transition semantics at the core of the architecture.
 
+#### A.2 Verification Model Structure
+
+The verification model, defined in `TealMPA.tla`, introduces the following state variables to abstract the asynchronous interactions between the kernel-level LSM and the user-space daemon orchestration layer:
+
+* `status`: The logical state of the enforcement system (`Pending`, `Approved`, `Consumed`).
+* `approvals`: The aggregate count of currently valid administrative approvals.
+* `ticket_used`: A boolean flag indicating ticket invalidation or expiration status.
+
+#### A.3 Verified Security Properties
+
+Utilizing the TLC Model Checker, we executed exhaustive state-space exploration to verify that the following logical invariants evaluate to true across all possible execution behaviors:
+
+##### 1. Threshold Safety (Safety Invariant)
+
+Within the scope of this abstract specification, there exists no valid state transition execution path that permits the system to enter an authorized or consumption state if the number of gathered approvals remains strictly below the required multi-party threshold ($Threshold = 2$).
+
+$$\text{Safety} \triangleq (status \in \{\text{"Approved", "Consumed"}\}) \implies (approvals \geq Threshold)$$
+
