@@ -135,3 +135,16 @@ The LSM framework facilitates **synchronous intervention** directly at the kerne
 
 In the future TEAL-NET specification, the scope of enforcement will extend beyond file system access boundaries to encompass core network operations, specifically intercepting primitives such as `connect()` and `sendmsg()`. By proactively rejecting or dropping unauthorized outbound traffic initiated by unapproved processes or routed to unvalidated destinations directly within the kernel space, the architecture aims to structurally neutralize post-compromise C2 communications and the unsanctioned exfiltration of sensitive data.
 
+
+### 6. Formal Methods: Architectural Design Check and Static Policy Verification
+
+#### 6.1 TLA+: Dynamic Verification of System Behaviors
+
+TLA+ is utilized to mathematically evaluate whether the structural design of TEAL strictly satisfies its intended safety goals by checking invariants over an abstract state-machine model. The current specification models the Multi-Party Authorization (MPA) approval workflow and the transient ticket lifecycle. Through exhaustive state-space exploration, core safety properties have been rigorously verified—specifically proving that "no execution state can transition to `START` without satisfying the designated approval threshold" and "replaying or reusing a consumed authorization ticket is strictly impossible." Future expansions of this model will encompass fork-based process generation, ticket inheritance semantics, and synchronous LSM suspension flows to formally guarantee that a process lacking an approved, unexpired ticket cannot access protected resources under any permutation of execution traces.
+
+#### 6.2 Alloy: Static Policy Verification
+
+The Alloy Analyzer is deployed to inspect user-defined JSON policies and verify that they do not introduce unintended logical gaps or hidden access paths.
+
+* **Architectural Significance**: By automatically synthesizing an abstract logical framework directly from runtime policy sets, the tooling executes rigorous completeness checks. This automated workflow enables security architects to identify and preemptively eliminate configuration-induced vulnerabilities or shadowed rules prior to deployment.
+
