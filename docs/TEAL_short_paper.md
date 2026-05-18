@@ -69,3 +69,8 @@ While a standard attack lifecycle spans from Initial Access all the way to Impac
 
 As demonstrated by recent Linux Local Privilege Escalation (LPE) exploits, vulnerabilities that allow transitions from unprivileged user access to elevated privileges continue to emerge invariably. CVE-2026-31431 ("Copy Fail") serves as a prime example. The core thesis of TEAL is not to preemptively block this class of LPE vulnerabilities themselves. Rather, its objective is to establish a secondary gating architecture within the OS execution control layer, intercepting the subsequent, high-impact actions an adversary attempts post-LPE—such as reading sensitive files, tampering with system configurations, establishing outbound data transmissions, or executing destructive operations.
 
+#### 2.3 Limitations of Contemporary Tooling
+
+* **EDR (Endpoint Detection and Response)**: While highly proficient in threat detection and post-incident response, EDR possesses inherent structural limitations when tasked with synchronously intercepting and halting `read` or `send` primitives initiated by a compromised process directly at the critical point of OS execution.
+* **SASE / IAM**: Though effective for perimeter enforcement, identity governance, and macro-level access authorization, these frameworks are completely decoupled from internal operating system mechanics. They do not provide a mechanism to intercept or govern intra-OS process activity at the kernel enforcement point to dictate which resources an active process can read or which system actions it can execute.
+  
