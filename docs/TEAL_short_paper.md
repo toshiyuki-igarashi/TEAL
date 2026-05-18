@@ -203,3 +203,11 @@ TEAL does not compromise the operational flexibility of Linux; instead, it redef
 
 What we propose is not merely another access control utility. In an era where modern IT infrastructures have grown increasingly complex, TEAL introduces a completely novel "Execution Governance Layer." It is a framework designed to directly couple human intent and multi-party consensus with the precise kernel enforcement points of the operating system, allowing humanity to finally reclaim sovereign control over its digital assets.
 
+### Appendix A: Formal Verification of TEAL Core Logic via TLA+
+
+#### A.1 Verification Objectives
+
+Within the safety paradigm of TEAL, the Multi-Party Authorization (MPA) workflow and the transient ticket lifecycle (from initial issuance to ultimate consumption) represent the most critical junctions. These mechanisms inherently exhibit non-deterministic behaviors—such as transient timeouts or arbitrary interleaving of operational sequences—that cannot be exhaustively covered through runtime testing or manual auditing alone. In this verification, we leverage the formal methods framework TLA+ to construct an abstract model of the MPA and ticket subsystems. Through exhaustive state-space exploration across all defined state transitions, we mathematically confirm that the specified safety invariants remain unviolated under all possible permutation of execution traces.
+
+To optimize verification depth, this model is deliberately abstracted. It does not represent a comprehensive mathematical proof of the entire production code stack; rather, it is strictly positioned as a rigorous **architectural sanity check** to validate the foundational soundness of the MPA approval logic and ticket state transition semantics at the core of the architecture.
+
