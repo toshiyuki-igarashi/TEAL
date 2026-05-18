@@ -107,3 +107,7 @@ Rather than generating naive audit logs, TEAL constructs structured, cryptograph
 | **eBPF / LSM-BPF** | In-Kernel Policy Evaluation | TEAL explicitly focuses on **long-duration process suspension during pending approvals** alongside stateful, ticket-cached execution workflows. |
 | **SIEM / Audit Logging** | Log Aggregation & Behavioral Analysis | TEAL integrates **verifiable "authorization evidence" as an immutable criteria** for active, real-time execution control. |
 
+#### 3.4 The Architectural Blind Spot of Independent Root Execution
+
+The proposed Kernel-MPA framework directly addresses this inherent risk embedded within the foundational design of Linux by introducing a novel enforcement boundary driven by OS-level execution control combined with Multi-Party Authorization (MPA).
+
