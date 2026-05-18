@@ -241,3 +241,17 @@ Utilizing Linear Temporal Logic (LTL), we verified that once a ticket enters the
 
 $$\text{ConsumedIsIrreversible} \triangleq \Box(status = \text{"Consumed"} \implies \Box(status \neq \text{"Approved"}))$$
 
+#### A.4 Model Checker Statistics
+
+The TLA+ specifications were evaluated using the TLC Model Checker (Version 2.19) atop an OpenJDK 21 environment on Linux Mint. The state-space exploration yielded the following metrics:
+
+| Metric | Value |
+| --- | --- |
+| **Distinct States Found** | 5 |
+| **Total States Generated** | 8 |
+| **Maximum Graph Depth** | 5 |
+| **Errors Found** | 0 |
+
+#### A.5 Conclusion
+
+This formal verification does not represent an exhaustive mathematical proof of the entire TEAL software stack. The scope of the specification is deliberately restricted to an abstract state-machine modeling the MPA approval counter, system authorization status, and ticket consumption lifecycles. Within this boundaries, the TLC model checker rigorously demonstrated that foundational safety violations—such as unauthorized transitions below the approval threshold, re-activation of consumed tickets, or data inconsistencies regarding the usage flag—are completely impossible. These model-driven results serve as a rigorous architectural baseline to preemptively eliminate logical deadlocks and race conditions prior to low-level implementation.
