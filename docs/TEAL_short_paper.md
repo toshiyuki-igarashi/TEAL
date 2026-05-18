@@ -88,3 +88,14 @@ The primary objective is to suspend a process while preserving the exact pre-exe
 
 While the Alpha implementation adopts an LKM approach to maximize verifiability and ease of validation, production deployment strategies and future upstream kernel discussions will actively consider integration as a built-in LSM, compatibility with existing LSM stacking configurations, and minimizing the overall LSM hook footprint.
 
+#### 3.3 Comparison with SELinux and AppArmor
+
+While SELinux and AppArmor provide robust Mandatory Access Control (MAC) frameworks driven by security labels and profiles, their core paradigm fundamentally relies on "strict compliance with statically defined, pre-established rule-sets." In contrast, TEAL introduces **"Post-Compromise Execution Governance,"** a framework that decisively differentiates itself from traditional MAC architectures through three critical paradigms:
+
+1. **From Static Privileges to Dynamic Authorization:**
+Under conventional LSM implementations, once an operation is permitted within a specific security domain or profile, it is executed without further verification as long as it adheres to the static policy. TEAL, conversely, injects a synchronous "pending approval" state directly into high-risk operations, strictly demanding Multi-Party Authorization (MPA). Consequently, even when a compromised process attempts to **abuse legitimately granted privileges**, the injection of a dynamic, human-in-the-loop gateway (Human-Gate) structurally neutralizes the vector.
+2. **Ephemeral Tickets and Execution Contexts:**
+TEAL introduces the concept of "short-lived authorization tickets," wherein granted permissions are bounded strictly to a designated process tree and a transient temporal window. By tightly coupling this validation to the active execution context, the in-kernel Fast Path (ticket cache) processes subsequent system calls with minimal overhead. In benchmark environments, this architecture demonstrates execution latencies approaching baseline performance, validating its viability for performance-critical production systems.
+3. **Integration of Verifiable Telemetry:**
+Rather than generating naive audit logs, TEAL constructs structured, cryptographic evidence capturing precisely *who, when, under which policy framework,* and *via what specific MPA protocol* an execution was sanctioned. This highly structured telemetry is natively compatible with formal verification tools such as Alloy and TLA+. This integration allows engineers to mathematically verify system safety, shifting the assessment model from simply auditing "configuration correctness" to proving that "the active authorization workflows strictly satisfy all intended architectural invariants."
+
