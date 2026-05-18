@@ -367,3 +367,14 @@ The total execution duration (real time) for the kernel compilation tree across 
 | **Enforce Mode (TEAL Enabled)** | 53m 05s | 48m 18s | **Maintains absolute performance parity with the baseline via the Fast Path cache.** |
 | **Audit Mode (Full Logging)** | 61m 36s | 63m 32s | Observes a severe throughput penalty induced by synchronous I/O log storms. |
 
+
+#### C.4 Architectural Analysis and Conclusion
+
+Under the steady state of Enforce Mode (the second iteration and beyond), the difference in execution duration compared to the baseline environment (TEAL disabled) was less than a single second. This empirically confirms that, at least during the second iteration within this specific evaluation environment, the framework maintains complete performance parity with the baseline system.
+
+These metrics demonstrate the profound effectiveness of TEAL’s foundational architectural pillars: in-kernel Fast Path resolution driven by ticket inheritance semantics, paired with the active suppression of redundant auditing overhead via the `silent_io` configuration. The exceptional processing efficiency of the Fast Path mechanism, initially captured during micro-benchmarking, successfully scales up to govern macro-level production workloads without inducing structural degradation.
+
+Conversely, Audit Mode—which outputs comprehensive execution telemetry for all access control verdicts without optimization—observed an approximate 30% throughput degradation. This severe performance penalty, induced by synchronous I/O log storms, underscores that domain-specific policy design (such as the strategic deployment of `silent_io` thresholds) is absolutely indispensable for maintaining operational viability.
+
+In conclusion, this evaluation indicates that by combining context-aware policy modeling with TEAL’s in-kernel token caching mechanism, systems can achieve robust security gating while preserving near-baseline performance, even under extreme resource-intensive processing workloads.
+
