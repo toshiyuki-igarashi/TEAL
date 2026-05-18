@@ -20,3 +20,12 @@ The security mechanisms of Linux have made significant strides through the imple
 
 Recent ransomware strains have standardized a two-stage attack strategy: "exfiltrate data before encryption." The process spanning from file read operations to outbound transmission to Command and Control (C2) servers is highly optimized to evade existing EDR and log monitoring systems. Consequently, by the time an anomaly is detected, sensitive data has already been leaked externally.
 
+#### 1.4 Objectives to Be Addressed
+
+This whitepaper proposes an architectural model to structurally break the attack chain through the following approaches:
+
+1. **Sensitive Data Read Operations (`read`)**: Establish a synchronous "STOP Barrier" that prevents unauthorized file reading without explicit human-in-the-loop authorization.
+2. **Network Transmission (`send`)**: Implement the future network plane (TEAL-NET) to govern and intercept unapproved outbound traffic directly at the kernel level.
+3. **Neutralizing Independent Root Privilege Abuse**: Enforce absolute denial of access to critical system resources unless the operation satisfies explicit Multi-Party Authorization (MPA) thresholds.
+4. **Structural Disruption**: Insert strict, kernel-level enforcement points at the pivotal stages of the attack chain (`read`, `exec`, and `send`).
+
