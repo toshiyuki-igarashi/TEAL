@@ -155,3 +155,11 @@ The Alloy Analyzer is deployed to inspect user-defined JSON policies and verify 
 
 While Sleepable BPF (`BPF_F_SLEEPABLE`) expands the capabilities of traditional eBPF by allowing programs to block and execute within a broader range of kernel contexts, TEAL demands an architecture capable of inherently managing manual human-in-the-loop approval latencies extending from seconds to minutes. It requires stateful persistence of pending approval states, dynamic ticket issuance, and unified fail-safe orchestration. Consequently, this prototype adopts a Loadable Kernel Module (LKM) architecture, leveraging native kernel primitives such as `wait_event_interruptible` to achieve a low-overhead, deterministic process suspension mechanism under a strict **"Synchronous Stop Model."**
 
+## Part 3: Effectiveness and Future Outlook
+
+### 8. Performance and Practical Viability
+
+#### 8.1 Achieving Low Latency
+
+In evaluation environments characterized by Fast Path-centric workloads, the architecture observed execution latencies closely approaching baseline performance under specific operational conditions. Notably, during the second iteration of a kernel compilation benchmark utilizing both ticket inheritance and `silent_io` optimizations, the processing time was nearly indistinguishable from the baseline execution. However, because the current iteration count and environmental parameters remain constrained, these metrics are strictly positioned as a preliminary evaluation demonstrating that the framework can deliver minimal runtime overhead under configurations where the Fast Path functions optimally.
+
