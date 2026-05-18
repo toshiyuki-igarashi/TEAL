@@ -184,3 +184,14 @@ TEAL is currently positioned at the Alpha implementation stage. The overarching 
 * **Scope of Formal Methods**: The formal verification pipelines (TLA+ and Alloy) detailed in this paper serve as exploratory architectural tools to aid policy and state design; they do not represent a comprehensive mathematical proof of the entire production code stack.
 
 Consequently, the core thesis of this whitepaper is not to present a "turnkey, generalized Linux enterprise security product." Rather, it stands as a **validated prototype and definitive architectural blueprint aimed at achieving Post-Compromise Execution Governance directly within the operating system core.**
+
+
+### 9. Future Work
+
+To further harden TEAL’s disruption model against advanced adversaries, the following architectural expansions are planned:
+
+* **TPM (Trusted Platform Module) Integration**: By combining TEAL with Measured Boot capabilities, the architecture will bind the policy state to hardware-rooted cryptographic registers (PCRs), guaranteeing absolute policy tamper-resistance at the silicon level.
+* **Network Plane Expansion via TEAL-NET**: The identical authorization model applied to the file system will be extended to network communication stacks. By explicitly restricting outbound traffic to validated process-destination-routing tuples and rejecting unauthorized `connect()` or `sendmsg()` primitives within the kernel space, TEAL aims to structurally intercept C2 infrastructure communications and lateral movement vectors.
+* **Integration with Hardware Watchdog Mechanisms**: To mitigate the risk of kernel-level subversion, TEAL will pair with hardware watchdogs. Upon detecting any anomalous termination or tampering of TEAL’s operational state, the subsystem will immediately trigger a hardware-enforced "safe lockdown" transition to isolate the host.
+* **AI-Driven Semantic Verification**: The development of a policy synthesis engine capable of translating natural-language security requirements into mathematically consistent Alloy specifications. This pipeline will automatically generate logically complete, loophole-free authorization policies tailored to complex production environments.
+
