@@ -73,4 +73,10 @@ As demonstrated by recent Linux Local Privilege Escalation (LPE) exploits, vulne
 
 * **EDR (Endpoint Detection and Response)**: While highly proficient in threat detection and post-incident response, EDR possesses inherent structural limitations when tasked with synchronously intercepting and halting `read` or `send` primitives initiated by a compromised process directly at the critical point of OS execution.
 * **SASE / IAM**: Though effective for perimeter enforcement, identity governance, and macro-level access authorization, these frameworks are completely decoupled from internal operating system mechanics. They do not provide a mechanism to intercept or govern intra-OS process activity at the kernel enforcement point to dictate which resources an active process can read or which system actions it can execute.
-  
+
+### 3. Limitations of Conventional Security Mechanisms
+
+#### 3.1 Limitations of Detection-Centric Security
+
+Since Endpoint Detection and Response (EDR) relies heavily on dynamic behavioral detection, its architecture inherently tends to generate reactive alerts *after* a system compromise or damage has already occurred. Furthermore, when dealing with a process that has already achieved local privilege escalation, there remains a severe structural risk that the adversary will entirely evade or neutralize the monitoring mechanism itself.
+
