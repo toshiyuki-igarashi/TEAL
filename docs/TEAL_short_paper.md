@@ -163,3 +163,24 @@ While Sleepable BPF (`BPF_F_SLEEPABLE`) expands the capabilities of traditional 
 
 In evaluation environments characterized by Fast Path-centric workloads, the architecture observed execution latencies closely approaching baseline performance under specific operational conditions. Notably, during the second iteration of a kernel compilation benchmark utilizing both ticket inheritance and `silent_io` optimizations, the processing time was nearly indistinguishable from the baseline execution. However, because the current iteration count and environmental parameters remain constrained, these metrics are strictly positioned as a preliminary evaluation demonstrating that the framework can deliver minimal runtime overhead under configurations where the Fast Path functions optimally.
 
+#### 8.2 Current Implementation Maturity and Constraints
+
+TEAL is currently positioned at the Alpha implementation stage. The overarching objective of this phase is the empirical validation of core operational workflows spanning LSM hooks, the user-space daemon, policy evaluation logic, authorization response handling, and the in-kernel Fast Path ticket cache.
+
+**Implemented and Verified Scope (Alpha Baseline):**
+
+* **LSM-Driven Interception**: Successful capturing of `file` and `exec` subsystem events via dedicated LSM hooks.
+* **Policy Orchestration**: Centralized evaluation via the `teald` daemon, supporting baseline validation for both `ENFORCE` and `AUDIT` operational modes.
+* **Fast Path Execution**: Bypassing of repetitive authorization latency for validated operations using short-lived in-kernel ticket caching.
+* **Telemetry and Workflows**: Baseline structured audit logging and verification of prototype Multi-Party Authorization (MPA) / approval pipelines.
+* **Performance Baseline**: Runtime performance evaluation of the Fast Path cache under controlled benchmarking parameters.
+
+**Current Constraints and Future Milestones:**
+
+* **Limitations of Kernel-Level Protection**: TEAL is not designed to prevent low-level kernel exploits themselves. In the event of arbitrary kernel code execution, the structural integrity of TEAL’s internal LSM hooks could potentially be bypassed or neutralized.
+* **Hardware-Backed Root of Trust**: Advanced hardware integrations involving TPM state binding and Measured Boot architectures remain categorized under the conceptual roadmap phase.
+* **Provisional Mechanisms**: Select structural fields—such as multi-call binary hashes and Policy Epoch synchronization identifiers—utilize provisional parameters optimized strictly for Alpha validation.
+* **Architectural Extensions**: The comprehensive implementation of TEAL-NET, FIDO2 credentials, Threshold BLS cryptographic workflows, Wasm-based execution engines, and automated policy synthesis are treated as future development milestones.
+* **Scope of Formal Methods**: The formal verification pipelines (TLA+ and Alloy) detailed in this paper serve as exploratory architectural tools to aid policy and state design; they do not represent a comprehensive mathematical proof of the entire production code stack.
+
+Consequently, the core thesis of this whitepaper is not to present a "turnkey, generalized Linux enterprise security product." Rather, it stands as a **validated prototype and definitive architectural blueprint aimed at achieving Post-Compromise Execution Governance directly within the operating system core.**
