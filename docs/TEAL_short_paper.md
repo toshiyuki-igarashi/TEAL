@@ -341,3 +341,11 @@ By integrating natively with the Alloy ecosystem, TEAL equips policy architects 
 
 > **Technical Note:** Verification via the Alloy Analyzer is strictly an automated method for detecting logical contradictions within the bounded scope of the translated policy-to-goal specification. It does not unilaterally guarantee absolute immunity against low-level code implementation bugs, kernel-space memory corruption exploits, or the runtime integrity of the execution stack. These orthogonal risk vectors must be collectively mitigated by combining LSM-driven synchronous stop barriers with the hardware-backed primitives defined in our architectural roadmap.
 
+### Appendix C: Performance Evaluation Under Real-World Workloads (Kernel Compilation)
+
+This appendix details the macro-benchmark specifications used to evaluate the runtime performance overhead introduced by TEAL under highly resource-intensive, production-grade operational environments.
+
+#### C.1 Evaluation Objectives and Workload Profile
+
+The core objective of this evaluation is to verify whether TEAL’s zero-trust execution control architecture can sustain commercially viable performance metrics under demanding workloads characterized by extreme process generation frequencies and heavy file I/O operations. A full compilation of the Linux kernel source tree (`make -j$(nproc)`; build targets: `bzImage modules`) was selected as the definitive stress-test workload, and the comprehensive execution latency (real time) was precisely measured.
+
