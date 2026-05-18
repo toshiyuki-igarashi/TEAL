@@ -47,6 +47,30 @@ TEAL processes access rules using a structured, multi-layered directory design i
 * **`policies/` Directory:** Holds your granular runtime interception domain logic. Files here use arbitrary string names matching the schema constraints (e.g., `00-base.json`), specified by their direct names within the `bundle.json` targets tracking array.
 * **`roles/roles.json` (Fixed Path & Name):** Defines administrative Subject-to-Role mappings, system assignment constraints, default roles for unmapped system entities, and fallback enforcement modes.
 
+### 2.2 Administrator Identity Setup (Keygen & Registration)
+
+Before switching the TEAL engine into enforcement mode, you must establish a cryptographic identity. All critical commands (including `start`, `stop`, and `approve`) require a BLS digital signature.
+
+1. **Generate your BLS key pair:**
+```bash
+   teal-cli keygen
+
+```
+
+*This generates a private key (`~/.teal/id_bls`) with strict `0600` permissions and a corresponding public key.*
+
+2. **Register your identity with the daemon:**
+```bash
+teal-cli register
+
+```
+
+
+*This commands the daemon to register your public key, granting you the authority to issue engine control and approval commands.*
+
+Once registered, you can confidently proceed to activate the enforcement barrier.
+
+
 ---
 
 ## 3. Core Breakthrough Demo Scenario: Protecting `/etc/shadow` Against Root Access
