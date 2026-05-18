@@ -29,3 +29,17 @@ This whitepaper proposes an architectural model to structurally break the attack
 3. **Neutralizing Independent Root Privilege Abuse**: Enforce absolute denial of access to critical system resources unless the operation satisfies explicit Multi-Party Authorization (MPA) thresholds.
 4. **Structural Disruption**: Insert strict, kernel-level enforcement points at the pivotal stages of the attack chain (`read`, `exec`, and `send`).
 
+#### 1.5 Scope and Implementation Stage
+
+The TEAL framework presented in this paper currently encompasses an Alpha-stage prototype alongside a comprehensive architectural proposal built upon it. Core orchestration mechanisms—including LSM hooks, the `teald` daemon, policy evaluation logic, basic Multi-Party Authorization (MPA) / approval flows, the Fast Path ticket cache, audit logging, and performance benchmarks—have been fully implemented and verified within this active Alpha codebase.
+
+**Protected Resources:**
+TEAL defines critical assets that remain inaccessible via a compromised root privilege alone. Anticipated target resources include:
+
+* **System Secrets:** `/etc/shadow`, kernel modules, vital system binaries, and TEAL policy/configuration file-planes.
+* **Authentication & Cryptographic Material:** SSH private keys, backup decryption keys, and production TLS certificates.
+* **Application Infrastructure:** Database dumps, Kubernetes Secrets, production environment variables (`.env`), and master customer data directories.
+
+**Threat Model:**
+TEAL assumes an adversary capable of achieving local privilege escalation (from unprivileged user to root), reading sensitive files from compromised processes, executing unauthorized binaries, establishing arbitrary outbound network connections, and performing destructive actions. Conversely, attacks utilizing arbitrary kernel code execution, forced disabling of LSM hooks, boot chain alteration, or physical node access are classified as out-of-scope for the current Alpha implementation. These advanced vectors will be systematically addressed through roadmap extensions, including hardware-backed integrations such as TPM state binding and independent hardware watchdogs.
+
