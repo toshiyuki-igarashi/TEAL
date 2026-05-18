@@ -357,4 +357,3 @@ The macro-benchmark was executed across the following hardware infrastructure an
 * **Guaranteeing Pristine Initial Conditions**: To ensure strict empirical consistency and fairness across all experimental iterations, a `make clean` primitive was explicitly executed prior to each benchmarking cycle, forcing the build engine to initiate from a state entirely devoid of historical object caches or pre-compiled build artifacts.
 * **Policy Configuration and Optimizations**: The runtime process tree originating from the parent `make` execution vertex was governed under a dedicated domain-specific security policy. This policy layer explicitly activated TEAL’s core architectural optimization mechanisms—specifically **Ticket Inheritance** (`inherit: true`) and **I/O Log Suppression** (`silent_io: true`)—to evaluate their joint impact on overall throughput performance.
 
-  
