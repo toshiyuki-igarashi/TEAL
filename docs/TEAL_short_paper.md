@@ -148,3 +148,10 @@ The Alloy Analyzer is deployed to inspect user-defined JSON policies and verify 
 
 * **Architectural Significance**: By automatically synthesizing an abstract logical framework directly from runtime policy sets, the tooling executes rigorous completeness checks. This automated workflow enables security architects to identify and preemptively eliminate configuration-induced vulnerabilities or shadowed rules prior to deployment.
 
+
+### 7. Comparison Between the "Synchronous Barrier" and Event-Driven Security
+
+#### 7.1 Comparison with Modern eBPF Extensions (Sleepable BPF)
+
+While Sleepable BPF (`BPF_F_SLEEPABLE`) expands the capabilities of traditional eBPF by allowing programs to block and execute within a broader range of kernel contexts, TEAL demands an architecture capable of inherently managing manual human-in-the-loop approval latencies extending from seconds to minutes. It requires stateful persistence of pending approval states, dynamic ticket issuance, and unified fail-safe orchestration. Consequently, this prototype adopts a Loadable Kernel Module (LKM) architecture, leveraging native kernel primitives such as `wait_event_interruptible` to achieve a low-overhead, deterministic process suspension mechanism under a strict **"Synchronous Stop Model."**
+
