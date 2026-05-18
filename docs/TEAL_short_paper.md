@@ -16,3 +16,7 @@ Targeted attacks and ransomware observed between 2025 and 2026 have progressed b
 
 The security mechanisms of Linux have made significant strides through the implementation of Capabilities, Namespaces, and mandatory access control (MAC) based on the Linux Security Module (LSM) framework. However, a successful privilege escalation still grants attackers extensive operational freedom within the compromised trust domain. The fundamental issue here is not merely the existence of "privileges," but rather that **a sequence of highly critical actions is concentrated within a single (compromised) execution context**. Once privileged execution rights are usurped, restricting subsequent data aggregation or destructive behavior in real-time is extremely difficult under existing architectural structures.
 
+#### 1.3 Exponential Surge in Data Exfiltration Attacks
+
+Recent ransomware strains have standardized a two-stage attack strategy: "exfiltrate data before encryption." The process spanning from file read operations to outbound transmission to Command and Control (C2) servers is highly optimized to evade existing EDR and log monitoring systems. Consequently, by the time an anomaly is detected, sensitive data has already been leaked externally.
+
