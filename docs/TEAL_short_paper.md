@@ -99,3 +99,11 @@ TEAL introduces the concept of "short-lived authorization tickets," wherein gran
 3. **Integration of Verifiable Telemetry:**
 Rather than generating naive audit logs, TEAL constructs structured, cryptographic evidence capturing precisely *who, when, under which policy framework,* and *via what specific MPA protocol* an execution was sanctioned. This highly structured telemetry is natively compatible with formal verification tools such as Alloy and TLA+. This integration allows engineers to mathematically verify system safety, shifting the assessment model from simply auditing "configuration correctness" to proving that "the active authorization workflows strictly satisfy all intended architectural invariants."
 
+| Technology / Solution | Primary Capability | Architectural Differentiator (with TEAL) |
+| --- | --- | --- |
+| **SELinux / AppArmor** | Static Mandatory Access Control (MAC) | TEAL injects **dynamic, human-in-the-loop authorization (Human-Gate)** and Multi-Party Authorization (MPA) directly into critical system operations. |
+| **EDR** | Detection & Post-Incident Response | TEAL enforces **synchronous process suspension at the system call level (the exact point of execution)** before the malicious action can succeed. |
+| **sudo / PAM** | Authentication & Entry-Level Access Control | TEAL establishes **secondary gating** over `read`, `exec`, `write`, and `connect` operations **even after root privileges are fully usurped**. |
+| **eBPF / LSM-BPF** | In-Kernel Policy Evaluation | TEAL explicitly focuses on **long-duration process suspension during pending approvals** alongside stateful, ticket-cached execution workflows. |
+| **SIEM / Audit Logging** | Log Aggregation & Behavioral Analysis | TEAL integrates **verifiable "authorization evidence" as an immutable criteria** for active, real-time execution control. |
+
