@@ -43,3 +43,19 @@ TEAL defines critical assets that remain inaccessible via a compromised root pri
 **Threat Model:**
 TEAL assumes an adversary capable of achieving local privilege escalation (from unprivileged user to root), reading sensitive files from compromised processes, executing unauthorized binaries, establishing arbitrary outbound network connections, and performing destructive actions. Conversely, attacks utilizing arbitrary kernel code execution, forced disabling of LSM hooks, boot chain alteration, or physical node access are classified as out-of-scope for the current Alpha implementation. These advanced vectors will be systematically addressed through roadmap extensions, including hardware-backed integrations such as TPM state binding and independent hardware watchdogs.
 
+Meanwhile, advanced integrations—including TPM state binding, FIDO2 authentication, Threshold BLS signatures, the comprehensive implementation of TEAL-NET, a Wasm-based policy engine, and automated policy synthesis—are categorized as future roadmap items designated for further architectural hardening.
+
+| Component / Layer | Scope in Alpha Prototype |
+| --- | --- |
+| `file` / `exec` LSM hooks | Fully Implemented & Evaluated |
+| `teald` / policy decision logic | Fully Implemented & Evaluated |
+| MPA / approval workflow | Core Mechanics Implemented |
+| Fast Path ticket cache | Implemented & Performance Benchmarked |
+| Audit logging | Baseline Implementation Verified |
+| TEAL-NET | Planned Roadmap Item |
+| TPM / Measured Boot | Planned Roadmap Item |
+| FIDO2 / Threshold BLS | Planned Roadmap Item |
+| Wasm policy engine | Planned Roadmap Item |
+
+It is critical to note that Human-Gated Execution is not designed to naively demand manual human approval for every consecutive `read`, `exec`, or `write` system call. During nominal operations, the architecture issues short-lived authorization tickets for validated subject-object-operation tuples, processing them with near-zero overhead via the in-kernel Fast Path mechanism. Active human-in-the-loop intervention is strictly restricted to vectors explicitly designated as high-risk, such as anomalous access to protected resources, alterations to privilege boundaries, runtime policy synchronization, or destructive system actions.
+
