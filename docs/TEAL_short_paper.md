@@ -280,3 +280,44 @@ These objectives represent the absolute system invariants defined by the securit
 * **Goal 1:** The `/secure/vault` resource directory must be unconditionally protected from unauthorized access.
 * **Goal 2:** Any process originating from `/tmp/malware` must be strictly prevented from executing a `READ` operation against `/etc/shadow`—even if the process operates under an active execution context that has assumed the `admin` role.
 
+#### B.3 Execution of Formal Verification and Results
+
+The following command executes the compilation of the target configuration into the TEAL-IR (Intermediate Representation) framework and triggers the SAT solver to perform an exhaustive exploration of the underlying logical state-space.
+
+```bash
+$ teal-cli verify test_policy.json --goal test_goal.yaml --debug
+=> Loaded goal definition file 'test_goal.yaml' (2 objectives)
+-> [1/3] Constructing Intermediate Representation (Teal-IR)...
+-> [2/3] Initializing Alloy transpiler...
+=> Verifying logical consistency of TEAL policy...
+  -> [1/2] Synthesizing Alloy specification from Teal-IR...
+  -> [2/2] Invoking SAT solver for exhaustive logical space exploration...
+  ◇ [PASS] Goal: `Vault_Lockdown_Check` — No counter-example found within the specified model scope.
+
+------------------------------------------------------------
+◇ [VERIFY FAILURE] Goal: `Shadow_File_Lockdown_Check`
+Result: Vulnerability found (Counter-example detected)
+
+  \exists r \in Requests :
+    (object.path = '/etc/shadow'
+      \land action.op = READ
+      \land subject.role = admin
+      \land subject.origin = None
+      \land AccessAllowed(r))
+
+
+Detected Attack Path:
+  - Subject: admin
+  - Object:  /etc/shadow
+  - Action:  READ
+
+Root Cause Analysis:
+  - rule_id: "rule-allow-admin-read"
+    The access path evaluates to allowed due to overlapping or shadowed logical conditions within the policy plane.
+------------------------------------------------------------
+
+◇ 1 vulnerability (unintended access path) detected.
+◇ Hint: To visually inspect the counter-example graph, append the `--visualize` flag.
+
+```
+
