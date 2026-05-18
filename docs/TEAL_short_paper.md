@@ -333,3 +333,11 @@ While a human administrator might intuitively assume the system is secure becaus
 * **Exposed Attack Vector**: Occurs if a privileged user operating under the `admin` role inadvertently triggers the execution of the `/tmp/malware` binary, or if an adversary successfully injects malicious payloads into a running, authorized `admin` process context.
 * **Root Cause of the Inconsistency**: The scope of `rule-allow-admin-read` is defined too broadly. Consequently, despite the explicit coexistence of the malware rejection rule, overlapping logical conditions or evaluation priority ambiguities within the policy plane allow the `READ` primitive to successfully resolve to an allowed state.
 
+#### B.5 Conclusion: Shifting from "Subjective Trust" to "Formal Specification-Driven Verification"
+
+As demonstrated by this case study, the traditional security approach of merely "passing a designated set of test cases" in inherently complex deployment environments falls short of comprehensively neutralizing multi-stage attack vectors or structural loopholes induced by policy conflicts.
+
+By integrating natively with the Alloy ecosystem, TEAL equips policy architects with the capability to automatically synthesize abstract formal specifications from access rules and high-level security objectives prior to production deployment. This enables the framework to exhaustively analyze the underlying logical space, surfacing hidden design vulnerabilities and concrete counter-examples before they can be exploited. Consequently, TEAL's core paradigm of **"Post-Compromise Execution Governance"** transitions from a purely conceptual ideal into a mathematically backed architectural reality.
+
+> **Technical Note:** Verification via the Alloy Analyzer is strictly an automated method for detecting logical contradictions within the bounded scope of the translated policy-to-goal specification. It does not unilaterally guarantee absolute immunity against low-level code implementation bugs, kernel-space memory corruption exploits, or the runtime integrity of the execution stack. These orthogonal risk vectors must be collectively mitigated by combining LSM-driven synchronous stop barriers with the hardware-backed primitives defined in our architectural roadmap.
+
