@@ -111,3 +111,17 @@ Rather than generating naive audit logs, TEAL constructs structured, cryptograph
 
 The proposed Kernel-MPA framework directly addresses this inherent risk embedded within the foundational design of Linux by introducing a novel enforcement boundary driven by OS-level execution control combined with Multi-Party Authorization (MPA).
 
+
+## Part 2: Proposed Architecture
+
+### 4. Solution: Kernel-Level MPA and the "Chain of Authorization"
+
+#### 4.1 Core Concept: Restricting the "Independent Invocation" of Root Privileges
+
+The fundamental innovation of TEAL lies in its capacity to enforce Multi-Party Authorization (MPA) directly at the kernel level. It mathematically guarantees that even root privileges cannot independently finalize execution operations against critical resources without satisfying the explicit authorization threshold.
+
+#### 4.2 Hybrid Model of Nominal Operations and MPA
+
+1. **Nominal State (Fixed Execution Privileges)**: Access is exclusively permitted for pre-authorized processes (e.g., validated system backup utilities). Any access attempt initiated by unapproved shells or anomalous tools is strictly blocked—even if the invoker possesses root authority.
+2. **Transition State (MPA-Driven Updates)**: Only when updating process configurations, modifying policies, or executing administrative overrides does the system invoke an explicit MPA requirement (mandating cryptographic signatures across multiple administrative entities).
+
