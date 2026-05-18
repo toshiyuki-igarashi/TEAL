@@ -155,6 +155,21 @@ Once the toolchain setup is verified, you can run the logical verification again
 teal-cli verify examples/policies/00-base.json --goal examples/policies/goals.yaml
 ```
 
+### Technical Caveats on Alloy-Based Policy Verification
+
+While `teal-cli verify` provides mathematically rigorous logical verification via the Alloy Analyzer, users and security architects must be aware of the following boundary limitations inherent in the current Alpha/PoC translation implementation:
+
+1. **Bounded Path Abstraction (Glob/Prefix Limitation):**
+   Alloy operates as a bounded model checker based on a finite set of relational atoms. Dynamic string evaluations—such as `prefix:` and `glob:` matching used in the runtime `teald` daemon—are abstracted into static, explicit file/path objects during the Teal-IR translation phase. 
+   Consequently, the SAT solver can only discover logical flaws and counter-examples involving **known paths** specified inside the target policy or goals. It cannot dynamically synthesize or evaluate an infinite combinations of arbitrary wildcard string manipulations.
+
+2. **First-Match Ordering Semantics (Rule Shadowing):**
+   The TEAL runtime daemon enforces policies based on a sequential, top-down execution order where the first matching rule dictates the decision (`Allow` / `Deny` / `Need_Approval`). 
+   In the current PoC translation layer, if policies are generated as a flat collection of logical relations rather than a strict ordered sequence (`util/ordering`), complex "shadowing rules" (e.g., a loose Allow rule placed below a strict Deny rule) might lead to semantic discrepancies between the mathematical proof and the actual kernel enforcement.
+
+**Recommendation for Architects:**
+Formal verification via Alloy should be leveraged to detect **structural rule conflicts, unreachable configurations, and role-graph violations**, rather than relying on it as an absolute guarantee against runtime string-injection evasions.
+
 ---
 
 ## 6. Appendix: Known Limitations (Alpha Version)
