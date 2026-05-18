@@ -80,3 +80,11 @@ As demonstrated by recent Linux Local Privilege Escalation (LPE) exploits, vulne
 
 Since Endpoint Detection and Response (EDR) relies heavily on dynamic behavioral detection, its architecture inherently tends to generate reactive alerts *after* a system compromise or damage has already occurred. Furthermore, when dealing with a process that has already achieved local privilege escalation, there remains a severe structural risk that the adversary will entirely evade or neutralize the monitoring mechanism itself.
 
+#### 3.2 Architectural Constraints of eBPF (LSM-BPF)
+
+TEAL demands a tightly integrated architecture capable of handling long-duration synchronous process suspension, managing state for pending approvals, maintaining a ticket cache, and enforcing fail-safe control logic as a unified system. For these reasons, the current prototype bypasses eBPF/LSM-BPF in favor of a Loadable Kernel Module (LKM)-based LSM implementation.
+
+The primary objective is to suspend a process while preserving the exact pre-execution context captured by the kernel, and then resume it within that identical context post-approval. This mechanism inherently minimizes the window for race conditions where the evaluated target could be substituted prior to execution (Time-of-Check to Time-of-Use: TOCTOU vulnerabilities). This design choice does not negate the immense utility of eBPF; rather, it represents an architectural decision dictated by the unique prerequisites of Human-Gated Execution.
+
+While the Alpha implementation adopts an LKM approach to maximize verifiability and ease of validation, production deployment strategies and future upstream kernel discussions will actively consider integration as a built-in LSM, compatibility with existing LSM stacking configurations, and minimizing the overall LSM hook footprint.
+
