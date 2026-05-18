@@ -125,3 +125,13 @@ The fundamental innovation of TEAL lies in its capacity to enforce Multi-Party A
 1. **Nominal State (Fixed Execution Privileges)**: Access is exclusively permitted for pre-authorized processes (e.g., validated system backup utilities). Any access attempt initiated by unapproved shells or anomalous tools is strictly blocked—even if the invoker possesses root authority.
 2. **Transition State (MPA-Driven Updates)**: Only when updating process configurations, modifying policies, or executing administrative overrides does the system invoke an explicit MPA requirement (mandating cryptographic signatures across multiple administrative entities).
 
+### 5. Rationale for Selecting the LSM (Linux Security Module) Framework
+
+#### 5.1 Pre-Execution Enforcement at the Resource Access Vertex
+
+The LSM framework facilitates **synchronous intervention** directly at the kernel's definitive access control decision points for critical operations, including file creation/opening, binary execution, and socket binding. By inherently minimizing the window for Time-of-Check to Time-of-Use (TOCTOU) substitution vulnerabilities at the implementation level, this architecture achieves a **"Synchronous Stop Barrier."** This mechanism safely suspends the calling process, maintaining its state until comprehensive human or policy-driven authorization is fully finalized.
+
+#### 5.2 Network Plane Expansion: TEAL-NET (Future Roadmap)
+
+In the future TEAL-NET specification, the scope of enforcement will extend beyond file system access boundaries to encompass core network operations, specifically intercepting primitives such as `connect()` and `sendmsg()`. By proactively rejecting or dropping unauthorized outbound traffic initiated by unapproved processes or routed to unvalidated destinations directly within the kernel space, the architecture aims to structurally neutralize post-compromise C2 communications and the unsanctioned exfiltration of sensitive data.
+
