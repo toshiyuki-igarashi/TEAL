@@ -59,12 +59,30 @@ This section evaluates the "Slow Path" latency—the complete round-trip time re
 
 Using the standard Linux eBPF tool (`funclatency-bpfcc`), we directly measured the execution time of the in-kernel wait function `teal_wait_for_approval` in microseconds (µs).
 
-### Results & Discussion
-By using `teal-bench` to intentionally trigger continuous cache misses (`TTL=0`), we observed the following regarding the Slow Path processing time:
+### Measurement Results (eBPF Histogram)
+The processing time distribution of the Slow Path, captured by intentionally triggering continuous cache misses (`TTL=0`) using `teal-bench`, is shown below:
+
+```text
+     usecs               : count     distribution
+         0 -> 1          : 0        |                                        |
+        ... (omitted) ...
+        32 -> 63         : 11       |***************** |
+        64 -> 127        : 21       |********************************* |
+       128 -> 255        : 25       |****************************************|
+       256 -> 511        : 11       |***************** |
+       512 -> 1023       : 11       |***************** |
+      1024 -> 2047       : 5        |******** |
+      2048 -> 4095       : 1        |* |
+
+avg = 336 usecs, total: 28619 usecs, count: 85
+
+```
+
+### Discussion
 
 * **Average Latency:** The round-trip average latency was **336 µs**, demonstrating sub-millisecond responsiveness under these evaluation conditions.
-* **Distribution:** The mode of the distribution was heavily concentrated between **128 -> 255 µs**, indicating that the kernel-to-user space round-trip and `teald` policy evaluation remain well within a practical delay range for this test scope.
-* **Maximum Latency:** The maximum observed value was approximately **4 ms**. Within this measurement range, there were no signs of the Slow Path causing prolonged blocking.
+* **Distribution:** As clearly illustrated in the histogram, the mode of the distribution is heavily concentrated between **128 -> 255 µs**. This indicates that the kernel-to-user space round-trip and `teald` policy evaluation remain well within a practical delay range for this test scope.
+* **Maximum Latency:** The maximum observed value fell within the **2,048 -> 4,095 µs** range (approximately 4 ms). Within this measurement scope, there were no signs of the Slow Path causing prolonged or catastrophic blocking in the kernel.
 
 *Note: Further evaluation under higher concurrent loads, different hardware configurations, and more complex policy conditions with larger sample sizes is required.*
 
@@ -73,9 +91,11 @@ By using `teal-bench` to intentionally trigger continuous cache misses (`TTL=0`)
 ## 4. Macrobenchmark (Real-world Workload Evaluation)
 
 ### Overview
+
 To evaluate the overhead TEAL introduces under realistic, high-load conditions, we measured the execution time (`real time`) of a full Linux kernel compilation (`make -j$(nproc)`).
 
 ### Verification Conditions
+
 * **Target Workload:** Full build of the Linux kernel (`bzImage` + `modules`).
 * **Cache Condition:** To ensure fairness, `make clean` was executed immediately before each trial to wipe any build cache.
 * **Policy Application:** A dedicated domain policy was loaded for the process tree originating from the `make` command, applying ticket inheritance (`inherit: true`) and I/O log suppression (`silent_io: true`).
@@ -83,12 +103,13 @@ To evaluate the overhead TEAL introduces under realistic, high-load conditions, 
 ### Measurement Results
 
 | Operating Mode | Trial 1 (real) | Trial 2 (real) | Evaluation |
-| :--- | :--- | :--- | :--- |
+| --- | --- | --- | --- |
 | **Baseline (TEAL Disabled)** | 48m 12s | 48m 17s | Reference Value |
 | **Enforce Mode (TEAL Active)** | 53m 05s | 48m 18s | Under this workload/policy, additional overhead was near the limit of measurability (Trial 2). |
 | **Audit Mode (All Logs)** | 61m 36s | 63m 32s | Observed a performance penalty due to an I/O log storm. |
 
 ### Discussion and Conclusion
+
 In the second trial of **Enforce Mode**, the difference from the baseline was less than one second, meaning the additional overhead was near the limit of measurability. This indicates that the in-kernel `Fast Path` via ticket inheritance and the suppression of unnecessary audit logs (`silent_io`) worked effectively for this specific workload.
 
 On the other hand, the first trial of Enforce Mode recorded 53 minutes and 05 seconds. Additional measurements are required to isolate the impacts of measurement variance, warm-up states, cache conditions, and background system loads.
@@ -104,15 +125,19 @@ This evaluation provided an initial performance analysis of "TEAL" (Trusted Exec
 The results confirm that combining ticket inheritance, an in-kernel Fast Path, and audit log suppression (`silent_io`) can minimize additional overhead for specific workloads.
 
 ### 1. Low-Overhead Potential via Fast Path
+
 In the microbenchmark targeting `/usr/bin/true`, the median values for Enforce Mode (Fast Path) and the Baseline were nearly identical, meaning the cost of the Fast Path fell within the margin of measurement error. Similarly, in the macrobenchmark (Linux kernel build), Trial 2 of Enforce Mode performed almost identically to the Baseline. This indicates that TEAL can be applied with extremely low overhead in environments where the Fast Path condition is met.
 
 ### 2. Initial Assessment of Slow Path Latency
+
 When a cache miss occurs, the Slow Path latency (measured via eBPF on `teal_wait_for_approval`) averaged 336 µs with a maximum of ~4 ms. This aligns with TEAL’s design philosophy: instead of routing all unapproved operations to human intervention, normal operations are handled swiftly by the Fast Path, and only exceptional or high-risk operations are deferred to the Slow Path.
 
 ### 3. Critical Importance of Policy Design
+
 In Audit Mode, compiling the kernel took significantly longer due to full audit log generation. This emphasizes that TEAL's performance does not rely solely on its kernel implementation, but is heavily dependent on policy design, log suppression, ticket inheritance, and Fast Path coverage. For production deployment, profiling via AUDIT, domain-specific policy design, and minimizing redundant logging will be essential.
 
 ### Final Summary
-This evaluation demonstrates that TEAL’s in-kernel Fast Path and domain-specific policy architecture can achieve low-overhead execution under specific conditions. 
+
+This evaluation demonstrates that TEAL’s in-kernel Fast Path and domain-specific policy architecture can achieve low-overhead execution under specific conditions.
 
 These results do not imply that TEAL is currently a finished, general-purpose Linux security product. Rather, they serve as a promising initial validation that the core mechanism for delivering **Post-compromise Execution Governance** at the OS level is highly viable from a performance standpoint.
