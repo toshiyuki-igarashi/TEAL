@@ -132,7 +132,7 @@ The fundamental innovation of TEAL lies in its capacity to enforce Multi-Party A
 
 #### 5.1 Pre-Execution Enforcement at the Resource Access Vertex
 
-The LSM framework facilitates **synchronous intervention** directly at the kernel's definitive access control decision points for critical operations, including file creation/opening, binary execution, and socket binding. By inherently minimizing the window for Time-of-Check to Time-of-Use (TOCTOU) substitution vulnerabilities at the implementation level, this architecture achieves a **"Synchronous Stop Barrier."** This mechanism safely suspends the calling process, maintaining its state until comprehensive human or policy-driven authorization is fully finalized.
+The LSM framework enables synchronous intervention at the kernel's definitive access-control decision points for critical operations, including file-open operations, binary execution, and socket connection attempts. By inherently minimizing the window for Time-of-Check to Time-of-Use (TOCTOU) substitution vulnerabilities at the implementation level, this architecture achieves a **"Synchronous Stop Barrier."** This mechanism safely suspends the calling process, maintaining its state until comprehensive human or policy-driven authorization is fully finalized.
 
 #### 5.2 Network Plane Expansion: TEAL-NET (Future Roadmap)
 
