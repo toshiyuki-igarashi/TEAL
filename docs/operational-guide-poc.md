@@ -1,6 +1,6 @@
 # TEAL Operational Guide (PoC Edition)
 
-This guide provides the minimum operational and verification procedures for **TEAL (Trusted Execution & Authorization Layer)**. Unlike traditional security mechanisms that focus on perimeter defense, TEAL introduces **Post-compromise Execution Governance**, demonstrating how the OS kernel can physically protect critical resources and enforce human-in-the-loop authorization even after root privileges have been entirely compromised.
+This guide provides the minimum operational and verification procedures for **TEAL (Trusted Execution & Authorization Layer)**. Unlike traditional security mechanisms that focus on perimeter defense, TEAL introduces **Post-compromise Execution Governance**, demonstrating how the OS kernel can re-gate access to selected critical resources and enforce human-in-the-loop authorization even after user-space privilege escalation.
 
 ---
 
@@ -14,6 +14,19 @@ The primary objective of this Proof of Concept (PoC) release is to validate the 
 
 ### Scope of PoC
 This document bypasses enterprise-grade identity federation configurations to focus strictly on a localized, deterministic verification workflow using native Linux UIDs mapped to custom administrative cryptographic roles.
+
+#### Current PoC Coverage
+
+The current PoC is primarily intended to demonstrate:
+
+- file-open based read/write gating via LSM hooks
+- exec gating via LSM hooks
+- basic socket_connect interception
+- teald-based policy decisions
+- basic MPA / approval workflow
+- Fast Path ticket cache and audit logging
+
+The current PoC should not be interpreted as complete coverage for all destructive namespace operations. Operations such as unlink, rename, create, chmod, and chown require inode-level LSM hooks and are treated as planned or expanding coverage.
 
 ---
 
@@ -50,6 +63,18 @@ TEAL processes access rules using a structured, multi-layered directory design i
 ### 2.2 Administrator Identity Setup (Keygen & Registration)
 
 Before switching the TEAL engine into enforcement mode, you must establish a cryptographic identity. All critical commands (including `start`, `stop`, and `approve`) require a BLS digital signature.
+
+Before running `teal-cli`, verify that the `teald` daemon is running:
+
+```bash
+sudo systemctl status teald --no-pager
+````
+
+Optionally, follow the daemon logs in a separate terminal while performing the PoC workflow:
+
+```bash
+journalctl -u teald -f
+```
 
 1. **Generate your BLS key pair:**
 ```bash
@@ -103,10 +128,12 @@ Open a **secondary terminal** window. Switch to the root user (or use `sudo`) an
 sudo cat /etc/shadow
 
 ```
+Observed Behavior:
+The command does not complete immediately. In the PoC configuration, the intercepted process is held by the kernel-side TEAL path until a decision is returned by `teald` or the request is denied/expired according to the configured policy.
 
-**Observed Behavior:** The command does not execute immediately, and the terminal completely freezes/hangs.
+Under the hood, the OS kernel has intercepted the file-open/read path via the TEAL LSM hook. Instead of immediately returning `EPERM` or allowing the read, TEAL holds the calling process in a kernel-side wait state until `teald` returns an allow/deny decision, or until the request is denied or expired according to the configured policy.
 
-Under the hood, the OS kernel has intercepted the read system call via the TEAL LSM hook. Instead of returning `EPERM` or allowing the read, TEAL has transitioned the calling process into a `TASK_INTERRUPTIBLE` sleep state inside the kernel scheduler, waiting indefinitely for an external authorization ticket.
+ **Note:** This PoC guide demonstrates the normal ENFORCE approval path. Fail-Safe behavior on daemon loss, strict cache invalidation, and full network lockdown are architecture-level behaviors and may depend on the current build configuration and implementation stage.
 
 ### Step 4: Human-in-the-Loop Authorization
 
@@ -196,7 +223,36 @@ Formal verification via Alloy should be leveraged to detect **structural rule co
 
 ---
 
-## 6. Appendix: Known Limitations (Alpha Version)
+## 6. Generating Policy Drafts from Audit Logs
+
+TEAL can use audit logs to generate candidate policy rules. This is useful during PoC tuning because administrators can observe real system behavior first, then convert repeated or denied patterns into reviewable policy drafts.
+
+A pragmatic workflow for creating policy rules is as follows:
+
+1. Collect audit logs.
+2. Generate candidate rules with `teal-logview profile`.
+3. Review and minimize generated rules manually.
+4. Run schema validation and dry-run checks.
+5. Apply the reviewed rules through the normal MPA-protected policy update workflow.
+
+Generated policies are drafts only. They must be reviewed, minimized, validated, and approved before being installed under `/etc/teal.d/policies/`.
+
+```bash
+# Generate allow-rule candidates from recent denied or unmanaged events
+teal-logview profile --since 1h --target allow-draft --deny-only > policy-draft.json
+
+# Generate anti-storm / silent_io candidates from frequent noisy events
+teal-logview profile --since 1h --target anti-storm --threshold 1000 --optimize > anti-storm-draft.json
+
+# Optimize / merge redundant rules in a generated draft
+teal-logview optimize policy-draft.json --annotate-reason > policy-draft.optimized.json
+```
+
+For production use, generated rules should be treated as starting points for policy authoring, not as automatically trusted allow rules.
+
+---
+
+## 7. Appendix: Known Limitations (Alpha Version)
 
 In alignment with technical transparency expected in open-source security projects, we outline the strict boundary limits of the current Alpha prototype:
 
@@ -205,7 +261,7 @@ In alignment with technical transparency expected in open-source security projec
 
 ---
 
-## 7. Troubleshooting Guide
+## 8. Troubleshooting Guide
 
 If you encounter initialization barriers, use these diagnostic procedures to recover the environment:
 
@@ -225,8 +281,6 @@ journalctl -u teald -f
 
 # Read unified TEAL framework state transaction logs
 teal-logview tail
-
-```
 
 ```
 
