@@ -8,19 +8,23 @@ It consists of a Linux Security Module (LSM) implemented in C and a user-space p
 TEAL is currently an Alpha / PoC implementation.
 
 Implemented and evaluated:
-- file / exec LSM hooks
+- file-open based read/write gating via LSM hooks
+- exec gating via LSM hooks
+- basic connect gating via LSM hooks
 - teald policy decision daemon
 - basic MPA / approval flow
 - Fast Path ticket cache
 - audit logging
+- policy draft generation via `teal-logview`
 - initial performance evaluation
 
-Roadmap:
-- TEAL-NET outbound control
+Planned / expanding:
+- additional inode/path-level LSM hooks for destructive or namespace-changing operations, such as unlink, rename, create, chmod, and chown
+- policy draft generation support for newly added operation types
+- full TEAL-NET outbound policy framework
 - TPM / Measured Boot integration
-- FIDO2 / Threshold BLS approval
+- FIDO2 / Threshold BLS approvals
 - Wasm policy engine
-- automated policy generation
 
 ## Why TEAL?
 
