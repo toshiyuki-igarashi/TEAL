@@ -47,7 +47,10 @@ Meanwhile, advanced integrations—including TPM state binding, FIDO2 authentica
 
 | Component / Layer | Scope in Alpha Prototype |
 | --- | --- |
-| `file` / `exec` LSM hooks | Fully Implemented & Evaluated |
+| file-open based read/write gating via LSM hooks | Implemented & Evaluated |
+| exec gating via LSM hooks | implemented and evaluated |
+| basic connect gating via LSM hooks | implemented, with TEAL-NET as a broader roadmap item |
+| destructive namespace operations such as unlink, rename, create, chmod/chown | planned / expanding via inode-level LSM hooks |
 | `teald` / policy decision logic | Fully Implemented & Evaluated |
 | MPA / approval workflow | Core Mechanics Implemented |
 | Fast Path ticket cache | Implemented & Performance Benchmarked |
