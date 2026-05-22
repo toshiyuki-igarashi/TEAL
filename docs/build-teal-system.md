@@ -220,18 +220,25 @@ sudo tee /etc/teal.d/roles/roles.json >/dev/null <<'EOF'
   "schema_version": "1.0",
   "roles": [
     {
-      "name": "default_user_role",
-      "description": "Baseline unprivileged execution domain",
-      "tags": ["standard"],
-      "permissions": ["generic_read"]
+      "name": "user",
+      "description": "Normal user."
+    },
+    {
+      "name": "admin",
+      "description": "Normal operator who can request privileged actions."
+    },
+    {
+      "name": "security_officer",
+      "description": "Can approve requests (general approver)."
     }
   ],
-  "assignments": [],
+  "assignments": [
+    { "uid":    0, "roles": [ "admin", "user" ] },
+    { "uid": 1000, "roles": [ "security_officer", "user" ] }
+  ],
   "group_assignments": [],
   "defaults": {
-    "roles_for_unknown_user": [
-      "default_user_role"
-    ],
+    "roles_for_unknown_user": [ "user" ],
     "deny_if_role_unknown": false
   }
 }
@@ -241,28 +248,27 @@ EOF
 sudo tee /etc/teal.d/policies/00-base.json >/dev/null <<'EOF'
 {
   "version": "1.3",
-  "ttl_minutes": 60,
-  "sweep_minutes": 10,
+  "default_effect": "allow",
+  "default_reason": "No matching rule; default allow.",
+  "ttl_minutes": 10,
+  "sweep_minutes": 5,
+  "pre_approval_defaults": { "ttl_sec_default": 600, "ttl_sec_max": 900 },
   "rules": [
     {
-      "id": "rule-protect-shadow-file",
-      "rule_type": "standard",
-      "subject": {},
+      "id": "protect-etc-shadow",
+      "subject": {
+        "roles": ["admin"]
+      },
       "object": {
         "path": "/etc/shadow"
       },
       "action": {
-        "ops": ["READ"]
+        "ops": ["read"]
       },
       "effect": "need_approval",
-      "required_roles": [
-        "security_officer"
-      ],
+      "required_roles": ["security_officer"],
       "threshold": 1,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
-      }
+      "reason": "Reading /etc/shadow requires explicit approval."
     }
   ]
 }
