@@ -68,7 +68,7 @@ Before running `teal-cli`, verify that the `teald` daemon is running:
 
 ```bash
 sudo systemctl status teald --no-pager
-````
+```
 
 Optionally, follow the daemon logs in a separate terminal while performing the PoC workflow:
 
