@@ -128,8 +128,10 @@ Example policy rule requiring approval for reading `/etc/shadow`:
 {
   "version": "1.3",
   "default_effect": "allow",
+  "default_reason": "No matching rule; default allow.",
   "ttl_minutes": 10,
-  "sweep_minutes": 1,
+  "sweep_minutes": 5,
+  "pre_approval_defaults": { "ttl_sec_default": 600, "ttl_sec_max": 900 },
   "rules": [
     {
       "id": "protect-etc-shadow",
@@ -137,13 +139,13 @@ Example policy rule requiring approval for reading `/etc/shadow`:
         "roles": ["admin"]
       },
       "object": {
-        "path": "exact:/etc/shadow"
+        "path": "/etc/shadow"
       },
       "action": {
         "ops": ["read"]
       },
       "effect": "need_approval",
-      "required_roles": ["security_admin"],
+      "required_roles": ["security_officer"],
       "threshold": 1,
       "reason": "Reading /etc/shadow requires explicit approval."
     }
