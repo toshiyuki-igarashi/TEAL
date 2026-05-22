@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "roles": [
+    {
+      "name": "user",
+      "description": "Normal user."
+    },
+    {
+      "name": "admin",
+      "description": "Normal operator who can request privileged actions."
+    },
+    {
+      "name": "security_officer",
+      "description": "Can approve requests (general approver)."
+    }
+  ],
+  "assignments": [
+    { "uid":    0, "roles": [ "admin", "user" ] },
+    { "uid": 1000, "roles": [ "security_officer", "user" ] }
+  ],
+  "group_assignments": [],
+  "defaults": {
+    "roles_for_unknown_user": [ "user" ],
+    "deny_if_role_unknown": false
+  }
+}

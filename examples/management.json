@@ -1,0 +1,34 @@
+{
+  "roles": [
+    {
+      "name": "admin",
+      "uids": [0],
+      "description": "System Root Administrator"
+    },
+    {
+      "name": "security_officer",
+      "uids": [1000],
+      "description": "Designated Operational Security Approver"
+    }
+  ],
+  "controls": {
+    "start": {
+      "description": "Initiate TEAL core execution engine",
+      "initiator_roles": ["admin"],
+      "mpa": {
+        "enabled": false
+      }
+    },
+    "stop": {
+      "description": "Terminate TEAL core execution engine protection loop",
+      "initiator_roles": ["admin"],
+      "mpa": {
+        "enabled": true,
+        "threshold": 1,
+        "approver_roles": ["security_officer"],
+        "timeout_minutes": 30
+      }
+    }
+  }
+}
+

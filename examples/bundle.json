@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0",
+  "name": "PoC Baseline Bundle",
+  "policy_files": [
+    "00-base.json"
+  ]
+}
+
