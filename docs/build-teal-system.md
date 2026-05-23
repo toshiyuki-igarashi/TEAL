@@ -145,7 +145,7 @@ sudo update-grub
 #### Build and Install the `teald` Daemon
 
 ```bash
-cd ~/TEAL/
+cd ~/TEAL/src
 cargo build --release
 
 # Deploy binaries with correct ownership (root) and permissions (755)
