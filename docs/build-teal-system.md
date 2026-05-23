@@ -42,7 +42,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 . "$HOME/.cargo/env"
 rustup install stable
 rustup default stable
-cargo install bindgen-cli --version 0.69.5 --locked
+cargo install bindgen-cli --version 0.65.1 --locked
 ```
 
 Clone the repository:
