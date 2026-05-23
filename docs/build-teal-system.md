@@ -146,6 +146,7 @@ sudo update-grub
 
 ```bash
 cd ~/TEAL/src
+rustup update
 cargo build --release
 
 # Deploy binaries with correct ownership (root) and permissions (755)
