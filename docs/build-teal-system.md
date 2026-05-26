@@ -146,6 +146,10 @@ sudo update-grub
 
 ```bash
 cd ~/TEAL/src
+
+sudo apt update
+sudo apt install pkg-config libtss2-dev
+
 rustup update
 cargo build --release
 
