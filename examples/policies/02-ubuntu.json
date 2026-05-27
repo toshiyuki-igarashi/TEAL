@@ -1,0 +1,7687 @@
+{
+  "version": "1.3",
+  "default_effect": "allow",
+  "default_reason": "No matching rule; default allow.",
+  "ttl_minutes": 10,
+  "sweep_minutes": 5,
+  "pre_approval_defaults": { "ttl_sec_default": 600, "ttl_sec_max": 900 },
+  "rules": [
+    {
+      "id": "auto_allow_chrome_520",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/opt/google/chrome/chrome",
+        "origin_applet": "chrome"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_Xwayland_9",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/Xwayland",
+        "origin_applet": "Xwayland"
+      },
+      "object": {
+        "path": "/proc/meminfo"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_Xwayland_8",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/Xwayland",
+        "origin_applet": "Xwayland"
+      },
+      "object": {
+        "path": "/proc/sys/dev/i915/perf_stream_paranoid"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_Xwayland_1671",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/Xwayland",
+        "origin_applet": "Xwayland"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_basename_1448",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/basename",
+        "origin_applet": "basename"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_bash_1468",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "bash"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_bash_19",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "blkdeactivate"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_bash_567",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "google-chrome-s"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_bash_49",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "grep"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_bash_53",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "lsblk"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_bash_5",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "reboot"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_bash_58",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "sort"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_bash_1291",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "sudo"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_bash_65",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "umount"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_cat_192",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/cat",
+        "origin_applet": "cat"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_1180",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "00-xrdb"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_299",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "Default"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_46",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "apport-gtk"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_4",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "apport-gtk"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_81",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "dpkg"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_40",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "dpkg-query"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_72",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "fgrep"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_862",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "gnome-session"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_47",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "grep"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_73",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "grep"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_719",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "lesspipe"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_487",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "package-system-"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_1888",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "sa1"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_2251",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "sh"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_2126",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "sh"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_138",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "sh"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_50",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "system-crash-no"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_84",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "system-crash-no"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "systemctl"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_39",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "threaded-ml"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_1529",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "which"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dbus-daemon_502",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/dbus-daemon",
+        "origin_applet": "dbus-daemon"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dbus-daemon_416",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dbus-daemon",
+        "origin_applet": "dbus-daemon"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dbus-daemon_966",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "messagebus",
+        "origin_program": "/usr/bin/dbus-daemon",
+        "origin_applet": "dbus-daemon"
+      },
+      "object": {
+        "path": "/run/systemd/users/1000"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dbus-daemon_760",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dbus-daemon",
+        "origin_applet": "dbus-daemon"
+      },
+      "object": {
+        "path": "/run/systemd/users/1000"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dbus-daemon_2203",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/dbus-daemon",
+        "origin_applet": "dbus-daemon"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dbus-daemon_123",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "messagebus",
+        "origin_program": "/usr/bin/dbus-daemon",
+        "origin_applet": "dbus-daemon"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dbus-daemon_127",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dbus-daemon",
+        "origin_applet": "dbus-daemon"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dbus-run-session_2195",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/dbus-run-session",
+        "origin_applet": "dbus-run-sessio"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dbus-run-session_302",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/dbus-run-session",
+        "origin_applet": "dbus-run-sessio"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dircolors_773",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dircolors",
+        "origin_applet": "dircolors"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dirname_2257",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dirname",
+        "origin_applet": "dirname"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dpkg_1689",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dpkg",
+        "origin_applet": "dpkg"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dpkg_371",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dpkg",
+        "origin_applet": "dpkg"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dpkg-divert_37",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dpkg-divert",
+        "origin_applet": "dpkg-divert"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_env_250",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/env",
+        "origin_applet": "ding.js"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_fuser_2155",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/fuser",
+        "origin_applet": "fuser"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_fuser_640",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/fuser",
+        "origin_applet": "fuser"
+      },
+      "object": {
+        "path": "/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_fuser_1014",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/fuser",
+        "origin_applet": "fuser"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_fwupdmgr_366",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "fwupd-refresh",
+        "origin_program": "/usr/bin/fwupdmgr",
+        "origin_applet": "fwupdmgr"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gdbus_2289",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gdbus",
+        "origin_applet": "gdbus"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gdbus_29",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gdbus",
+        "origin_applet": "gdbus"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gjs-console_1179",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/gjs-console",
+        "origin_applet": "gjs"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gjs-console_647",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gjs-console",
+        "origin_applet": "gjs"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gjs-console_2045",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/gjs-console",
+        "origin_applet": "gjs"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gjs-console_1610",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gjs-console",
+        "origin_applet": "gjs"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-keyring-daemon_1663",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gnome-keyring-daemon",
+        "origin_applet": "gnome-keyring-d"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-keyring-daemon_31",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gnome-keyring-daemon",
+        "origin_applet": "gnome-keyring-d"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-shell_56",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gnome-shell",
+        "origin_applet": "chrome_crashpad"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-shell_562",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/gnome-shell",
+        "origin_applet": "gnome-shell"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-shell_1282",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gnome-shell",
+        "origin_applet": "gnome-shell"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-shell_1299",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/gnome-shell",
+        "origin_applet": "gnome-shell"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-shell_129",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gnome-shell",
+        "origin_applet": "gnome-shell"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-shell_77",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/gnome-shell",
+        "origin_applet": "gnome-shell"
+      },
+      "object": {
+        "path": "/run/systemd/sessions/2"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-shell_2044",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/gnome-shell",
+        "origin_applet": "gnome-shell"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-shell_702",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gnome-shell",
+        "origin_applet": "gnome-shell"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-shell_1901",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gnome-shell",
+        "origin_applet": "gnome-shell"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-shell_7",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gnome-shell",
+        "origin_applet": "pool-gnome-shel"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-shell_967",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gnome-shell",
+        "origin_applet": "pool-gnome-shel"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-terminal.real_909",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/gnome-terminal.real",
+        "origin_applet": "gnome-terminal."
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_groups_57",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/groups",
+        "origin_applet": "groups"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_journalctl_102",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/journalctl",
+        "origin_applet": "journalctl"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_journalctl_2136",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/journalctl",
+        "origin_applet": "journalctl"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_journalctl_1173",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/journalctl",
+        "origin_applet": "journalctl"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_kmod_510",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/kmod",
+        "origin_applet": "modprobe"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_kmod_2207",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/kmod",
+        "origin_applet": "modprobe"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_mdevctl_16",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/mdevctl",
+        "origin_applet": "mdevctl"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_mdevctl_32",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/mdevctl",
+        "origin_applet": "mdevctl"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_mkdir_1212",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/mkdir",
+        "origin_applet": "mkdir"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_mount_1650",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/mount",
+        "origin_applet": "mount"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_mount_295",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/mount",
+        "origin_applet": "mount"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_nautilus_954",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/nautilus",
+        "origin_applet": "nautilus"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_nautilus_1117",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/nautilus",
+        "origin_applet": "nautilus"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pgrep_1562",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/pgrep",
+        "origin_applet": "pkill"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pgrep_1506",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/pgrep",
+        "origin_applet": "pkill"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pipewire_1175",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pipewire_841",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pipewire_67",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pipewire_1727",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pipewire_1590",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pipewire_12",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pipewire_923",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire-pulse"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pipewire_423",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire-pulse"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pipewire_23",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire-pulse"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pipewire_2024",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire-pulse"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pipewire_1301",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire-pulse"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pipewire_70",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire-pulse"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pkexec_1357",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/pkexec",
+        "origin_applet": "pkexec"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_pkexec_1171",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/pkexec",
+        "origin_applet": "pkexec"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_plymouth_563",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/plymouth",
+        "origin_applet": "plymouth"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_plymouth_1696",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/plymouth",
+        "origin_applet": "plymouth"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_1544",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "apport"
+      },
+      "object": {
+        "path": "/etc/apport/report-ignore"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_236",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "apport"
+      },
+      "object": {
+        "path": "/etc/apport/report-ignore/README.denylist"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_48",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "apport"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_1265",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "apport"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_1512",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "apport"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_15",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "apport"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_486",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "apport-checkrep"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_924",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "apt-check"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_1730",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "apt-check"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_1809",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "gdbus"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_787",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "gnome-terminal"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_2305",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "unattended-upgr"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_155",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "unattended-upgr"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_readlink_174",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/readlink",
+        "origin_applet": "readlink"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_run-parts_2293",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/run-parts",
+        "origin_applet": "run-parts"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_run-parts_1847",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/run-parts",
+        "origin_applet": "run-parts"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_sed_855",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/sed",
+        "origin_applet": "sed"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_setpriv_1929",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/setpriv",
+        "origin_applet": "setpriv"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_setpriv_768",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/setpriv",
+        "origin_applet": "setpriv"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_setpriv_582",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/setpriv",
+        "origin_applet": "setpriv"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_setpriv_137",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/setpriv",
+        "origin_applet": "setpriv"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_setsid_1202",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/setsid",
+        "origin_applet": "setsid"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_snap_1920",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/snap",
+        "origin_applet": "snap"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_snap_1709",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/snap",
+        "origin_applet": "snap"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_snap_627",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/snap",
+        "origin_applet": "snap"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_snap_784",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/snap",
+        "origin_applet": "snap"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_spice-vdagent_932",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/spice-vdagent",
+        "origin_applet": "spice-vdagent"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_sudo_346",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/sudo",
+        "origin_applet": "sudo"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_sudo_14",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/sudo",
+        "origin_applet": "sudo"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemctl_668",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/systemctl",
+        "origin_applet": "systemctl"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemctl_722",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/systemctl",
+        "origin_applet": "systemctl"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemctl_1819",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/systemctl",
+        "origin_applet": "systemctl"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemctl_343",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/systemctl",
+        "origin_applet": "systemctl"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_touch_1832",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/touch",
+        "origin_applet": "touch"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_true_24",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/true",
+        "origin_applet": "true"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_udevadm_1649",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/udevadm",
+        "origin_applet": "(udev-worker)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_udevadm_1786",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/udevadm",
+        "origin_applet": "systemd-udevd"
+      },
+      "object": {
+        "path": "/run/udev/data/b7:0"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_udevadm_2329",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/udevadm",
+        "origin_applet": "systemd-udevd"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_update-notifier_35",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/update-notifier",
+        "origin_applet": "apport-checkrep"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_update-notifier_69",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/update-notifier",
+        "origin_applet": "systemctl"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_update-notifier_29",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/update-notifier",
+        "origin_applet": "systemctl"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_update-notifier_1807",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/update-notifier",
+        "origin_applet": "update-notifier"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wireplumber_1669",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/wireplumber",
+        "origin_applet": "wireplumber"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wireplumber_519",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/wireplumber",
+        "origin_applet": "wireplumber"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wireplumber_87",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/wireplumber",
+        "origin_applet": "wireplumber"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wireplumber_1449",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/wireplumber",
+        "origin_applet": "wireplumber"
+      },
+      "object": {
+        "path": "/run/systemd/users/1000"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wireplumber_2355",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/wireplumber",
+        "origin_applet": "wireplumber"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wireplumber_16",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/wireplumber",
+        "origin_applet": "wireplumber"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_x86_64-linux-gnu-cpp-13_1404",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/x86_64-linux-gnu-cpp-13",
+        "origin_applet": "cpp"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xbrlapi_1685",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/xbrlapi",
+        "origin_applet": "xbrlapi"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xkbcomp_1182",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/bin/xkbcomp",
+        "origin_applet": "xkbcomp"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xkbcomp_930",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xkbcomp",
+        "origin_applet": "xkbcomp"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xprop_653",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xprop",
+        "origin_applet": "xprop"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xrdb_588",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xrdb",
+        "origin_applet": "xrdb"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-engine-mozc_0",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/ibus-mozc/ibus-engine-mozc",
+        "origin_applet": "ibus-engine-moz"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-engine-mozc_439",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/ibus-mozc/ibus-engine-mozc",
+        "origin_applet": "ibus-engine-moz"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-engine-mozc_913",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/ibus-mozc/ibus-engine-mozc",
+        "origin_applet": "ibus-engine-moz"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_snap-seccomp_772",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/snapd/snap-seccomp",
+        "origin_applet": "snap-seccomp"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_snap-seccomp_2220",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/snapd/snap-seccomp",
+        "origin_applet": "snap-seccomp"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_snap-seccomp_607",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/snapd/snap-seccomp",
+        "origin_applet": "snap-seccomp"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_snapd_1315",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/snapd/snapd",
+        "origin_applet": "snapd"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_sadc_683",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/sysstat/sadc",
+        "origin_applet": "sadc"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_sadc_173",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/sysstat/sadc",
+        "origin_applet": "sadc"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1164",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(-localed)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_32",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(colord)"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_0",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(colord)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_27b",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(direxec)"
+      },
+      "object": {
+        "path": "/proc/sys/fs/nr_open"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_151",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(direxec)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_30a",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(fprintd)"
+      },
+      "object": {
+        "path": "/proc/1336/mountinfo"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1047",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(fwupdmgr)"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_589",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(fwupdmgr)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1126",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(geoclue)"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1912",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(geoclue)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1309",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(imedated)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_55",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(kagekitd)"
+      },
+      "object": {
+        "path": "/proc/sys/kernel/cap_last_cap"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_672",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(metadata)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_20",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(ostnamed)"
+      },
+      "object": {
+        "path": "/sys/fs/cgroup/system.slice/systemd-hostnamed.service/cgroup.procs"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_572",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(ostnamed)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_277",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(ostnamed)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1238",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(rtal-gtk)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1277",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(sa1)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1149",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(sd-power)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_30b",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(sion-ctl)"
+      },
+      "object": {
+        "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/session.slice/org.gnome.SettingsDaemon.Power.service/cgroup.procs"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_2127",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(sion-ctl)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1062",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(sion-ctl)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1514",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(systemd)"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1234",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(systemd)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_546",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(systemd)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_892",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(time-dir)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1693",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(upowerd)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_824",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(wnloader)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1413",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(ystemctl)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1329",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(ystemctl)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_662",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "9"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_782",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "9"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1371",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "9"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_327",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "9"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1314",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "9"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_258",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "9"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_79",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "apport"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_51",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "apport-checkrep"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_36",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "gnome-session-c"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_27a",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "grep"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_52",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "groups"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_4",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "gsd-power"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_64",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "libvirt-guests."
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_15",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemctl"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1848",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_2361",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd"
+      },
+      "object": {
+        "path": "/run/udev/data/b7:0"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_76",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd"
+      },
+      "object": {
+        "path": "/sys/fs/cgroup/system.slice/systemd-hostnamed.service/cgroup.procs"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_86",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd"
+      },
+      "object": {
+        "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/session.slice/org.gnome.SettingsDaemon.Power.service/cgroup.procs"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1844",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1734",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_248",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_22",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd-hostnam"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_25",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd-hostnam"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1402",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd-user-ru"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1618",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd-user-ru"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_9",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "which"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_43",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "whoopsie"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_2058",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(-browsed)"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1808",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(-browsed)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1187",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(-localed)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_996",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(-service)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_133",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(-service)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_71",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(ate-utmp)"
+      },
+      "object": {
+        "path": "/proc/sys/kernel/cap_last_cap"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_2285",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(eplumber)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_82",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(eplumber)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_267",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(fprintd)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_172",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(g-daemon)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_17",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(g-daemon)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1759",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(gdm3)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_2236",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(geoclue)"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1980",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(geoclue)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_2110",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(kagekitd)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_364",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(l-server)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_417",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(on-store)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_7",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(ostnamed)"
+      },
+      "object": {
+        "path": "/sys/fs/cgroup/system.slice/systemd-hostnamed.service/cgroup.procs"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_6a",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(ostnamed)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_2356",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(p-portal)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_2342",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(pipewire)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_445",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(pipewire)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_413",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(pipewire)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_104",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(re-pulse)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_10",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(re-pulse)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_424",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(registry)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1792",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(rneloops)"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_178",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(rneloops)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1188",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(s-daemon)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_36",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(s-daemon)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_2345",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(sd-pam)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1113",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(settings)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1638",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(snap)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_342",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(snap)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1579",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(snap)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1153",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(snap)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_470",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(spatcher)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_727",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(t-daemon)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_135",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(t-portal)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_12",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(upowerd)"
+      },
+      "object": {
+        "path": "/sys/fs/cgroup/system.slice/upower.service/cgroup.procs"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1245",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(upowerd)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_591",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(upowerd)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_144",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(ystemctl)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_13",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(ystemctl)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1490",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(ystemctl)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_443",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(ystemctl)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1700",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "9"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_1196",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "9"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_2291",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "9"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_684",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "9"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_879",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "9"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_23",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "9"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-hostnamed_402",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-hostnamed",
+        "origin_applet": "systemd-hostnam"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-hostnamed_988",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-hostnamed",
+        "origin_applet": "systemd-hostnam"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-hostnamed_1351",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-hostnamed",
+        "origin_applet": "systemd-hostnam"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-journald_1040",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-journald",
+        "origin_applet": "systemd-journal"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-localed_1965",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-localed",
+        "origin_applet": "systemd-localed"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-localed_553",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-localed",
+        "origin_applet": "systemd-localed"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-logind_1016",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-logind",
+        "origin_applet": "systemd-logind"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-timedated_1701",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-timedated",
+        "origin_applet": "systemd-timedat"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-timedated_181",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-timedated",
+        "origin_applet": "systemd-timedat"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-update-utmp_34",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-update-utmp",
+        "origin_applet": "systemd-update-"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-update-utmp_42",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-update-utmp",
+        "origin_applet": "systemd-update-"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-user-runtime-dir_1753",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-user-runtime-dir",
+        "origin_applet": "systemd-user-ru"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-user-runtime-dir_393",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-user-runtime-dir",
+        "origin_applet": "systemd-user-ru"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_30-systemd-environment-d-generator_28",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/user-environment-generators/30-systemd-environment-d-generator",
+        "origin_applet": "30-systemd-envi"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_30-systemd-environment-d-generator_1976",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/user-environment-generators/30-systemd-environment-d-generator",
+        "origin_applet": "30-systemd-envi"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_30-systemd-environment-d-generator_0",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/user-environment-generators/30-systemd-environment-d-generator",
+        "origin_applet": "30-systemd-envi"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_30-systemd-environment-d-generator_1791",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/user-environment-generators/30-systemd-environment-d-generator",
+        "origin_applet": "30-systemd-envi"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-xdg-autostart-generator_17",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/user-generators/systemd-xdg-autostart-generator",
+        "origin_applet": "systemd-xdg-aut"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-xdg-autostart-generator_2144",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/user-generators/systemd-xdg-autostart-generator",
+        "origin_applet": "systemd-xdg-aut"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-xdg-autostart-generator_3",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/systemd/user-generators/systemd-xdg-autostart-generator",
+        "origin_applet": "systemd-xdg-aut"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-xdg-autostart-generator_323",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/user-generators/systemd-xdg-autostart-generator",
+        "origin_applet": "systemd-xdg-aut"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_livepatch-notification_83",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/update-notifier/livepatch-notification",
+        "origin_applet": "livepatch-notif"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_system-crash-notification_61",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/update-notifier/system-crash-notification",
+        "origin_applet": "apport-gtk"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_system-crash-notification_78",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/update-notifier/system-crash-notification",
+        "origin_applet": "system-crash-no"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_system-crash-notification_6",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/update-notifier/system-crash-notification",
+        "origin_applet": "system-crash-no"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_system-crash-notification_74",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/update-notifier/system-crash-notification",
+        "origin_applet": "threaded-ml"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ubuntu-advantage-notification_1445",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/update-notifier/ubuntu-advantage-notification",
+        "origin_applet": "ubuntu-advantag"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ubuntu-advantage-notification_2218",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/update-notifier/ubuntu-advantage-notification",
+        "origin_applet": "ubuntu-advantag"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gio-launch-desktop_884",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/glib-2.0/gio-launch-desktop",
+        "origin_applet": "gio-launch-desk"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gio-launch-desktop_1083",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/glib-2.0/gio-launch-desktop",
+        "origin_applet": "gio-launch-desk"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gio-launch-desktop_13",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/glib-2.0/gio-launch-desktop",
+        "origin_applet": "update-notifier"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_at-spi2-registryd_54",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/at-spi2-registryd",
+        "origin_applet": "at-spi2-registr"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dconf-service_1131",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/dconf-service",
+        "origin_applet": "dconf-service"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dconf-service_2244",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/dconf-service",
+        "origin_applet": "dconf-service"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_evolution-addressbook-factory_1921",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/evolution-addressbook-factory",
+        "origin_applet": "evolution-addre"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_evolution-source-registry_570",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/evolution-source-registry",
+        "origin_applet": "evolution-sourc"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_fprintd_2301",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/fprintd",
+        "origin_applet": "fprintd"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_fwupd_1955",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/fwupd/fwupd",
+        "origin_applet": "fwupd"
+      },
+      "object": {
+        "path": "/run/udev/data/b7:0"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_fwupd_1393",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/fwupd/fwupd",
+        "origin_applet": "fwupd"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_cc1_182",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gcc/x86_64-linux-gnu/13/cc1",
+        "origin_applet": "cc1"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gdm-session-worker_579",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/gdm-session-worker",
+        "origin_applet": "gdm-session-wor"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gdm-session-worker_1869",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/gdm-session-worker",
+        "origin_applet": "gdm-session-wor"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_geoclue_1213",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "geoclue",
+        "origin_program": "/usr/libexec/geoclue",
+        "origin_applet": "geoclue"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_geoclue_120",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "geoclue",
+        "origin_program": "/usr/libexec/geoclue",
+        "origin_applet": "geoclue"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_geoclue_1386",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "geoclue",
+        "origin_program": "/usr/libexec/geoclue",
+        "origin_applet": "pool-geoclue"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-session-binary_85",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gnome-session-binary",
+        "origin_applet": "gio-launch-desk"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-session-binary_82",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/gnome-session-binary",
+        "origin_applet": "gnome-session-b"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-session-binary_20",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gnome-session-binary",
+        "origin_applet": "gnome-session-b"
+      },
+      "object": {
+        "path": "/run/systemd/sessions/2"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-session-binary_1531",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/gnome-session-binary",
+        "origin_applet": "gnome-session-b"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-session-binary_345",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gnome-session-binary",
+        "origin_applet": "gnome-session-b"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-session-ctl_373",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gnome-session-ctl",
+        "origin_applet": "gnome-session-c"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-session-failed_1163",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/gnome-session-failed",
+        "origin_applet": "gnome-session-f"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-session-failed_1588",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/gnome-session-failed",
+        "origin_applet": "gnome-session-f"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-shell-calendar-server_146",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gnome-shell-calendar-server",
+        "origin_applet": "gnome-shell-cal"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-terminal-server_316",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gnome-terminal-server",
+        "origin_applet": "gnome-terminal-"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-terminal-server_142",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gnome-terminal-server",
+        "origin_applet": "gnome-terminal-"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-terminal-server_1189",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gnome-terminal-server",
+        "origin_applet": "threaded-ml"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gsd-housekeeping_845",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/gsd-housekeeping",
+        "origin_applet": "gsd-housekeepin"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gsd-housekeeping_2290",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gsd-housekeeping",
+        "origin_applet": "gsd-housekeepin"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gsd-media-keys_670",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gsd-media-keys",
+        "origin_applet": "gsd-media-keys"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gsd-media-keys_441",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gsd-media-keys",
+        "origin_applet": "gsd-media-keys"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gsd-power_1513",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/gsd-power",
+        "origin_applet": "gsd-power"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gsd-power_692",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gsd-power",
+        "origin_applet": "gsd-power"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gsd-power_531",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/gsd-power",
+        "origin_applet": "gsd-power"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gsd-printer_25",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gsd-printer",
+        "origin_applet": "gsd-printer"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gsd-smartcard_10",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gsd-smartcard",
+        "origin_applet": "pool-gsd-smartc"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gsd-wacom_339",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/gsd-wacom",
+        "origin_applet": "gsd-wacom"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gsd-xsettings_956",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gsd-xsettings",
+        "origin_applet": "gsd-xsettings"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gvfs-udisks2-volume-monitor_31",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gvfs-udisks2-volume-monitor",
+        "origin_applet": "gvfs-udisks2-vo"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gvfs-udisks2-volume-monitor_3",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gvfs-udisks2-volume-monitor",
+        "origin_applet": "gvfs-udisks2-vo"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gvfsd-metadata_2270",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gvfsd-metadata",
+        "origin_applet": "gvfsd-metadata"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gvfsd-trash_1880",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gvfsd-trash",
+        "origin_applet": "gvfsd-trash"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-dconf_11",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/ibus-dconf",
+        "origin_applet": "ibus-dconf"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-dconf_12",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/ibus-dconf",
+        "origin_applet": "ibus-dconf"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-engine-simple_80",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/ibus-engine-simple",
+        "origin_applet": "ibus-engine-sim"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-engine-simple_2161",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/ibus-engine-simple",
+        "origin_applet": "ibus-engine-sim"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-engine-simple_33",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/ibus-engine-simple",
+        "origin_applet": "ibus-engine-sim"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-extension-gtk3_15",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/ibus-extension-gtk3",
+        "origin_applet": "ibus-extension-"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-portal_2",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/ibus-portal",
+        "origin_applet": "ibus-portal"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-portal_35",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/ibus-portal",
+        "origin_applet": "ibus-portal"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-x11_1964",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/ibus-x11",
+        "origin_applet": "ibus-x11"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_nm-dispatcher_796",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/nm-dispatcher",
+        "origin_applet": "nm-dispatcher"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_nm-dispatcher_2248",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/nm-dispatcher",
+        "origin_applet": "nm-dispatcher"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_packagekitd_623",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/packagekitd",
+        "origin_applet": "packagekitd"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_rtkit-daemon_612",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/rtkit-daemon",
+        "origin_applet": "rtkit-daemon"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_tracker-miner-fs-3_100",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/tracker-miner-fs-3",
+        "origin_applet": "tracker-miner-f"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_udisksd_216",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/udisks2/udisksd",
+        "origin_applet": "udisksd"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xdg-desktop-portal_51",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xdg-desktop-portal",
+        "origin_applet": "xdg-desktop-por"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xdg-desktop-portal-gnome_1053",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xdg-desktop-portal-gnome",
+        "origin_applet": "xdg-desktop-por"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xdg-desktop-portal-gtk_1800",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xdg-desktop-portal-gtk",
+        "origin_applet": "xdg-desktop-por"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xdg-document-portal_253",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xdg-document-portal",
+        "origin_applet": "xdg-document-po"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xdg-permission-store_946",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/xdg-permission-store",
+        "origin_applet": "xdg-permission-"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xdg-permission-store_320",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xdg-permission-store",
+        "origin_applet": "xdg-permission-"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xdg-permission-store_24",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "gdm",
+        "origin_program": "/usr/libexec/xdg-permission-store",
+        "origin_applet": "xdg-permission-"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_teal-logview_1971",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/local/bin/teal-logview",
+        "origin_applet": "teal-logview"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_teal-logview_2",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/local/bin/teal-logview",
+        "origin_applet": "teal-logview"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_NetworkManager_5",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/NetworkManager",
+        "origin_applet": "NetworkManager"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_NetworkManager_379",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/NetworkManager",
+        "origin_applet": "NetworkManager"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_cron_1903",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/cron",
+        "origin_applet": "cron"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_cron_1597",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/cron",
+        "origin_applet": "cron"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_cron_1549",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/cron",
+        "origin_applet": "cron"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_cups-browsed_1400",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "cups-browsed",
+        "origin_program": "/usr/sbin/cups-browsed",
+        "origin_applet": "cups-browsed"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_cupsd_7",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/cupsd",
+        "origin_applet": "cupsd"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_cupsd_26",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/cupsd",
+        "origin_applet": "cupsd"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_cupsd_18",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/cupsd",
+        "origin_applet": "cupsd"
+      },
+      "object": {
+        "path": "/proc/sys/kernel/random/boot_id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dnsmasq_1428",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/dnsmasq",
+        "origin_applet": "dnsmasq"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gdm3_60",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/gdm3",
+        "origin_applet": "Default"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gdm3_1984",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/gdm3",
+        "origin_applet": "gdm-session-wor"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gdm3_81",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/gdm3",
+        "origin_applet": "gdm-session-wor"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gdm3_1017",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/gdm3",
+        "origin_applet": "gdm-session-wor"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gdm3_1522",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/gdm3",
+        "origin_applet": "gdm3"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gdm3_22",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/gdm3",
+        "origin_applet": "gdm3"
+      },
+      "object": {
+        "path": "/run/systemd/sessions/2"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gdm3_2219",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/gdm3",
+        "origin_applet": "gdm3"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_kerneloops_1894",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "kernoops",
+        "origin_program": "/usr/sbin/kerneloops",
+        "origin_applet": "kerneloops"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_kerneloops_62",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "kernoops",
+        "origin_program": "/usr/sbin/kerneloops",
+        "origin_applet": "kerneloops"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_libvirtd_2",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/libvirtd",
+        "origin_applet": "daemon-init"
+      },
+      "object": {
+        "path": "/proc/mtrr"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_libvirtd_1856",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/libvirtd",
+        "origin_applet": "daemon-init"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_libvirtd_2132",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/libvirtd",
+        "origin_applet": "libvirtd"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_rsyslogd_21",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "syslog",
+        "origin_program": "/usr/sbin/rsyslogd",
+        "origin_applet": "in:imuxsock"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+
+    {
+      "id": "auto_allow_systemd-executor_5",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(sd-power)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_6b",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(sd-power)"
+      },
+      "object": {
+        "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/session.slice/org.gnome.SettingsDaemon.Power.service/cgroup.procs"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_4",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(sion-ctl)"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_0",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(sion-ctl)"
+      },
+      "object": {
+        "path": "/proc/sys/kernel/cap_last_cap"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd-executor_2",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(sion-ctl)"
+      },
+      "object": {
+        "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/session.slice/org.gnome.SettingsDaemon.Power.service/cgroup.procs"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gnome-session-ctl_1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gnome-session-ctl",
+        "origin_applet": "gnome-session-c"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gsd-power_3",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gsd-power",
+        "origin_applet": "gsd-power"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    }
+  ]
+}
