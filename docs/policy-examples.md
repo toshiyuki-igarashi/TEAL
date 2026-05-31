@@ -30,8 +30,8 @@ Each file has a different responsibility:
 | `roles.json`       | Defines TEAL roles and assigns them to users or groups                     |
 | `management.json`  | Defines who can start or stop TEAL enforcement and whether MPA is required |
 | `00-base.json`     | Minimal base policy, including protection for `/etc/shadow`                |
-| `01-ubuntu.json`   | Ubuntu baseline / noise-control policy to reduce log storms                |
-| `02-ubuntu.json`   | Allow rules for reviewed Ubuntu behavior surfaced by the baseline policy   |
+| `01-ubuntu.json`   | xubuntu baseline / noise-control policy to reduce log storms               |
+| `02-ubuntu.json`   | Allow rules for reviewed xubuntu behavior surfaced by the baseline policy  |
 
 ## Policy bundle: `bundle.json`
 
@@ -44,11 +44,11 @@ Example:
 ```json
 {
   "schema_version": "1.0",
-  "name": "ubuntu-poc",
+  "name": "-poc",
   "policy_files": [
     "00-base.json",
-    "01-ubuntu.json",
-    "02-ubuntu.json"
+    "01-.json",
+    "02-.json"
   ]
 }
 ```
@@ -445,13 +445,13 @@ Use this file first when verifying that the basic TEAL approval path works.
 
 ## Example: `01-ubuntu.json`
 
-`01-ubuntu.json` is an Ubuntu baseline / noise-control policy.
+`01-ubuntu.json` is an xubuntu baseline / noise-control policy.
 
-A normal Ubuntu system generates many file, process, and IPC-related events during boot and normal operation. Without baseline rules, the system may produce excessive logs or approval candidates that are not security-relevant.
+A normal xubuntu system generates many file, process, and IPC-related events during boot and normal operation. Without baseline rules, the system may produce excessive logs or approval candidates that are not security-relevant.
 
 Typical purpose:
 
-* reduce log storm during normal Ubuntu startup
+* reduce log storm during normal xubuntu startup
 * suppress low-value high-frequency events
 * define trusted system process behavior
 * demonstrate `audit_level`
@@ -460,13 +460,13 @@ Typical purpose:
 
 This file should not be understood as a complete security boundary by itself. Its primary role is operational: to keep the PoC usable by reducing unnecessary noise from routine system behavior.
 
-Use this file when evaluating TEAL on an Ubuntu host or VM and you want a stable baseline before adding stricter protection rules.
+Use this file when evaluating TEAL on an xubuntu host or VM and you want a stable baseline before adding stricter protection rules.
 
 ## Example: `02-ubuntu.json`
 
 `02-ubuntu.json` complements `01-ubuntu.json`.
 
-Where `01-ubuntu.json` reduces noise and identifies baseline Ubuntu behavior, `02-ubuntu.json` demonstrates reviewed allow rules for resources or operations that become visible after applying the baseline policy.
+Where `01-ubuntu.json` reduces noise and identifies baseline xubuntu behavior, `02-ubuntu.json` demonstrates reviewed allow rules for resources or operations that become visible after applying the baseline policy.
 
 Typical purpose:
 
@@ -629,5 +629,5 @@ Before applying them to a real system:
 * avoid assigning management roles to broad UID sets
 * keep `deny_if_role_unknown: true` unless there is a clear reason not to
 
-The examples are meant to explain TEAL policy mechanics, not to provide a complete secure Ubuntu policy.
+The examples are meant to explain TEAL policy mechanics, not to provide a complete secure xubuntu policy.
 
