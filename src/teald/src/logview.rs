@@ -635,25 +635,41 @@ fn parse_ops(action_str: &str) -> Vec<String> {
         .collect()
 }
 
-/// ルール集約のキーとなる条件（opsを外す）
+/// ルール集約のキーとなる条件
 #[derive(Hash, Eq, PartialEq, Clone)]
 struct MergeKey {
-    origin_program: String,
-    origin_applet: Option<String>,
-    user: Option<String>,
     effect: String,
     audit_level: Option<String>,
 }
 
+/// 実質的なパスの長さを計算するヘルパー（prefix: や glob: を除外）
+fn effective_path_len(path: &str) -> usize {
+    path.trim_start_matches("prefix:")
+        .trim_start_matches("glob:")
+        .len()
+}
+
+/// パスまたはプログラム名の包含関係を評価するヘルパー
+fn json_path_contains(kept: &str, target: &str) -> bool {
+    if kept == target {
+        return true; // 完全一致
+    }
+    if kept.starts_with("prefix:") {
+        let base_prefix = kept.trim_start_matches("prefix:");
+        let target_clean = target.trim_start_matches("prefix:").trim_start_matches("glob:");
+        return target_clean.starts_with(base_prefix); // プレフィックス前方一致
+    }
+    false
+}
+
+/// 包含関係にある冗長なルールをクリーンアップし、ポリシーを最小化する
 pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<ProfiledRule> {
-    // 1. Grouping
+    // 1. Grouping（バケツを Effect と AuditLevel に）
+    // これにより、プログラムを跨いだクロスグループ・マージを同一バケツ内で一元評価可能にする
     let mut groups: HashMap<MergeKey, Vec<ProfiledRule>> = HashMap::new();
 
     for rule in rules {
         let key = MergeKey {
-            origin_program: rule.subject.origin_program.clone(),
-            origin_applet: rule.subject.origin_applet.clone(),
-            user: rule.subject.user.clone(),
             effect: rule.effect.clone(),
             audit_level: rule.audit_level.clone(),
         };
@@ -662,51 +678,69 @@ pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<Pr
 
     let mut optimized_rules = Vec::new();
 
-    // 2 & 3. ソートと包含チェック
+    // 2 & 3. 多次元ソートと包含チェック
     for (_, mut group_rules) in groups {
-        // パス長が短い順（昇順）、かつ、opsの数が多い順（降順）にソート
+        // バケツの中で「最も適用範囲が広くて強いルール」が必ず先頭に来るように多段ソート
         group_rules.sort_by(|a, b| {
-            let len_a = a.object.path.trim_start_matches("prefix:").trim_start_matches("glob:").len();
-            let len_b = b.object.path.trim_start_matches("prefix:").trim_start_matches("glob:").len();
+            let path_a_len = effective_path_len(&a.object.path);
+            let path_b_len = effective_path_len(&b.object.path);
             
-            len_a.cmp(&len_b)
+            // ① 対象オブジェクトのパスが短い順（昇順：広域なパスが最優先）
+            path_a_len.cmp(&path_b_len)
+                // ② プログラムの指定範囲が広い順（昇順：指定なし(0)や、短いパスが先）
+                .then_with(|| {
+                    let prog_a_len = effective_path_len(&a.subject.origin_program);
+                    let prog_b_len = effective_path_len(&b.subject.origin_program);
+                    prog_a_len.cmp(&prog_b_len)
+                })
+                // ③ アプレット指定がない(None)のが先（昇順: None < Some）
+                .then_with(|| a.subject.origin_applet.cmp(&b.subject.origin_applet))
+                // ④ ユーザー指定がない(None)のが先（昇順: None < Some）
+                .then_with(|| a.subject.user.cmp(&b.subject.user))
+                // ⑤ アクションの権限（ops）の数が多い順（降順）
                 .then_with(|| b.action.ops.len().cmp(&a.action.ops.len()))
         });
 
         let mut kept_rules: Vec<ProfiledRule> = Vec::new();
 
         for current_rule in group_rules {
-            let current_path = current_rule.object.path.clone();
             let mut is_shadowed = false;
 
             for kept_rule in &mut kept_rules {
-                let kept_path = &kept_rule.object.path;
+                // --- A. Subject (Program) の包含チェック 【補強】 ---
+                // 先行ルールが空文字（指定なし＝全プログラム対象）であるか、あるいはパスとして包含しているか
+                let is_prog_shadowed = kept_rule.subject.origin_program.is_empty()
+                    || json_path_contains(&kept_rule.subject.origin_program, &current_rule.subject.origin_program);
 
-                // --- 1. パスの包含チェック ---
-                let is_path_shadowed = if kept_path == &current_path {
-                    true        // パスが完全に同じ場合
-                } else if kept_path.starts_with("prefix:") {
-                    let base_prefix = kept_path.trim_start_matches("prefix:");
-                    let target_path = current_path.trim_start_matches("prefix:").trim_start_matches("glob:");
-                    target_path.starts_with(base_prefix) // プレフィックスに包含されている場合
-                } else {
-                    false
-                };
+                // --- B. Subject (Applet) の包含チェック ---
+                let is_applet_shadowed = kept_rule.subject.origin_applet.is_none() 
+                    || kept_rule.subject.origin_applet == current_rule.subject.origin_applet;
 
-                // --- 2. Action (ops) の包含チェック ---
-                // 現在のルールのすべてのopが、保持側ルールのopsに含まれているか（部分集合か）
+                // --- C. Subject (User) の包含チェック ---
+                let is_user_shadowed = kept_rule.subject.user.is_none() 
+                    || kept_rule.subject.user == current_rule.subject.user;
+
+                // --- D. Object (Path) の包含チェック ---
+                let is_path_shadowed = json_path_contains(&kept_rule.object.path, &current_rule.object.path);
+
+                // --- E. Action (ops) の包含チェック ---
                 let is_ops_shadowed = current_rule.action.ops.iter()
                     .all(|op| kept_rule.action.ops.contains(op));
 
-                // 両方包含されていれば、このルールは完全に不要（Shadowed）
-                if is_path_shadowed && is_ops_shadowed {
+                // 全ての多次元包含関係が成立すれば、後続ルールは完全に不要（Shadowed）
+                if is_prog_shadowed && is_applet_shadowed && is_user_shadowed && is_path_shadowed && is_ops_shadowed {
                     is_shadowed = true;
                     
-                    // 包含された旨を記録（annotate_reason が有効な場合）
                     if annotate_reason {
                         let new_reason = match &kept_rule.reason {
-                            Some(r) => format!("{} (Merged with narrower paths/ops)", r),
-                            None => "Merged with narrower paths/ops".to_string(),
+                            Some(r) => {
+                                if r.contains("Merged with narrower rules") {
+                                    r.clone()
+                                } else {
+                                    format!("{} (Merged with narrower rules)", r)
+                                }
+                            }
+                            None => "Merged with narrower rules".to_string(),
                         };
                         kept_rule.reason = Some(new_reason);
                     }
@@ -721,7 +755,19 @@ pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<Pr
         optimized_rules.extend(kept_rules);
     }
 
-    // 4. 管理者の視認性を高める 4段階ソート
+    // 4. ルールIDの重複回避（ユニーク化サフィックスの付与）
+    // 万が一マージをすり抜けて同じIDが残った場合も、連番を振ってTEALのロードエラーを鉄壁ガード
+    let mut seen_ids: HashMap<String, usize> = HashMap::new();
+    for rule in &mut optimized_rules {
+        let base_id = rule.id.clone();
+        let count = seen_ids.entry(base_id.clone()).or_insert(0);
+        if *count > 0 {
+            rule.id = format!("{}-{}", base_id, count);
+        }
+        *count += 1;
+    }
+
+    // 5. 管理者の視認性を高める最終4段階ソート（仕様書準拠）
     optimized_rules.sort_by(|a, b| {
         a.subject.origin_program.cmp(&b.subject.origin_program)
             .then_with(|| a.subject.origin_applet.cmp(&b.subject.origin_applet))
