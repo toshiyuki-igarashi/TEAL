@@ -6,6 +6,10 @@ The examples are intended for Alpha / PoC evaluation. They are designed to show 
 
 They are not production hardening profiles. Review every rule before using them on a real system.
 
+> [!IMPORTANT]
+> **Configuration Identity Notice:** 
+> The example configurations provided below are pre-configured specifically for the environment of **`uid: 1000` / `user: toshiyuki`**. Please modify these identity mappings, UIDs, and username fields to match your specific target deployment system environment and organizational control requirements before initiating enforcement.
+
 ## Directory layout
 
 Example policy files are stored under:
