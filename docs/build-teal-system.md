@@ -146,6 +146,10 @@ sudo update-grub
 
 ```bash
 cd ~/TEAL/src
+
+sudo apt update
+sudo apt install pkg-config libtss2-dev
+
 rustup update
 cargo build --release
 
@@ -328,6 +332,47 @@ sudo systemctl enable --now teald
 
 ```
 
+
+#### Kernel Switch & Boot Preparation
+
+Before starting the daemon, you must boot into the newly compiled TEAL kernel.
+
+**1. Secure Boot Considerations**
+If your system has UEFI Secure Boot enabled, you must either sign the newly compiled kernel and modules with your Machine Owner Key (MOK) or temporarily disable Secure Boot in the BIOS/UEFI settings for this PoC.
+
+**2. GRUB Configuration (`/etc/default/grub`)**
+To ensure TEAL operates without interference from other default LSMs (like AppArmor) and to ensure you can easily boot back into your original stock kernel if needed, update your GRUB configuration. *(An example configuration is provided at `examples/grub` in the repository).*
+
+Modify `/etc/default/grub` to include:
+
+```text
+# Display the boot menu for easy fallback
+GRUB_TIMEOUT_STYLE=menu
+GRUB_TIMEOUT=5
+
+# Isolate TEAL as the only active LSM
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash lsm=teal"
+
+```
+
+After editing, apply the changes:
+
+```bash
+sudo update-grub
+
+```
+
+**3. Advanced Example Policies (Log Storm Prevention)**
+For production-like high-load environments, refer to `examples/01-bundle.json` and `examples/02-bundle.json`. These examples demonstrate how to correctly configure `silent_io` and inheritance settings to avoid audit log storms.
+
+**4. Reboot the System**
+Reboot and select the newly compiled TEAL kernel from the GRUB menu.
+
+```bash
+sudo reboot
+
+```
+
 ### 3 Starting the Daemon
 
 Launch `teald`, which serves as the core authorization engine:
@@ -378,3 +423,50 @@ if ! grep -q "TEAL_ALLOY_JAR" ~/.bashrc; then
 fi
 
 ```
+
+
+---
+
+### Appendix: Advanced Configuration & Troubleshooting
+
+#### A. Kernel Pinning (Preventing Overwrites)
+
+To prevent the OS package manager (`apt`) from automatically overriding your default boot entry with a standard distribution kernel update, configure GRUB to remember your last kernel choice:
+
+```text
+# In /etc/default/grub
+GRUB_DEFAULT=saved
+GRUB_SAVEDEFAULT=true
+
+```
+
+*(Run `sudo update-grub` after modifying).*
+
+#### B. Log Rotation
+
+In Audit mode, TEAL may generate a significant volume of logs. To prevent disk space exhaustion, configure `logrotate` for the TEAL log directory.
+Create a file at `/etc/logrotate.d/teal`:
+
+```text
+/var/log/teal/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+}
+
+```
+
+#### C. Troubleshooting
+
+If TEAL fails to start or the system becomes unstable, follow these steps:
+
+1. **Daemon Initialization Failure:**
+Check the `teald` logs using `sudo journalctl -u teald -f`. TEAL enforces strict JSON schema validation. A single syntax error or missing bracket in `/etc/teal.d/` will cause the daemon to refuse startup for safety reasons.
+2. **Boot Loops or Kernel Panics:**
+Hard reboot the machine, hold `Shift` or `Esc` to access the GRUB menu, and select your original stock Ubuntu kernel (e.g., 6.8.0-xx-generic) to recover the system.
+3. **Module Loading Issues:**
+Run `dmesg | grep -i teal` to check for kernel-level initialization errors, LSM registration failures, or Fast Path cache allocation issues.

@@ -10,7 +10,7 @@ TEAL is currently an Alpha / PoC implementation.
 Implemented and evaluated:
 - file-open based read/write gating via LSM hooks
 - exec gating via LSM hooks
-- basic connect gating via LSM hooks
+- basic connect gating prototype via LSM hooks
 - teald policy decision daemon
 - basic MPA / approval flow
 - Fast Path ticket cache
@@ -19,9 +19,9 @@ Implemented and evaluated:
 - initial performance evaluation
 
 Planned / expanding:
+- full TEAL-NET outbound policy framework
 - additional inode/path-level LSM hooks for destructive or namespace-changing operations, such as unlink, rename, create, chmod, and chown
 - policy draft generation support for newly added operation types
-- full TEAL-NET outbound policy framework
 - TPM / Measured Boot integration
 - FIDO2 / Threshold BLS approvals
 - Wasm policy engine
@@ -45,11 +45,12 @@ The project is structured to bridge the gap between kernel-level enforcement and
 ## Security Model
 
 TEAL is designed to reduce the impact of post-compromise activity by re-gating sensitive actions at the OS execution point.
+The current Alpha focuses mainly on file-open and exec gating. Additional destructive or namespace-changing operations are being expanded.
 
 TEAL is intended to protect:
 - sensitive file reads, such as credentials, secrets, database dumps, and policy files
 - sensitive executions, including administrative tools and privileged maintenance operations
-- destructive file operations, such as write, unlink, rename, and truncate
+- destructive or namespace-changing file operations, currently being expanded beyond the initial file-open based coverage
 - policy-changing actions that alter the TEAL security boundary
 
 TEAL does not currently claim to protect against:
@@ -59,101 +60,40 @@ TEAL does not currently claim to protect against:
 - physical attacks
 - network exfiltration control via TEAL-NET, which is still a roadmap item
 
-For the detailed threat model and design rationale, see `docs/TEAL_short_paper.md`.
+For the detailed threat model and design rationale, see [TEAL_short_paper](./docs/TEAL_short_paper.md).
 
 ## Quick Start
 
-TEAL currently requires building a Linux kernel with the TEAL LSM enabled.
-There is not yet a one-command installer or DKMS package.
+TEAL currently requires a Linux kernel built with the TEAL LSM enabled. There is not yet a one-command installer, out-of-tree module package, or DKMS package.
 
-For now, the recommended path is:
+For the full setup procedure, see:
 
-1. Prepare an Ubuntu 24.04 LTS environment.
-2. Build Linux 6.8.x with Rust support and the TEAL LSM enabled.
-3. Build the TEAL user-space tools with Cargo.
-4. Install and start `teald`.
-5. Load a sample policy and verify audit/enforce behavior.
+- [build-teal-system](./docs/build-teal-system.md)
 
-See `docs/build-teal-system.md` for the full build procedure.
-
-## Build from Source
-
-Detailed build instructions are available in:
-
-- `docs/build-teal-system.md`
-
-The current Alpha build has been verified with:
-
-- Ubuntu 24.04 LTS
-- Linux 6.8.x
-- LLVM 17
-- Rust 1.74.1, matching the Linux kernel Rust toolchain requirements
-
-TEAL is currently developed outside the upstream Linux kernel tree, but it is built as an in-tree LSM.
-The current Alpha build requires copying the TEAL LSM sources into a Linux kernel source tree, registering them with Kconfig/Kbuild, and rebuilding the kernel.
-Out-of-tree module builds and DKMS packaging are not yet supported.
-
-## Usage
-
-Start the TEAL daemon:
+After completing the build guide, the basic PoC workflow is:
 
 ```bash
 sudo systemctl start teald
-```
-
-Check logs:
-
-```bash
 teal-logview tail
-```
-
-Use the CLI to inspect pending requests or approvals:
-
-```bash
+teal-cli keygen
+teal-cli register
 teal-cli list
-teal-cli approve <REQUEST_ID>
-teal-cli deny <REQUEST_ID>
 ```
 
-TEAL supports both AUDIT and ENFORCE modes.
-In AUDIT mode, TEAL records policy-relevant events without blocking them.
-In ENFORCE mode, TEAL applies policy decisions and may block sensitive operations unless they are covered by an approved Fast Path ticket.
+For operational examples, AUDIT / ENFORCE mode usage, approvals, and log inspection, see:
 
+- [operational-guide-poc](./docs/operational-guide-poc.md)
 
-## Policy Example
+## Policy Examples
 
-Example policy rule requiring approval for reading `/etc/shadow`:
+Example policies are available under:
 
-```json
-{
-  "version": "1.3",
-  "default_effect": "allow",
-  "default_reason": "No matching rule; default allow.",
-  "ttl_minutes": 10,
-  "sweep_minutes": 5,
-  "pre_approval_defaults": { "ttl_sec_default": 600, "ttl_sec_max": 900 },
-  "rules": [
-    {
-      "id": "protect-etc-shadow",
-      "subject": {
-        "roles": ["admin"]
-      },
-      "object": {
-        "path": "/etc/shadow"
-      },
-      "action": {
-        "ops": ["read"]
-      },
-      "effect": "need_approval",
-      "required_roles": ["security_officer"],
-      "threshold": 1,
-      "reason": "Reading /etc/shadow requires explicit approval."
-    }
-  ]
-}
-```
+- `examples/policies/`
 
-More examples are available under `examples/policies/`.
+For policy syntax, rule semantics, approval behavior, and common patterns, see:
+
+- [policy-examples](./docs/policy-examples.md)
+
 
 ## Performance
 
@@ -172,7 +112,7 @@ Microbenchmark results also showed near-baseline median latency for Enforce Mode
 The results should be interpreted as an initial indication of Fast Path viability, not as a general performance guarantee.
 These are early Alpha results. Additional evaluation across hardware, workloads, policy complexity, and long-running systems is still needed.
 
-See `docs/TEAL-performance-evaluation.md` for details.
+See [performance_evaluation](./docs/performance_evaluation.md) for details.
 
 ## Limitations
 

@@ -568,10 +568,29 @@ pub enum ProfileTarget {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+pub struct PreApprovalDefaults {
+    pub ttl_sec_default: u64,
+    pub ttl_sec_max: u64,
+}
+
+// ポリシードラフトのルート構造体
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ProfiledPolicyDraft {
-    pub version: String,      // "1.3" 固定
-    pub ttl_minutes: u32,     // 必須フィールド
-    pub sweep_minutes: u32,   // 必須フィールド
+    pub version: String,
+    
+    // 省略可能なトップレベルフィールドを追加
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_effect: Option<String>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_reason: Option<String>,
+    
+    pub ttl_minutes: u32,
+    pub sweep_minutes: u32,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_approval_defaults: Option<PreApprovalDefaults>,
+    
     pub rules: Vec<ProfiledRule>,
 }
 
@@ -759,15 +778,15 @@ pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<Pr
     // 万が一マージをすり抜けて同じIDが残った場合も、連番を振ってTEALのロードエラーを鉄壁ガード
     let mut seen_ids: HashMap<String, usize> = HashMap::new();
     for rule in &mut optimized_rules {
-        let base_id = rule.id.clone();
-        let count = seen_ids.entry(base_id.clone()).or_insert(0);
+        let count = seen_ids.entry(rule.id.clone()).or_insert(0);
         if *count > 0 {
-            rule.id = format!("{}-{}", base_id, count);
+            // 重複があった場合、元のIDに "-1", "-2" のようにサフィックスを付与
+            rule.id = format!("{}-{}", rule.id, count);
         }
         *count += 1;
     }
 
-    // 5. 管理者の視認性を高める最終4段階ソート（仕様書準拠）
+    // 5. 管理者の視認性を高める最終4段階ソート
     optimized_rules.sort_by(|a, b| {
         a.subject.origin_program.cmp(&b.subject.origin_program)
             .then_with(|| a.subject.origin_applet.cmp(&b.subject.origin_applet))
@@ -884,8 +903,18 @@ pub fn generate_profile_json(
     // --- 4. TEAL v1.3 スキーマ準拠の JSON オブジェクト出力 ---
     let draft = ProfiledPolicyDraft {
         version: "1.3".to_string(),
+        
+        default_effect: Some("allow".to_string()),
+        default_reason: Some("No matching rule; default allow.".to_string()),
+        
         ttl_minutes: 60,
         sweep_minutes: 5,
+        
+        pre_approval_defaults: Some(PreApprovalDefaults {
+            ttl_sec_default: 600,
+            ttl_sec_max: 900,
+        }),
+        
         rules: generated_rules,
     };
 
