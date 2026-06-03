@@ -599,14 +599,19 @@ pub struct ProfiledRule {
     pub id: String,
     
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>, // annotate_reason 用に追加
+    pub rule_type: Option<String>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 
     pub subject: SubjectObj,
-    pub object: ObjectObj,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object: Option<ObjectObj>,
+    
     pub action: ActionObj,
     pub effect: String,
     
-    // 以下、特定のモードでのみ出力したいフィールドは Option にして skip_serializing_if を使う
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audit_level: Option<String>,
     
@@ -617,6 +622,12 @@ pub struct ProfiledRule {
     
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ticket_profile: Option<TicketProfileObj>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_roles: Option<Vec<String>>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -624,10 +635,14 @@ pub struct SubjectObj {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
     
-    pub origin_program: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin_program: Option<String>,
     
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin_applet: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roles: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -644,6 +659,10 @@ pub struct ActionObj {
 pub struct TicketProfileObj {
     pub silent_io: bool,
     pub inherit: bool,
+    
+    // 名無しオブジェクト用の高速化フラグ
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_nameless_ipc: Option<bool>, 
 }
 
 /// "READ, WRITE" のようなカンマ区切り文字列を Vec<String> に展開する
@@ -701,15 +720,15 @@ pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<Pr
     for (_, mut group_rules) in groups {
         // バケツの中で「最も適用範囲が広くて強いルール」が必ず先頭に来るように多段ソート
         group_rules.sort_by(|a, b| {
-            let path_a_len = effective_path_len(&a.object.path);
-            let path_b_len = effective_path_len(&b.object.path);
-            
-            // ① 対象オブジェクトのパスが短い順（昇順：広域なパスが最優先）
+            let path_a_len = a.object.as_ref().map(|o| effective_path_len(&o.path)).unwrap_or(0);
+            let path_b_len = b.object.as_ref().map(|o| effective_path_len(&o.path)).unwrap_or(0);
+
+            // ① 対象オブジェクトのパスが短い順（昇順：広域なパスや None が最優先）
             path_a_len.cmp(&path_b_len)
-                // ② プログラムの指定範囲が広い順（昇順：指定なし(0)や、短いパスが先）
+                // ② プログラムの指定範囲が広い順（Optionの中身を取り出して文字数計算）
                 .then_with(|| {
-                    let prog_a_len = effective_path_len(&a.subject.origin_program);
-                    let prog_b_len = effective_path_len(&b.subject.origin_program);
+                    let prog_a_len = a.subject.origin_program.as_deref().map(effective_path_len).unwrap_or(0);
+                    let prog_b_len = b.subject.origin_program.as_deref().map(effective_path_len).unwrap_or(0);
                     prog_a_len.cmp(&prog_b_len)
                 })
                 // ③ アプレット指定がない(None)のが先（昇順: None < Some）
@@ -726,21 +745,28 @@ pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<Pr
             let mut is_shadowed = false;
 
             for kept_rule in &mut kept_rules {
-                // --- A. Subject (Program) の包含チェック 【補強】 ---
-                // 先行ルールが空文字（指定なし＝全プログラム対象）であるか、あるいはパスとして包含しているか
-                let is_prog_shadowed = kept_rule.subject.origin_program.is_empty()
-                    || json_path_contains(&kept_rule.subject.origin_program, &current_rule.subject.origin_program);
+                // --- A. Subject (Program) の包含チェック ---
+                let is_prog_shadowed = kept_rule.subject.origin_program.is_none() 
+                    || (kept_rule.subject.origin_program.as_deref().unwrap_or("") == "") 
+                    || json_path_contains(
+                        kept_rule.subject.origin_program.as_deref().unwrap_or(""),
+                        current_rule.subject.origin_program.as_deref().unwrap_or("")
+                    );
 
                 // --- B. Subject (Applet) の包含チェック ---
-                let is_applet_shadowed = kept_rule.subject.origin_applet.is_none() 
+                let is_applet_shadowed = kept_rule.subject.origin_applet.is_none()
                     || kept_rule.subject.origin_applet == current_rule.subject.origin_applet;
 
                 // --- C. Subject (User) の包含チェック ---
-                let is_user_shadowed = kept_rule.subject.user.is_none() 
+                let is_user_shadowed = kept_rule.subject.user.is_none()
                     || kept_rule.subject.user == current_rule.subject.user;
 
-                // --- D. Object (Path) の包含チェック ---
-                let is_path_shadowed = json_path_contains(&kept_rule.object.path, &current_rule.object.path);
+                // --- D. Object (Path) の包含チェック (修正部分) ---
+                let is_path_shadowed = match (&kept_rule.object, &current_rule.object) {
+                    (None, None) => true, // 両方とも subject_only (名無しIPC) の場合は包含成立
+                    (Some(kept_obj), Some(curr_obj)) => json_path_contains(&kept_obj.path, &curr_obj.path),
+                    _ => false, // 片方だけが subject_only の場合は別次元のルールなのでマージしない
+                };
 
                 // --- E. Action (ops) の包含チェック ---
                 let is_ops_shadowed = current_rule.action.ops.iter()
@@ -749,7 +775,6 @@ pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<Pr
                 // 全ての多次元包含関係が成立すれば、後続ルールは完全に不要（Shadowed）
                 if is_prog_shadowed && is_applet_shadowed && is_user_shadowed && is_path_shadowed && is_ops_shadowed {
                     is_shadowed = true;
-                    
                     if annotate_reason {
                         let new_reason = match &kept_rule.reason {
                             Some(r) => {
@@ -775,12 +800,10 @@ pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<Pr
     }
 
     // 4. ルールIDの重複回避（ユニーク化サフィックスの付与）
-    // 万が一マージをすり抜けて同じIDが残った場合も、連番を振ってTEALのロードエラーを鉄壁ガード
     let mut seen_ids: HashMap<String, usize> = HashMap::new();
     for rule in &mut optimized_rules {
         let count = seen_ids.entry(rule.id.clone()).or_insert(0);
         if *count > 0 {
-            // 重複があった場合、元のIDに "-1", "-2" のようにサフィックスを付与
             rule.id = format!("{}-{}", rule.id, count);
         }
         *count += 1;
@@ -790,14 +813,18 @@ pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<Pr
     optimized_rules.sort_by(|a, b| {
         a.subject.origin_program.cmp(&b.subject.origin_program)
             .then_with(|| a.subject.origin_applet.cmp(&b.subject.origin_applet))
-            .then_with(|| a.object.path.cmp(&b.object.path))
+            .then_with(|| {
+                let path_a = a.object.as_ref().map(|o| o.path.as_str()).unwrap_or("");
+                let path_b = b.object.as_ref().map(|o| o.path.as_str()).unwrap_or("");
+                path_a.cmp(path_b)
+            })
             .then_with(|| a.subject.user.cmp(&b.subject.user))
     });
 
     optimized_rules
 }
 
-/// プロファイリング結果からポリシードラフトを生成し、標準出力へ書き出す
+// プロファイリング結果からポリシードラフトを生成し、標準出力へ書き出す
 pub fn generate_profile_json(
     profile_counts: HashMap<ProfileKey, usize>,
     target: ProfileTarget,
@@ -824,15 +851,32 @@ pub fn generate_profile_json(
             }
         }
 
+        // --- 名無しオブジェクト(subject_only)の判定 ---
+        // CONNECTなどの操作で path が "-" や空文字となっている場合
+        let is_nameless = final_path == "-" || final_path.is_empty();
+
+        let (rule_type_val, object_val, allow_nameless_val) = if is_nameless {
+            // 名無しの場合: rule_type を付与し、object を消滅させる
+            (Some("subject_only".to_string()), None, Some(true))
+        } else {
+            // 通常の場合: object を付与する
+            (None, Some(ObjectObj { path: final_path.clone() }), None)
+        };
+
         // Subjectの組み立て (存在しない場合はNoneにして出力から消す)
         let subject_obj = SubjectObj {
             user: if key.user.is_empty() || key.user == "-" { None } else { Some(key.user.clone()) },
-            origin_program: key.subject_program.clone(),
+            origin_program: if key.subject_program.is_empty() || key.subject_program == "-" {
+                None
+            } else {
+                Some(key.subject_program.clone())
+            },
             origin_applet: if key.origin_applet.is_empty() || key.origin_applet == "-" {
-                                None
-                            } else {
-                                Some(key.origin_applet.clone())
-                            },
+                None
+            } else {
+                Some(key.origin_applet.clone())
+            },
+            roles: None, // または既存の実装に合わせる
         };
 
         // ルールIDの自動生成
@@ -850,30 +894,46 @@ pub fn generate_profile_json(
         let rule = match target {
             ProfileTarget::AllowDraft => ProfiledRule {
                 id: rule_id,
-                subject: subject_obj,
-                object: ObjectObj { path: final_path },
-                action: ActionObj { ops: ops_list },    // 展開したVecをセット
+                rule_type: rule_type_val.clone(),
+                subject: subject_obj.clone(),
+                object: object_val.clone(),
+                action: ActionObj { ops: ops_list.clone() },
                 effect: "allow".to_string(),
                 audit_level: None,
                 max_uses: None,
-                ttl_sec: 3600,                          // デフォルト 1時間
-                ticket_profile: None,
+                ttl_sec: 3600,
+                // 名無しの場合のみ ticket_profile を生成し allow_nameless_ipc をセット
+                ticket_profile: if is_nameless {
+                    Some(TicketProfileObj {
+                        silent_io: false,
+                        inherit: false,
+                        allow_nameless_ipc: allow_nameless_val,
+                    })
+                } else {
+                    None
+                },
                 reason: Some("Auto-generated allow draft".to_string()),
+                required_roles: None,
+                threshold: None,
             },
             ProfileTarget::AntiStorm => ProfiledRule {
                 id: rule_id,
+                rule_type: rule_type_val, 
                 subject: subject_obj,
-                object: ObjectObj { path: final_path },
-                action: ActionObj { ops: ops_list },        // 展開したVecをセット
+                object: object_val,
+                action: ActionObj { ops: ops_list },
                 effect: "allow".to_string(),
-                audit_level: Some("silent".to_string()),    // ログを抑制
-                max_uses: Some(10000),                      // キャッシュ回数を極端に長く
-                ttl_sec: 86400,                             // 1日
+                audit_level: Some("silent".to_string()),
+                max_uses: Some(10000),
+                ttl_sec: 86400,
                 ticket_profile: Some(TicketProfileObj {
                     silent_io: true,
                     inherit: true,
+                    allow_nameless_ipc: allow_nameless_val,
                 }),
                 reason: Some(format!("Auto-generated suppress rule (count: {})", count)),
+                required_roles: None,
+                threshold: None,
             },
         };
 
@@ -896,7 +956,11 @@ pub fn generate_profile_json(
     generated_rules.sort_by(|a, b| {
         a.subject.origin_program.cmp(&b.subject.origin_program)
             .then_with(|| a.subject.origin_applet.cmp(&b.subject.origin_applet))
-            .then_with(|| a.object.path.cmp(&b.object.path))
+            .then_with(|| {
+                let path_a = a.object.as_ref().map(|o| o.path.as_str()).unwrap_or("");
+                let path_b = b.object.as_ref().map(|o| o.path.as_str()).unwrap_or("");
+                path_a.cmp(path_b)
+            })
             .then_with(|| a.subject.user.cmp(&b.subject.user))
     });
 

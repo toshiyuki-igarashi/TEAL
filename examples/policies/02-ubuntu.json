@@ -3182,7 +3182,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_dash_29-1",
+      "id": "auto_allow_dash_29-1a",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -3828,7 +3828,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_dash_29",
+      "id": "auto_allow_dash_29-1b",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "root",
@@ -4892,6 +4892,25 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_dash_29",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "lsb_release"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_dash_114",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -4996,6 +5015,44 @@
       },
       "object": {
         "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_356",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "pidof"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_108",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "pidof"
+      },
+      "object": {
+        "path": "prefix:/proc"
       },
       "action": {
         "ops": [
@@ -5851,6 +5908,44 @@
       },
       "object": {
         "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_352",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "wc"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_dash_177-1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dash",
+        "origin_applet": "wc"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache"
       },
       "action": {
         "ops": [
@@ -7419,10 +7514,48 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_getopt_15",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/getopt",
+        "origin_applet": "getopt"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_getopt_219",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "root",
+        "origin_program": "/usr/bin/getopt",
+        "origin_applet": "getopt"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_getopt_28",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
         "origin_program": "/usr/bin/getopt",
         "origin_applet": "getopt"
       },
@@ -9091,6 +9224,44 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_lesspipe_229",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/lesspipe",
+        "origin_applet": "basename"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_lesspipe_718",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/lesspipe",
+        "origin_applet": "basename"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_lesspipe_867",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -9224,6 +9395,25 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_ls_20",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/ls",
+        "origin_applet": "ls"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_ls_161",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -9243,6 +9433,25 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_ls_7",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/ls",
+        "origin_applet": "ls"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_ls_505",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -9252,6 +9461,25 @@
       },
       "object": {
         "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ls_3",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/ls",
+        "origin_applet": "ls"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache"
       },
       "action": {
         "ops": [
@@ -11580,6 +11808,44 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_python3.12_12",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "applet.py"
+      },
+      "object": {
+        "path": "/etc/nsswitch.conf"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_30",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "applet.py"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_python3.12_45",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -11770,7 +12036,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_python3.12_38",
+      "id": "auto_allow_python3.12_38-1",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -11960,7 +12226,26 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_python3.12_12",
+      "id": "auto_allow_python3.12_1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "blueman-applet"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_12-1",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -11979,7 +12264,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_python3.12_17-1",
+      "id": "auto_allow_python3.12_17-1a",
       "reason": "Auto-generated allow draft (Merged with narrower rules)",
       "subject": {
         "user": "toshiyuki",
@@ -11988,6 +12273,120 @@
       },
       "object": {
         "path": "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_4-1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "blueman-applet"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_10-1-1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "blueman-applet"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/giomodule.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_18",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "blueman-applet"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/libdconfsettings.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_15-1-1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "blueman-applet"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/libgvfsdbus.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_19-1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "blueman-applet"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gvfs/libgvfscommon.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_11",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "blueman-applet"
+      },
+      "object": {
+        "path": "/usr/share/glib-2.0/schemas/gschemas.compiled"
       },
       "action": {
         "ops": [
@@ -12045,6 +12444,25 @@
       },
       "object": {
         "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_13",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "dpkg"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache"
       },
       "action": {
         "ops": [
@@ -12397,7 +12815,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_python3.12_37",
+      "id": "auto_allow_python3.12_37-1",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "root",
@@ -12492,7 +12910,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_python3.12_30",
+      "id": "auto_allow_python3.12_30-1",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "root",
@@ -12631,6 +13049,158 @@
         "user": "root",
         "origin_program": "/usr/bin/python3.12",
         "origin_applet": "unattended-upgr"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_38",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "update-manager"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_37",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "update-manager"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_3",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "update-manager"
+      },
+      "object": {
+        "path": "/home/toshiyuki/.Xauthority"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_27",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "update-manager"
+      },
+      "object": {
+        "path": "/home/toshiyuki/.config/dconf/user"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_12-1-1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "update-manager"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_19",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "update-manager"
+      },
+      "object": {
+        "path": "/usr/share/zoneinfo/Asia/Tokyo"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_17-1b",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "update-manager"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/ibus/bus"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_python3.12_4",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/python3.12",
+        "origin_applet": "update-manager"
       },
       "object": {
         "path": "prefix:/proc"
@@ -16805,6 +17375,177 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_xfce4-screensaver_554",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "auththread"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_263",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "auththread"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_340",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "auththread"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_714",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "unix_chkpwd"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_704",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "unix_chkpwd"
+      },
+      "object": {
+        "path": "/etc/nsswitch.conf"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_533",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "unix_chkpwd"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_848",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "unix_chkpwd"
+      },
+      "object": {
+        "path": "/etc/shadow"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_256",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "unix_chkpwd"
+      },
+      "object": {
+        "path": "/proc/sys/kernel/cap_last_cap"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_575",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_xfce4-screensaver_1057",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -16814,6 +17555,63 @@
       },
       "object": {
         "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_605",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_384",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/etc/nsswitch.conf"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_607",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/etc/passwd"
       },
       "action": {
         "ops": [
@@ -16862,6 +17660,25 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_xfce4-screensaver_614",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/proc/sys/kernel/cap_last_cap"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_xfce4-screensaver_107",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -16881,6 +17698,82 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_xfce4-screensaver_21",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_187",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/giomodule.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_625",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/libgvfsdbus.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_393",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gvfs/libgvfscommon.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_xfce4-screensaver_2",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -16890,6 +17783,25 @@
       },
       "object": {
         "path": "/usr/share/zoneinfo/Asia/Tokyo"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver_55",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-screensaver",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/ibus/bus"
       },
       "action": {
         "ops": [
@@ -17185,6 +18097,101 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_xfce4-terminal_25",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-terminal",
+        "origin_applet": "cargo"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-terminal_5",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfce4-terminal",
+        "origin_applet": "cargo"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-terminal_29",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/xfce4-terminal",
+        "origin_applet": "cp"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-terminal_0",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/xfce4-terminal",
+        "origin_applet": "cp"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-terminal_26",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/xfce4-terminal",
+        "origin_applet": "cp"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_xfce4-terminal_63",
       "reason": "Auto-generated allow draft (Merged with narrower rules)",
       "subject": {
@@ -17356,7 +18363,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_xfce4-terminal_29",
+      "id": "auto_allow_xfce4-terminal_29-1",
       "reason": "Auto-generated allow draft (Merged with narrower rules)",
       "subject": {
         "user": "toshiyuki",
@@ -17432,7 +18439,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_xfce4-terminal_5-1",
+      "id": "auto_allow_xfce4-terminal_5-1-1",
       "reason": "Auto-generated allow draft (Merged with narrower rules)",
       "subject": {
         "user": "toshiyuki",
@@ -17451,7 +18458,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_xfce4-terminal_5",
+      "id": "auto_allow_xfce4-terminal_5-1",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -18505,6 +19512,44 @@
       },
       "object": {
         "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfwm4_0",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfwm4",
+        "origin_applet": "xfwm4"
+      },
+      "object": {
+        "path": "/etc/nsswitch.conf"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfwm4_5",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/xfwm4",
+        "origin_applet": "xfwm4"
+      },
+      "object": {
+        "path": "/etc/passwd"
       },
       "action": {
         "ops": [
@@ -20184,6 +21229,44 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_ibus-engine-mozc_267",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/ibus-mozc/ibus-engine-mozc",
+        "origin_applet": "ibus-engine-moz"
+      },
+      "object": {
+        "path": "/usr/lib/mozc/mozc_renderer"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-engine-mozc_824",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/ibus-mozc/ibus-engine-mozc",
+        "origin_applet": "ibus-engine-moz"
+      },
+      "object": {
+        "path": "/usr/lib/mozc/mozc_renderer"
+      },
+      "action": {
+        "ops": [
+          "EXECUTE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_ibus-engine-mozc_18",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -20678,6 +21761,25 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_mozc_server_292",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/mozc/mozc_server",
+        "origin_applet": "IPCServer"
+      },
+      "object": {
+        "path": "/proc/sys/vm/overcommit_memory"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_mozc_server_6",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -20691,6 +21793,101 @@
       "action": {
         "ops": [
           "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_mozc_server_9",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/mozc/mozc_server",
+        "origin_applet": "mozc_server"
+      },
+      "object": {
+        "path": "/etc/nsswitch.conf"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_mozc_server_24",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/mozc/mozc_server",
+        "origin_applet": "mozc_server"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_mozc_server_2",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/mozc/mozc_server",
+        "origin_applet": "mozc_server"
+      },
+      "object": {
+        "path": "/home/toshiyuki/.config/mozc/.session.ipc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_mozc_server_14",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/mozc/mozc_server",
+        "origin_applet": "mozc_server"
+      },
+      "object": {
+        "path": "/usr/share/zoneinfo/Asia/Tokyo"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_mozc_server_35",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/mozc/mozc_server",
+        "origin_applet": "mozc_server"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
         ]
       },
       "effect": "allow",
@@ -22445,6 +23642,177 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_systemd_21",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "fwupd-refresh",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "dconf worker"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_22",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "fwupd-refresh",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "fwupdmgr"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_17-1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "fwupd-refresh",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "fwupdmgr"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_32-1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "fwupd-refresh",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "fwupdmgr"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/giomodule.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_31",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "fwupd-refresh",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "fwupdmgr"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/libdconfsettings.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "fwupd-refresh",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "fwupdmgr"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/libgvfsdbus.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_34",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "fwupd-refresh",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "fwupdmgr"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gvfs/libgvfscommon.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_33",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "fwupd-refresh",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "fwupdmgr"
+      },
+      "object": {
+        "path": "/usr/share/glib-2.0/schemas/gschemas.compiled"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_13-1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "fwupd-refresh",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "fwupdmgr"
+      },
+      "object": {
+        "path": "/usr/share/zoneinfo/Asia/Tokyo"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_systemd_36",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -22559,7 +23927,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_systemd_34",
+      "id": "auto_allow_systemd_34-1",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -22711,6 +24079,44 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_systemd_6-1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "fwupd-refresh",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "pool-/usr/bin/f"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_28",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "fwupd-refresh",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "pool-/usr/bin/f"
+      },
+      "object": {
+        "path": "/etc/nsswitch.conf"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_systemd_11-1",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -22755,6 +24161,44 @@
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd",
         "origin_applet": "sadc"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_738",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "sadc"
+      },
+      "object": {
+        "path": "/usr/share/zoneinfo/Asia/Tokyo"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_systemd_772",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "snap"
       },
       "object": {
         "path": "/etc/ld.so.cache"
@@ -23072,7 +24516,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_systemd_0-1",
+      "id": "auto_allow_systemd_0-1b",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "root",
@@ -23091,7 +24535,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_systemd_22",
+      "id": "auto_allow_systemd_22-1",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "root",
@@ -23433,7 +24877,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_systemd_17-1",
+      "id": "auto_allow_systemd_17-1-1",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -23471,7 +24915,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_systemd_1",
+      "id": "auto_allow_systemd_1-1",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -24364,6 +25808,25 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_systemd-executor_0",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(sa1)"
+      },
+      "object": {
+        "path": "/proc/sys/kernel/cap_last_cap"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_systemd-executor_2345",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -24440,7 +25903,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_systemd-executor_0",
+      "id": "auto_allow_systemd-executor_0-1",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -26435,6 +27898,44 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_wrapper-2.0_23",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/xfce4/panel/wrapper-2.0",
+        "origin_applet": "mousepad"
+      },
+      "object": {
+        "path": "/home/toshiyuki/.Xauthority"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wrapper-2.0_16-1a",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/xfce4/panel/wrapper-2.0",
+        "origin_applet": "mousepad"
+      },
+      "object": {
+        "path": "/home/toshiyuki/.config/dconf/user"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_wrapper-2.0_504",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -26444,6 +27945,177 @@
       },
       "object": {
         "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wrapper-2.0_0",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/xfce4/panel/wrapper-2.0",
+        "origin_applet": "mousepad"
+      },
+      "object": {
+        "path": "/run/user/1000/dconf/user"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wrapper-2.0_34",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/xfce4/panel/wrapper-2.0",
+        "origin_applet": "mousepad"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wrapper-2.0_20-1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/xfce4/panel/wrapper-2.0",
+        "origin_applet": "mousepad"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wrapper-2.0_25-1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/xfce4/panel/wrapper-2.0",
+        "origin_applet": "mousepad"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/giomodule.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wrapper-2.0_6",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/xfce4/panel/wrapper-2.0",
+        "origin_applet": "mousepad"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/libdconfsettings.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wrapper-2.0_26",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/xfce4/panel/wrapper-2.0",
+        "origin_applet": "mousepad"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/libgvfsdbus.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wrapper-2.0_31",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/xfce4/panel/wrapper-2.0",
+        "origin_applet": "mousepad"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gvfs/libgvfscommon.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wrapper-2.0_30",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/xfce4/panel/wrapper-2.0",
+        "origin_applet": "mousepad"
+      },
+      "object": {
+        "path": "/usr/share/glib-2.0/schemas/gschemas.compiled"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_wrapper-2.0_32",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/x86_64-linux-gnu/xfce4/panel/wrapper-2.0",
+        "origin_applet": "mousepad"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/ibus/bus"
       },
       "action": {
         "ops": [
@@ -26625,7 +28297,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_wrapper-2.0_16-1",
+      "id": "auto_allow_wrapper-2.0_16-1b",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -26967,7 +28639,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_wrapper-2.0_0",
+      "id": "auto_allow_wrapper-2.0_0-1",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -27024,7 +28696,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_wrapper-2.0_23-1",
+      "id": "auto_allow_wrapper-2.0_23-1a",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -27195,7 +28867,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_wrapper-2.0_34",
+      "id": "auto_allow_wrapper-2.0_34-1",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -27480,7 +29152,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_wrapper-2.0_23",
+      "id": "auto_allow_wrapper-2.0_23-1b",
       "reason": "Auto-generated allow draft (Merged with narrower rules)",
       "subject": {
         "user": "toshiyuki",
@@ -30159,25 +31831,6 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_gvfsd-trash_63",
-      "reason": "Auto-generated allow draft",
-      "subject": {
-        "user": "toshiyuki",
-        "origin_program": "/usr/libexec/gvfsd-trash",
-        "origin_applet": "gmain"
-      },
-      "object": {
-        "path": "/proc/1385/mountinfo"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "ttl_sec": 3600
-    },
-    {
       "id": "auto_allow_gvfsd-trash_61",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -30197,7 +31850,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_gvfsd-trash_2",
+      "id": "auto_allow_gvfsd-trash_2-1",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -30225,6 +31878,25 @@
       },
       "object": {
         "path": "/usr/lib/x86_64-linux-gnu/gio/modules/libgvfsdbus.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_gvfsd-trash_2",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/gvfsd-trash",
+        "origin_applet": "gmain"
+      },
+      "object": {
+        "path": "prefix:/proc"
       },
       "action": {
         "ops": [
@@ -30311,7 +31983,7 @@
       "ttl_sec": 3600
     },
     {
-      "id": "auto_allow_gvfsd-trash_60",
+      "id": "auto_allow_gvfsd-trash_0",
       "reason": "Auto-generated allow draft",
       "subject": {
         "user": "toshiyuki",
@@ -30319,7 +31991,7 @@
         "origin_applet": "pool"
       },
       "object": {
-        "path": "/proc/1385/mountinfo"
+        "path": "prefix:/proc"
       },
       "action": {
         "ops": [
@@ -30624,6 +32296,82 @@
       },
       "object": {
         "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-extension-gtk3_2",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/ibus-extension-gtk3",
+        "origin_applet": "ibus-extension-"
+      },
+      "object": {
+        "path": "/home/toshiyuki/.config/dconf/user"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-extension-gtk3_1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/ibus-extension-gtk3",
+        "origin_applet": "ibus-extension-"
+      },
+      "object": {
+        "path": "/run/user/1000/dconf/user"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-extension-gtk3_3",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/ibus-extension-gtk3",
+        "origin_applet": "ibus-extension-"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/libdconfsettings.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_ibus-extension-gtk3_4",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/ibus-extension-gtk3",
+        "origin_applet": "ibus-extension-"
+      },
+      "object": {
+        "path": "/usr/share/glib-2.0/schemas/gschemas.compiled"
       },
       "action": {
         "ops": [
@@ -31432,6 +33180,25 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_xdg-desktop-portal_16",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xdg-desktop-portal",
+        "origin_applet": "xdg-desktop-por"
+      },
+      "object": {
+        "path": "/run/user/1000/dconf/user"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_xdg-desktop-portal_71",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -31888,6 +33655,25 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_xdg-desktop-portal-gtk_23-1",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xdg-desktop-portal-gtk",
+        "origin_applet": "xdg-desktop-por"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_xdg-desktop-portal-gtk_8",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -32103,6 +33889,443 @@
         "user": "toshiyuki",
         "origin_program": "/usr/libexec/xdg-permission-store",
         "origin_applet": "xdg-permission-"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_20",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "auththread"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_188",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "sh"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_822",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_659",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_656",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/etc/machine-id"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_71",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/etc/nsswitch.conf"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_221",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_153",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/home/toshiyuki/.Xauthority"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_236",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_198",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/proc/sys/kernel/cap_last_cap"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_670",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_729",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_604",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/giomodule.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_823",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gio/modules/libgvfsdbus.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_797",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/usr/lib/x86_64-linux-gnu/gvfs/libgvfscommon.so"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_845",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/usr/share/zoneinfo/Asia/Tokyo"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-dialog_219",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-dialog",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/ibus/bus"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-gl-helper_686",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-gl-helper",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-gl-helper_233",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-gl-helper",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/home/toshiyuki/.Xauthority"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-gl-helper_632",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-gl-helper",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/proc/filesystems"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-gl-helper_592",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-gl-helper",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/proc/meminfo"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-gl-helper_361",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-gl-helper",
+        "origin_applet": "xfce4-screensav"
+      },
+      "object": {
+        "path": "/proc/sys/dev/i915/perf_stream_paranoid"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_xfce4-screensaver-gl-helper_239",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xfce4-screensaver-gl-helper",
+        "origin_applet": "xfce4-screensav"
       },
       "object": {
         "path": "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache"
@@ -33066,6 +35289,44 @@
       "ttl_sec": 3600
     },
     {
+      "id": "auto_allow_killall5_626",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/sbin/killall5",
+        "origin_applet": "pidof"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_killall5_208",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/sbin/killall5",
+        "origin_applet": "pidof"
+      },
+      "object": {
+        "path": "prefix:/proc"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
       "id": "auto_allow_libvirtd_2",
       "reason": "Auto-generated allow draft",
       "subject": {
@@ -33303,6 +35564,101 @@
       },
       "object": {
         "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_unix_chkpwd_284",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/sbin/unix_chkpwd",
+        "origin_applet": "unix_chkpwd"
+      },
+      "object": {
+        "path": "/etc/ld.so.cache"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_unix_chkpwd_432",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/sbin/unix_chkpwd",
+        "origin_applet": "unix_chkpwd"
+      },
+      "object": {
+        "path": "/etc/nsswitch.conf"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_unix_chkpwd_850",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/sbin/unix_chkpwd",
+        "origin_applet": "unix_chkpwd"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_unix_chkpwd_409",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/sbin/unix_chkpwd",
+        "origin_applet": "unix_chkpwd"
+      },
+      "object": {
+        "path": "/etc/shadow"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "ttl_sec": 3600
+    },
+    {
+      "id": "auto_allow_unix_chkpwd_213",
+      "reason": "Auto-generated allow draft",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/sbin/unix_chkpwd",
+        "origin_applet": "unix_chkpwd"
+      },
+      "object": {
+        "path": "prefix:/proc"
       },
       "action": {
         "ops": [
