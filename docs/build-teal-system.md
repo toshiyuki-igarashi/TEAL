@@ -1,8 +1,8 @@
 ## Installation & Development
 
 This guide intentionally pins the build environment instead of supporting arbitrary kernel/Rust/bindgen combinations.
-It has been verified with Ubuntu 24.04 LTS, Linux 6.8.12, LLVM/Clang 17, rustc 1.74.1, and the distribution-provided `rust-bindgen`.
-Before building the kernel, run the following command from the top-level Linux kernel source tree.  
+It has been verified with Ubuntu 24.04 LTS, Linux 6.8.12, LLVM/Clang 17, rustc 1.74.1, and bindgen-cli 0.65.1 installed via cargo.
+Before building the kernel, run the following command from the top-level Linux kernel source tree.
 The `O=../kernel_build_v6.8` option points to the external kernel build output directory.
 
 ```bash
@@ -110,7 +110,7 @@ Check the generated kernel configuration and make sure that `teal` is included i
 
 ```bash
 grep '^CONFIG_LSM=' ../kernel_build_v6.8/.config
-````
+```
 
 The value should include `teal` exactly once, for example:
 
@@ -379,7 +379,7 @@ Launch `teald`, which serves as the core authorization engine:
 
 ```bash
 sudo systemctl start teald
-````
+```
 
 Check that the daemon is running:
 
@@ -460,7 +460,56 @@ Create a file at `/etc/logrotate.d/teal`:
 
 ```
 
-#### C. Troubleshooting
+#### C. Kernel Signing with Machine Owner Key (MOK)
+
+If you need to sign the kernel in an Ubuntu/Xubuntu environment due to UEFI Secure Boot, follow the procedures below.
+
+**Step 1: Generate and Import the MOK**
+
+```bash
+# 1. Create the private key (MOK.priv) and PEM certificate (MOK.pem) in one step
+openssl req -new -x509 -newkey rsa:2048 -keyout MOK.priv -out MOK.pem -nodes -days 3650 -subj "/CN=TEAL Verification Key/"
+
+# 2. Generate DER format (MOK.der) from PEM to import into mokutil
+openssl x509 -in MOK.pem -outform DER -out MOK.der
+
+# 3. Sign the kernel (using PEM)
+sudo sbsign --key MOK.priv --cert MOK.pem /boot/vmlinuz-6.8.12 --output /boot/vmlinuz-6.8.12
+
+# 4. Schedule the key for enrollment in UEFI (using DER)
+sudo mokutil --import MOK.der
+
+```
+
+When executing `mokutil`, you will be prompted for passwords in two distinct stages.
+
+* **Stage 1: `[sudo] password for <user>:**`
+* **What to enter:** Your standard Ubuntu (Xubuntu) **login password**.
+* **Reason:** Required to execute the command with administrator (root) privileges.
+
+
+* **Stage 2: `input password:` and `Confirm password:**`
+* **What to enter:** A **new, temporary password** of your choosing.
+* **Reason:** This one-time password is used to verify your identity on the "MOK manager" (blue screen) that appears right after rebooting, before the OS boots. You must enter it twice.
+
+
+
+> **Crucial Warning for the MOK Password (Stage 2)**
+> The UEFI screen (blue screen) after reboot frequently defaults to a "US (English) layout". If you use symbols like `@` or `_` assuming a JIS (Japanese) layout, you may be unable to type them correctly, resulting in authentication failure.
+> **Recommendation:** To prevent lockout, set a password using **"only numbers (e.g., 12345678)" or "only simple lowercase letters"**. This password is a throwaway used merely to enroll the key into the firmware, so high cryptographic strength is unnecessary here.
+
+**Step 2: Reboot and Enroll the Key in UEFI**
+
+Upon restarting the PC, before the OS (GRUB) boots, a blue screen titled **"Perform MOK management"** will appear.
+
+1. Select **`Enroll MOK`**. *(Note: Do not select `Continue boot`, or the menu will disappear).*
+2. Select **`View key 0`** to inspect the key details if desired, then select **`Continue`** to proceed.
+3. When prompted with **`Enroll the key(s)?`**, select **`Yes`**.
+4. When **`Password:`** appears, enter the **temporary password** you created in Stage 2, and press Enter.
+*(Note: As you type, the screen will remain completely blank without `*` characters, but your keystrokes are being registered).*
+5. Finally, select **`Reboot`**.
+
+#### D. Troubleshooting
 
 If TEAL fails to start or the system becomes unstable, follow these steps:
 
@@ -470,3 +519,4 @@ Check the `teald` logs using `sudo journalctl -u teald -f`. TEAL enforces strict
 Hard reboot the machine, hold `Shift` or `Esc` to access the GRUB menu, and select your original stock Ubuntu kernel (e.g., 6.8.0-xx-generic) to recover the system.
 3. **Module Loading Issues:**
 Run `dmesg | grep -i teal` to check for kernel-level initialization errors, LSM registration failures, or Fast Path cache allocation issues.
+
