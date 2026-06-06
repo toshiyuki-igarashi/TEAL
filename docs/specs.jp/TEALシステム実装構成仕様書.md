@@ -599,7 +599,7 @@ Fast Path ログは、カーネルキャッシュ（チケット）に基づい�
 * **目的:** 「いつ、誰が、どのチケットの権利を行使したか」の記録 (Proof of Use)
 * **特徴:** 軽量、高頻度、引数はチケット発行時に検証済みとみなす
 
-```json
+```json5
 {
   "ver": "1.5",
   "id": "UUID-fast-...",        // Log Entry ID
@@ -685,7 +685,7 @@ Slow Path（同期承認時）のログは、`teald` が下した判定結果お
 
 **JSONスキーマ例 (ACCESS_DENIED の場合):**
 
-```json
+```json5
 {
   "ver": "1.5",
   "id": "UUID-deny-...",            
@@ -732,7 +732,7 @@ Slow Path（同期承認時）のログは、`teald` が下した判定結果お
 
 **JSONスキーマ例 (teal-cli start許可 の場合):**
 
-```json
+```json5
 {
   "timestamp": "2026-02-15T10:00:00Z",
   "req_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -1075,7 +1075,7 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 
 **設定例 (policy.json):**
 
-```json
+```json5
   "rules": [
     {
       "id": "backup_daemon_allow",
@@ -1134,7 +1134,7 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 
 #### 9.5.3 設定例 (policy.json)
 
-```json
+```json5
 {
   "version": "1.3",
   "ttl_minutes": 60,
@@ -1201,7 +1201,7 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 
 ### 10.5. ポリシー例（重要ファイルのMPA制御）
 
-```json
+```json5
 {
   "id": "critical-ops-with-context",
   "subject": {
@@ -1406,7 +1406,7 @@ Alpha版 `teald` は、コマンド生成時にこれらのフィールドに固
 
 `audit_level` をサポートする JSON スキーマの定義。
 
-```json
+```json5
 {
   "properties": {
     "version": { "const": "1.3.1" },
