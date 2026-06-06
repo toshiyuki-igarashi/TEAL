@@ -278,7 +278,7 @@ Tier 1 に含めてよい特殊デバイスは、以下の条件を全て満た�
 
 **【ポリシー記述例：MozcのIPCバイパス】**
 
-```json
+```
 {
   "id": "mozc-nameless-ipc-bypass",
   "rule_type": "subject_only",
