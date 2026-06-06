@@ -434,10 +434,8 @@ Slow Path で同一操作が短時間に再発するケース（I/Oリトライ�
 | **`READ`** | `file_permission` | `struct file *` (パス、inode) | `read(2)`, `pread(2)` | 読み出し監査・遮断 |
 | **`WRITE`** | `file_permission` | `struct file *` (パス、inode) | `write(2)`, `pwrite(2)` | 書き込み監査・遮断 |
 | **`EXECUTE`** | `bprm_check_security` | `struct linux_binprm *` (バイナリパス) | `execve(2)`, `execveat(2)` | プロセス起動制御 |
-| **`DELETE`** | `path_unlink` | `const struct path *dir` | `unlink(2)`, `rmdir(2)`, `unlinkat(2)` | **ファイル/ディレクトリ削除** |
-|     |     | `path_rmdir` | `struct dentry *dentry` |      |
-| **`RENAME`** | `path_rename` | `const struct path *old_dir` | `rename(2)`, `renameat(2)` | ファイル/ディレクトリ移動 |
-|     |     | `struct dentry *old_dentry` 等 |      |      |
+| **`DELETE`** | `path_unlink` | `const struct path *dir`<BR>`path_rmdir` | `unlink(2)`, `rmdir(2)`, `unlinkat(2)`<BR>`struct dentry *dentry` | **ファイル/ディレクトリ削除** |
+| **`RENAME`** | `path_rename` | `const struct path *old_dir`<BR>`struct dentry *old_dentry` 等 | `rename(2)`, `renameat(2)` | ファイル/ディレクトリ移動 |
 | **`CONNECT`** | `socket_connect` | `struct socket *`, `struct sockaddr *` | `connect(2)` | アウトバウンド通信制御 |
 
 #### 5.1.1 削除操作（DELETE）における `path_` フック採用の技術的根拠
