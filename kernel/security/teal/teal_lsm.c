@@ -1174,12 +1174,11 @@ static bool is_ticket_matched(struct teal_ticket_add_payload *ticket, u64 now,
 }
 
 /**
- * 現在のコンテキストとターゲットファイルが、有効なチケットと一致するか確認する
+ * 現在のコンテキストとターゲットinodeが、有効なチケットと一致するか確認する
  * 一致した場合、uses_left を減らし true を返す
  */
-static bool teal_check_ticket_match(struct file *target_file, enum teal_event_type ev)
+static bool teal_check_ticket_match(struct inode *obj_inode, enum teal_event_type ev)
 {
-    struct inode *obj_inode;
     struct teal_task_meta *meta;
     struct teal_id_pair *org_id;
     struct teal_id_pair key;
@@ -1188,8 +1187,8 @@ static bool teal_check_ticket_match(struct file *target_file, enum teal_event_ty
     u64 now;
     bool match = false;
 
-    if (!target_file) return false;
-    obj_inode = file_inode(target_file);
+    // 引数が NULL の場合は即座に false
+    if (!obj_inode) return false;
     
     /* メタデータから実行元IDを取得 */
     meta = teal_task_meta_current();
@@ -1197,6 +1196,8 @@ static bool teal_check_ticket_match(struct file *target_file, enum teal_event_ty
     org_id = &meta->program_id;
     
     now = ktime_get_real_seconds();
+    
+    // ターゲットの識別子をセット
     key.dev = obj_inode->i_sb->s_dev;
     key.ino = obj_inode->i_ino;
 
@@ -1425,7 +1426,7 @@ static int teal_bprm_check(struct linux_binprm *bprm)
     }
 
     if (bprm && bprm->file) {
-        if (teal_check_ticket_match(bprm->file, TEAL_EVENT_EXECUTE)) {
+        if (teal_check_ticket_match(file_inode(bprm->file), TEAL_EVENT_EXECUTE)) {
             return 0;
         }
     }
@@ -1587,7 +1588,7 @@ static int teal_file_open(struct file *file)
         return 0; 
     }
 
-    if (teal_check_ticket_match(file, ev)) {
+    if (teal_check_ticket_match(inode, ev)) {
         return 0; 
     }
 
