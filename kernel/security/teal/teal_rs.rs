@@ -237,21 +237,26 @@ fn cstr_to_str_lossy<'a>(p: *const c_char) -> &'a str {
 }
 
 
-const EVENT_READ: i32       = 1;
-const EVENT_WRITE: i32      = 2;
-const EVENT_EXECUTE: i32    = 4;
-const EVENT_UNLINK: i32     = 16;
-const EVENT_RENAME: i32     = 32;
+const EVENT_READ: i32    = 1;
+const EVENT_WRITE: i32   = 2;
+const EVENT_EXECUTE: i32 = 4;
+const EVENT_DELETE: i32  = 8;
+const EVENT_UNLINK: i32  = 16;
+const EVENT_RENAME: i32  = 32;
 //const EVENT_CHMOD: i32      = 64;
 //const EVENT_CHOWN: i32      = 128;
 const EVENT_CONNECT: i32    = 256;
 
 #[inline]
-fn action_name_for_file_event(event_type: i32) -> Option<&'static str> {
+fn action_name_for_event(event_type: i32) -> Option<&'static str> {
     match event_type {
-        EVENT_READ     => Some("READ"),
-        EVENT_WRITE    => Some("WRITE"),
-        EVENT_EXECUTE  => Some("EXECUTE"),
+        EVENT_READ    => Some("READ"),
+        EVENT_WRITE   => Some("WRITE"),
+        EVENT_EXECUTE => Some("EXECUTE"),
+        EVENT_DELETE  => Some("DELETE"),    // rmdir用
+        EVENT_UNLINK  => Some("DELETE"),    // unlink用
+        EVENT_RENAME  => Some("RENAME"),
+        // EVENT_CHMOD => Some("CHMOD"),
         _ => None,
     }
 }
@@ -291,7 +296,7 @@ unsafe fn parse_teal_ctx<'a>(ctx: *mut c_void) -> Option<TealContext<'a>> {
 }
 
 unsafe fn handle_file_event(event_type: i32, ctx: *mut c_void) -> i32 {
-    let action = match action_name_for_file_event(event_type) {
+    let action = match action_name_for_event(event_type) {
         Some(a) => a,
         None => return 0,
     };
@@ -316,7 +321,11 @@ unsafe fn handle_file_event(event_type: i32, ctx: *mut c_void) -> i32 {
 }
 
 unsafe fn handle_dentry_event(event_type: i32, ctx: *mut c_void) -> i32 {
-    let action = if event_type == EVENT_UNLINK { "DELETE" } else { "RENAME" };
+    // 共通関数を使ってアクション名を取得（失敗時は0を返して保護）
+    let action = match action_name_for_event(event_type) {
+        Some(a) => a,
+        None => return 0,
+    };
 
     // C側で既に解決済みの ctx を使うだけ！
     let tctx = match unsafe { parse_teal_ctx(ctx) } {
@@ -379,8 +388,8 @@ fn unreachable_tail() -> ! {
 unsafe extern "C" fn teal_decision_logic(event_type: i32, ctx: *mut c_void) -> i32 {
     let r = match event_type {
         EVENT_READ | EVENT_EXECUTE | EVENT_WRITE => unsafe { handle_file_event(event_type, ctx) },
-        EVENT_UNLINK | EVENT_RENAME              => unsafe { handle_dentry_event(event_type, ctx) },
-        EVENT_CONNECT                            => unsafe { handle_connect_event(ctx) },
+        EVENT_UNLINK | EVENT_RENAME | EVENT_DELETE => unsafe { handle_dentry_event(event_type, ctx) },
+        EVENT_CONNECT => unsafe { handle_connect_event(ctx) },
         _ => 0,
     };
 

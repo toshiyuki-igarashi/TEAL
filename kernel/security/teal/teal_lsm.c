@@ -44,6 +44,7 @@
 #include <linux/rcupdate.h>
 #include <linux/magic.h>
 #include <linux/anon_inodes.h>
+#include <linux/mount.h>
 
 #include <net/genetlink.h>
 #include <net/net_namespace.h>
@@ -1851,6 +1852,102 @@ static int teal_cred_prepare(struct cred *new, const struct cred *old, gfp_t gfp
     return 0;
 }
 
+/**
+ * 削除系フックの共通処理（パス解決、サブジェクト抽出、キャッシュ判定、Slow Path転送）
+ */
+static int teal_handle_path_deletion(const struct path *dir, struct dentry *dentry, enum teal_event_type event_type)
+{
+    int ret = 0;
+    char *page = NULL;
+    char *resolved_path = ""; 
+    struct path target_path;
+    struct teal_rs_ctx ctx;
+
+    // 実行元（サブジェクト）の初期値
+    const char *exec_path = "-";
+    const char *script_path = "-";
+    struct teal_task_meta *meta;
+
+    // 1. 最優先バイパスチェック
+    if (teal_should_bypass_all()) {
+        return 0;
+    }
+
+    // 2. O(1) Fast Path チェック (チケットキャッシュ判定)
+    if (d_is_positive(dentry)) {
+        if (teal_check_ticket_match(d_inode(dentry), event_type)) {
+            return 0; // キャッシュヒットにより即時許可
+        }
+    }
+
+    // --- ここから下は Slow Path（teald への問い合わせ処理） ---
+
+    // 3. 現在のプロセス(current)の実行元プログラムおよびスクリプト情報を安全に取得
+    meta = teal_task_meta_current();
+    if (meta) {
+        exec_path = meta->program;
+        script_path = meta->script;
+    }
+
+    // 4. パス解決用のメモリをヒープから安全に確保
+    page = (char *)__get_free_page(GFP_KERNEL);
+    if (!page) {
+        pr_warn("TEAL: __get_free_page failed in path deletion hook\n");
+    }
+
+    // 5. 親のマウント情報と対象のdentryから struct path を再構成
+    target_path.mnt = dir->mnt;
+    target_path.dentry = dentry;
+
+    // 絶対パスの解決
+    if (page) {
+        resolved_path = d_path(&target_path, page, PAGE_SIZE);
+        if (IS_ERR(resolved_path)) {
+            resolved_path = ""; 
+        }
+    }
+
+    // 6. Rust空間（teal_rs）に引き渡す構造体の完全なパッキング
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.target = resolved_path;
+    ctx.program = exec_path;
+    ctx.script = script_path;
+
+    if (d_is_positive(dentry)) {
+        ctx.target_dev = dentry->d_sb->s_dev;
+        ctx.target_ino = d_inode(dentry)->i_ino;
+    }
+
+    // 7. 登録されたコールバック（Rust側）を呼び出して判定を実行する
+    if (teal_decision_maker) {
+        ret = teal_decision_maker(event_type, (void *)&ctx);
+    }
+
+    // 8. メモリの解放
+    if (page) {
+        free_page((unsigned long)page);
+    }
+
+    return ret;
+}
+
+/**
+ * ファイル削除フック (unlink)
+ */
+static int teal_path_unlink(const struct path *dir, struct dentry *dentry)
+{
+    return teal_handle_path_deletion(dir, dentry, TEAL_EVENT_UNLINK);
+}
+
+/**
+ * ディレクトリ削除フック (rmdir)
+ */
+static int teal_path_rmdir(const struct path *dir, struct dentry *dentry)
+{
+    return teal_handle_path_deletion(dir, dentry, TEAL_EVENT_DELETE);
+}
+
+
 // ------------------------------
 // LSM hooks
 // ------------------------------
@@ -1860,6 +1957,9 @@ static const struct lsm_id teal_lsmid = {
     .id = LSM_ID_UNDEF,
 };
 
+/* ==========================================
+ * フックの登録 (モジュール初期化用配列)
+ * ========================================== */
 static struct security_hook_list teal_hooks[] __ro_after_init = {
     LSM_HOOK_INIT(task_alloc, teal_task_alloc),
     LSM_HOOK_INIT(task_free,  teal_task_free),
@@ -1867,6 +1967,8 @@ static struct security_hook_list teal_hooks[] __ro_after_init = {
     LSM_HOOK_INIT(socket_connect, teal_socket_connect),
     LSM_HOOK_INIT(bprm_check_security, teal_bprm_check),
     LSM_HOOK_INIT(cred_prepare, teal_cred_prepare),
+    LSM_HOOK_INIT(path_unlink, teal_path_unlink),
+    LSM_HOOK_INIT(path_rmdir, teal_path_rmdir),
 };
 
 static int __init teal_lsm_init(void)

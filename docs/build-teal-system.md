@@ -120,6 +120,25 @@ CONFIG_LSM="landlock,lockdown,yama,integrity,apparmor,bpf,teal"
 
 If `teal` is missing, edit `../kernel_build_v6.8/.config` manually and append `teal` to the comma-separated list. Do not add it more than once.
 
+Launch the menu configuration tool from the source directory to configure additional required kernel options:
+
+```bash
+cd ~/linux-6.8.12
+make LLVM=-17 O=../kernel_build_v6.8 menuconfig
+
+```
+
+#### Enabling Required Security Options
+
+Within the `menuconfig` interface (you can press the `/` key to search for specific items):
+
+1. Select **`Security options`**.
+2. Verify that **`Enable different security models`** (or direct `CONFIG_SECURITY` related entries) is enabled.
+3. Locate **`Security hooks for pathname based access control`** (which corresponds to `CONFIG_SECURITY_PATH`) and enable it by ensuring it is marked as `[*]` or `<*>`.
+
+Save your changes and exit the interface. When executing the build, ensure that you accept the default values for any unconfigured option prompts.
+
+
 ```bash
 # Final build using LLVM 17
 make LLVM=-17 O=../kernel_build_v6.8 -j$(nproc)
