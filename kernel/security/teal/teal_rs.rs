@@ -263,9 +263,9 @@ const EVENT_EXECUTE: i32 = 4;
 const EVENT_DELETE: i32  = 8;
 const EVENT_UNLINK: i32  = 16;
 const EVENT_RENAME: i32  = 32;
-//const EVENT_CHMOD: i32      = 64;
-//const EVENT_CHOWN: i32      = 128;
-const EVENT_CONNECT: i32    = 256;
+const EVENT_CHMOD: i32   = 64;
+const EVENT_CHOWN: i32   = 128;
+const EVENT_CONNECT: i32 = 256;
 
 #[inline]
 fn action_name_for_event(event_type: i32) -> Option<&'static str> {
@@ -276,7 +276,8 @@ fn action_name_for_event(event_type: i32) -> Option<&'static str> {
         EVENT_DELETE  => Some("DELETE"),    // rmdir用
         EVENT_UNLINK  => Some("DELETE"),    // unlink用
         EVENT_RENAME  => Some("RENAME"),
-        // EVENT_CHMOD => Some("CHMOD"),
+        EVENT_CHMOD   => Some("CHMOD"),
+        EVENT_CHOWN   => Some("CHOWN"),
         _ => None,
     }
 }
@@ -478,19 +479,44 @@ fn unreachable_tail() -> ! {
 #[no_mangle]
 #[inline(never)]
 unsafe extern "C" fn teal_decision_logic(event_type: i32, ctx: *mut c_void) -> i32 {
-    let r = match event_type {
-        EVENT_READ | EVENT_EXECUTE | EVENT_WRITE => unsafe { handle_file_event(event_type, ctx) },
-        EVENT_UNLINK | EVENT_DELETE => unsafe { handle_dentry_event(event_type, ctx) },
-        EVENT_RENAME => unsafe { handle_rename_event(ctx) },
-        EVENT_CONNECT => unsafe { handle_connect_event(ctx) },
-        _ => 0,
-    };
+    // LSMフックの規約に従い、デフォルトは 0 (ALLOW)
+    let final_result = 0; 
 
+    // 評価対象の全イベントビット
+    let events = [
+        EVENT_READ, EVENT_WRITE, EVENT_EXECUTE, 
+        EVENT_DELETE, EVENT_UNLINK, EVENT_RENAME, 
+        EVENT_CHMOD, EVENT_CHOWN, EVENT_CONNECT
+    ];
+
+    for &event in &events {
+        // ビットが立っているかチェック
+        if (event_type & event) != 0 {
+            // 個別の評価を実行
+            let res = match event {
+                EVENT_READ | EVENT_EXECUTE | EVENT_WRITE | EVENT_CHMOD | EVENT_CHOWN => {
+                    unsafe { handle_file_event(event, ctx) }
+                },
+                EVENT_UNLINK | EVENT_DELETE => unsafe { handle_dentry_event(event, ctx) },
+                EVENT_RENAME => unsafe { handle_rename_event(ctx) },
+                EVENT_CONNECT => unsafe { handle_connect_event(ctx) },
+                _ => 0, // 未知のイベントは透過許可
+            };
+
+            if res != 0 {
+                return res; 
+            }
+        }
+    }
+
+    // =========================================================================
+    // 最適化避けハック (末尾呼び出し最適化およびデッドコード削除を抑制)
+    // =========================================================================
     if always_false_but_opaque() {
         unreachable_tail();
     }
 
-    r
+    final_result
 }
 
 impl kernel::Module for TealModule {

@@ -45,6 +45,7 @@
 #include <linux/magic.h>
 #include <linux/anon_inodes.h>
 #include <linux/mount.h>
+#include <linux/fs_struct.h>
 
 #include <net/genetlink.h>
 #include <net/net_namespace.h>
@@ -2188,6 +2189,115 @@ static int teal_path_rename(const struct path *old_dir, struct dentry *old_dentr
     return teal_handle_path_rename_slow(old_dir, old_dentry, new_dir, new_dentry);
 }
 
+/**
+ * 属性変更系フックの共通処理（CHMOD / CHOWN 用）
+ */
+static int teal_handle_attr_change(struct dentry *dentry, enum teal_event_type event_type)
+{
+    int ret = 0;
+    char *page = NULL;
+    char *resolved_path = ""; 
+    struct path target_path;
+    struct teal_rs_ctx ctx;
+
+    // 実行元（サブジェクト）の初期値
+    const char *exec_path = "-";
+    const char *script_path = "-";
+    struct teal_task_meta *meta;
+
+    // 1. 最優先バイパスチェック
+    if (teal_should_bypass_all()) {
+        return 0;
+    }
+
+    // 2. O(1) Fast Path チェック (チケットキャッシュ判定)
+    if (d_is_positive(dentry)) {
+        if (teal_check_ticket_match(d_inode(dentry), event_type, NULL)) { 
+            return 0; // キャッシュヒットにより即時許可
+        }
+    }
+
+    // --- ここから下は Slow Path（teald への問い合わせ処理） ---
+
+    // 3. 現在のプロセス(current)の実行元プログラムおよびスクリプト情報を取得
+    meta = teal_task_meta_current();
+    if (meta) {
+        exec_path = meta->program;
+        script_path = meta->script;
+    }
+
+    // 4. パス解決用のメモリ確保
+    page = (char *)__get_free_page(GFP_KERNEL);
+    if (!page) {
+        pr_warn("TEAL: __get_free_page failed in inode setattr hook\n");
+    }
+
+    // 5. dentry から struct path を構成
+    if (current->fs) {
+        target_path.mnt = current->fs->root.mnt; 
+        target_path.dentry = dentry;
+
+        // 絶対パスの解決
+        if (page) {
+            resolved_path = d_path(&target_path, page, PAGE_SIZE);
+            if (IS_ERR(resolved_path)) {
+                pr_warn("TEAL_DEBUG: [ERR] d_path failed with error code %ld\n", PTR_ERR(resolved_path));
+                resolved_path = ""; 
+            }
+        }
+    } else {
+        pr_warn("TEAL_DEBUG: [ERR] current->fs is NULL. Cannot resolve path.\n");
+    }
+
+    // 6. Rust空間（teal_rs）に引き渡す構造体のパッキング
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.target = resolved_path;
+    ctx.program = exec_path;
+    ctx.script = script_path;
+
+    if (d_is_positive(dentry)) {
+        ctx.target_dev = dentry->d_sb->s_dev;
+        ctx.target_ino = d_inode(dentry)->i_ino;
+    }
+
+    // 7. 登録されたコールバック（Rust側）を呼び出して判定
+    if (teal_decision_maker) {
+        ret = teal_decision_maker(event_type, (void *)&ctx);
+    } else {
+        ret = 0; // コールバック未登録時はデフォルト許可
+    }
+
+    // 8. メモリの解放
+    if (page) {
+        free_page((unsigned long)page);
+    }
+
+    return ret;
+}
+
+static int teal_inode_setattr(struct dentry *dentry, struct iattr *attr) {
+    int event_type = 0;
+
+    if (!attr) return 0;
+
+    // 権限変更 (Chmod)
+    if (attr->ia_valid & ATTR_MODE) {
+        event_type |= TEAL_EVENT_CHMOD;
+    }
+    // 所有者変更 (Chown)
+    if (attr->ia_valid & (ATTR_UID | ATTR_GID)) {
+        event_type |= TEAL_EVENT_CHOWN;
+    }
+
+    // 属性変更がなければ何もせず許可
+    if (event_type == 0) {
+        return 0;
+    }
+
+    // 共通ヘルパー関数を呼び出してロジックを統合
+    return teal_handle_attr_change(dentry, event_type);
+}
+
 // ------------------------------
 // LSM hooks
 // ------------------------------
@@ -2210,6 +2320,7 @@ static struct security_hook_list teal_hooks[] __ro_after_init = {
     LSM_HOOK_INIT(path_unlink, teal_path_unlink),
     LSM_HOOK_INIT(path_rmdir, teal_path_rmdir),
     LSM_HOOK_INIT(path_rename, teal_path_rename),
+    LSM_HOOK_INIT(inode_setattr, teal_inode_setattr),
 };
 
 static int __init teal_lsm_init(void)
