@@ -20,10 +20,14 @@ use crate::verify::checker_alloy::AlloyChecker;
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct VerifyGoal {
     pub name: String,
-    pub target: String,             // 守るべきリソース (例: "/etc/shadow")
+    pub target: String,              // 守るべきリソース (例: "/etc/shadow")
+    
+    // RENAME先の検証用 (例: "/etc/shadow.bak")
+    #[serde(default)]
+    pub new_target: Option<String>,  
     
     #[serde(default)]               // 省略された場合は空のVecになる
-    pub action: Vec<String>,        // 例: ["READ", "WRITE"]
+    pub action: Vec<String>,        // 例: ["READ", "WRITE", "RENAME"]
     
     pub expected_effect: String,    // "deny", "need_approval", "allow"
 

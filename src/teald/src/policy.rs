@@ -36,8 +36,11 @@ pub fn load_policy(
     roles: &CompiledRoles,
 ) -> Result<(CompiledPolicy, CompileWarnings)> {
     // 1) file -> Value
-    let v = load_json_file(path)
+    let mut v = load_json_file(path)
         .with_context(|| format!("load policy json: {}", path))?;
+
+    // スキーマ検証の前に、Value内の ops 配列にある文字列をすべて大文字に変換
+    uppercase_ops_in_value(&mut v);
 
     // 2) schema validate（構文検証）
     validate_against_schema(&v, policy_schema_value())
@@ -52,6 +55,35 @@ pub fn load_policy(
         .with_context(|| format!("compile policy failed: {}", path))?;
 
     Ok((compiled, warnings))
+}
+
+/// JSON Value内を再帰的に探索し、"ops" キー配下にある文字列をすべて大文字に変換するヘルパー
+fn uppercase_ops_in_value(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, val) in map.iter_mut() {
+                if key == "ops" {
+                    // ops が配列（Vec）であれば、その中の文字列要素を大文字に変換
+                    if let serde_json::Value::Array(arr) = val {
+                        for item in arr.iter_mut() {
+                            if let serde_json::Value::String(s) = item {
+                                *s = s.to_uppercase();
+                            }
+                        }
+                    }
+                } else {
+                    // それ以外のキーならさらに深く探索（再帰呼び出し）
+                    uppercase_ops_in_value(val);
+                }
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                uppercase_ops_in_value(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn merge_compiled_policies(

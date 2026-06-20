@@ -6,7 +6,8 @@
  */
 use serde::Deserialize;
 
-use crate::types::{Effect, AuditLevel};
+use crate::util::deserialize_ops_uppercase;
+use crate::types::{Effect, AuditLevel, Action};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -141,13 +142,17 @@ pub struct RawSubject {
 #[serde(deny_unknown_fields)]
 pub struct RawObject {
     pub path: String,
+    
+    // RENAME 操作の移動先パス。RENAME 以外では None になる。
+    #[serde(default)]
+    pub new_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawAction {
-    #[serde(default)]
-    pub ops: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_ops_uppercase")]
+    pub ops: Vec<Action>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

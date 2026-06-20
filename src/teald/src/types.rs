@@ -19,7 +19,8 @@ use teal_policy_engine::ir::{CompiledRule, RuleType};
 use teal_policy_engine::util::{uid_to_name, ktime_prefix};
 use teal_policy_engine::types::Effect;
 
-use crate::{evidence, app_state};
+use crate::evidence;
+use crate::state::app_state;
 use crate::bundle::bundle;
 use crate::ticket::{is_ticketable, make_draft_id, ticket_from_entry};
 use crate::worker::admin::find_rule;
@@ -28,30 +29,34 @@ use crate::worker::admin::find_rule;
 pub struct Request {
     pub id: u64,
     pub pid: u32,
-    pub ppid: u32,          // 追加: 親プロセスID
-    pub session_id: u32,    // 追加: セッションID
+    pub ppid: u32,          // 親プロセスID
+    pub session_id: u32,    // セッションID
     pub uid: u32,
-    pub gid: u32,           // 追加: グループID
+    pub gid: u32,           // グループID
 
-    pub prog_dev: u64,      // 追加: 実行バイナリのデバイス番号
-    pub prog_ino: u64,      // 追加: 実行バイナリのinode番号
+    pub prog_dev: u64,      // 実行バイナリのデバイス番号
+    pub prog_ino: u64,      // 実行バイナリのinode番号
     pub raw_program: String,
 
     pub raw_action: String,
 
-    pub target_dev: u64,    // 追加: 操作対象のデバイス番号
-    pub target_ino: u64,    // 追加: 操作対象のinode番号
+    pub target_dev: u64,    // 操作対象のデバイス番号
+    pub target_ino: u64,    // 操作対象のinode番号
     pub raw_target: String,
 
-    pub script_dev: u64,    // 追加: スクリプトのデバイス番号
-    pub script_ino: u64,    // 追加: スクリプトのinode番号
+    pub new_target_dev: u64,        // 移動先のデバイス番号
+    pub new_target_ino: u64,        // 移動先のinode番号
+    pub raw_new_target: Option<String>,     // 移動先のパス
+
+    pub script_dev: u64,    // スクリプトのデバイス番号
+    pub script_ino: u64,    // スクリプトのinode番号
     pub raw_script: Option<String>,
 
     pub raw_applet: Option<String>,
     
-    pub lsm_label_hex: String,     // 追加: LSMラベル (Hexエンコード)
-    pub args_head: Option<String>, // 追加: コマンドライン引数先頭
-    pub flag: u32,                 // 追加: リクエスト属性フラグ
+    pub lsm_label_hex: String,     // LSMラベル (Hexエンコード)
+    pub args_head: Option<String>, // コマンドライン引数先頭
+    pub flag: u32,                 // リクエスト属性フラグ
 
     pub is_audit: bool,
 }
@@ -126,7 +131,14 @@ pub struct PreApprovalDraft {
     pub origin_program_id: EntityId,
     pub origin_script_id: Option<EntityId>,
     pub origin_applet: Option<String>,
+    
+    // --- Source (移動元) ---
     pub object_id: EntityId,
+    
+    // --- Destination (移動先: RENAME時のみ使用) ---
+    // 承認プロセスで「どこに移動させるか」を確定させるために必要
+    pub new_object_id: Option<EntityId>, 
+    
     pub op_mask: u32,
 
     // --- MPA Control (承認状態) ---
@@ -146,6 +158,7 @@ pub struct ApprovedTicket {
     pub origin_program: String,
     pub origin_script: Option<String>,
     pub object: String,
+    pub new_object: Option<String>,
 
     // Strict Context Binding（確定済み）
     pub uid: u32,
@@ -153,6 +166,7 @@ pub struct ApprovedTicket {
     pub origin_script_id: Option<EntityId>,
     pub origin_applet: Option<String>,
     pub object_id: EntityId,
+    pub new_object_id: Option<EntityId>,
     pub op_mask: u32,
 
     // Ticket 属性
@@ -175,14 +189,27 @@ impl ApprovedTicket {
             .as_ref()
             .map(|p| p.to_string());
 
-        let object = rule.object
-                .as_ref()
+        // --- パス系 ---
+        let object = rule.object.as_ref()
                 .and_then(|obj| obj.path.as_ref())
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "-".to_string());
+        
+        // new_object の抽出
+        let new_object = rule.object.as_ref()
+                .and_then(|obj| obj.new_path.as_ref())
+                .map(|p| p.to_string());
 
+        // --- ID系 ---
         let origin_program_id = EntityId::new((ticket.prog_dev, ticket.prog_ino));
         let object_id = EntityId::new((ticket.target_dev, ticket.target_ino));
+        
+        // new_object_id の構築
+        let new_object_id = if ticket.new_target_dev != 0 || ticket.new_target_ino != 0 {
+            Some(EntityId::new((ticket.new_target_dev, ticket.new_target_ino)))
+        } else {
+            None
+        };
 
         let origin_script_id = if ticket.script_dev != 0 || ticket.script_ino != 0 {
             Some(EntityId::new((ticket.script_dev, ticket.script_ino)))
@@ -196,12 +223,14 @@ impl ApprovedTicket {
             origin_program,
             origin_script,
             object,
-
+            new_object,
+            
             uid: ticket.uid,
             origin_program_id,
             origin_script_id,
             origin_applet: rule.subject.origin_applet.clone(),
             object_id,
+            new_object_id,
             op_mask: ticket.op,
 
             ttl_sec: rule.ttl_sec,
@@ -211,7 +240,6 @@ impl ApprovedTicket {
 
     pub fn from_draft(draft: &PreApprovalDraft) -> Option<Self> {
         if let Ok(rule) = find_rule(&draft.rule_id) {
-            
             let origin_program = rule.subject.origin_program
                 .as_ref()
                 .map(|p| p.to_string())
@@ -221,11 +249,15 @@ impl ApprovedTicket {
                 .as_ref()
                 .map(|p| p.to_string());
 
-            let object = rule.object
-                .as_ref()
+            let object = rule.object.as_ref()
                 .and_then(|obj| obj.path.as_ref())
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "-".to_string());
+            
+            // new_object の抽出
+            let new_object = rule.object.as_ref()
+                .and_then(|obj| obj.new_path.as_ref())
+                .map(|p| p.to_string());
 
             Some(ApprovedTicket {
                 ticket_id: draft.draft_id.clone(),
@@ -233,12 +265,14 @@ impl ApprovedTicket {
                 origin_program,
                 origin_script,
                 object,
-
+                new_object,
+                
                 uid: draft.uid,
                 origin_program_id: draft.origin_program_id,
                 origin_script_id: draft.origin_script_id,
                 origin_applet: draft.origin_applet.clone(),
                 object_id: draft.object_id,
+                new_object_id: draft.new_object_id,
                 op_mask: draft.op_mask,
 
                 ttl_sec: rule.ttl_sec,
@@ -255,6 +289,13 @@ impl ApprovedTicket {
         let origin_program_id = EntityId::new((entry.subject.prog_dev, entry.subject.prog_ino));
         let object_id = EntityId::new((entry.object.device_id, entry.object.inode));
         
+        // new_object_id の構築
+        let new_object_id = if let (Some(dev), Some(ino)) = (entry.object.new_device_id, entry.object.new_inode) {
+            Some(EntityId::new((dev, ino)))
+        } else {
+            None
+        };
+        
         let origin_script_id = if entry.subject.script_dev != 0 || entry.subject.script_ino != 0 {
             Some(EntityId::new((entry.subject.script_dev, entry.subject.script_ino)))
         } else {
@@ -268,14 +309,15 @@ impl ApprovedTicket {
             origin_program: entry.subject.program_path.clone(),
             origin_script: entry.subject.script_path.clone(),
             object: entry.object.path.clone(),
-
+            new_object: entry.object.new_path.clone(), // ★追加
+            
             uid: entry.subject.uid,
             origin_program_id,
             origin_script_id,
-            
             origin_applet: entry.subject.applet_name.clone(),
             
             object_id,
+            new_object_id,
             op_mask: entry.op,
 
             ttl_sec: entry.ttl_seconds,
@@ -314,7 +356,6 @@ pub struct MgmtPendingStart {
     pub timeout_minutes: u32,
 }
 
-/// システム全体で持ち回るコンテキスト構造体(AccessContext)
 #[derive(Debug, Clone)]
 pub struct PendingEntry {
     // --- 1. Identity & Traceability (Section 6.1) ---
@@ -402,7 +443,13 @@ impl PendingEntry {
             object: ObjectContext {
                 path: req.raw_target.clone(),
                 inode: req.target_ino,       
-                device_id: req.target_dev,   
+                device_id: req.target_dev,
+
+                // RENAME 時のみ有効な情報を変換
+                // 値が 0 なら None にする（カーネルが「無し」を示す一般的な値が 0 の場合）
+                new_path: req.raw_new_target.clone(),
+                new_inode: if req.new_target_ino != 0 { Some(req.new_target_ino) } else { None },
+                new_device_id: if req.new_target_dev != 0 { Some(req.new_target_dev) } else { None },
             },
             
             // 以下は呼び出し元 (from_rule / from_audit) で上書きされる
@@ -506,6 +553,12 @@ impl PendingEntry {
                 // TOCTOU対策: teald側で解決せず、カーネルから受信した不変の値を必ず使う
                 inode: req.target_ino,       
                 device_id: req.target_dev,   
+
+                // RENAME 時のみ有効な情報を変換
+                // 値が 0 なら None にする（カーネルが「無し」を示す一般的な値が 0 の場合）
+                new_path: req.raw_new_target.clone(),
+                new_inode: if req.new_target_ino != 0 { Some(req.new_target_ino) } else { None },
+                new_device_id: if req.new_target_dev != 0 { Some(req.new_target_dev) } else { None },
             },
             op: rule.action_match.to_u32(),
             rule_id: Some(rule.id.clone()),
@@ -557,6 +610,13 @@ impl PendingEntry {
                 (self.object.device_id, self.object.inode)
             };
 
+            // new_target のメタデータ抽出
+            let (new_target_dev, new_target_ino) = if rule.rule_type == RuleType::SubjectOnly {
+                (0, 0)
+            } else {
+                (self.object.new_device_id.unwrap_or(0), self.object.new_inode.unwrap_or(0))
+            };
+
             // Netlink 送信用の構造体 (TicketPayload) を組み立てる
             let payload = TicketPayload {
                 uid: self.subject.uid,
@@ -568,6 +628,8 @@ impl PendingEntry {
                 applet_hash: 0,             // Alpha版暫定
                 target_dev,
                 target_ino,
+                new_target_dev,
+                new_target_ino,
                 expires_in_sec: rule.ttl_sec,
                 flags: rule.ticket_profile.flags,
                 uses_left: rule.max_uses,
@@ -619,12 +681,16 @@ pub struct SubjectContext {
 
 #[derive(Debug, Clone)]
 pub struct ObjectContext {
+    // --- Source (移動元) ---
     pub path: String,
-    
-    // Immutable Identifiers (Section 4.2 Ticket仕様)
-    // パスが変わっても追跡できるよう、必ずDev:Inodeを持つ
-    pub inode: u64,
-    pub device_id: u64, // major:minor encoded
+    pub inode: u64,         // パスが変わっても追跡できるよう、必ずDev:Inodeを持つ
+    pub device_id: u64,     // major:minor encoded
+
+    // --- Destination (移動先: RENAME時のみ使用) ---
+    pub new_path: Option<String>,
+    pub new_inode: Option<u64>,
+    pub new_device_id: Option<u64>,
+
 }
 
 // -------------------------------------------------------------------
@@ -824,8 +890,10 @@ pub struct KernelEventLog {
     pub uses_left: u32,         // <USES_LEFT>
 //    pub org_dev: u64,           // <ORG_DEV>
 //    pub org_ino: u64,           // <ORG_INO>
-//    pub obj_dev: u64,           // <OBJ_DEV>
+    pub obj_dev: u64,           // <OBJ_DEV>
     pub obj_ino: u64,           // <OBJ_INO>
+    pub new_obj_dev: Option<u64>,           // <NEW_OBJ_DEV>
+    pub new_obj_ino: Option<u64>,           // <NEW_OBJ_INO>
 //    pub res: String,            // <RES>
 }
 
@@ -929,6 +997,8 @@ pub struct TicketPayload {
     pub applet_hash: u64,       // Alphaフェーズは 0
     pub target_dev: u64,
     pub target_ino: u64,
+    pub new_target_dev: u64,
+    pub new_target_ino: u64,
     pub expires_in_sec: u64,    // TTL
     pub flags: u32,             // チケットの振る舞いフラグ (SILENT_IO | INHERIT) [0x1 SILENT_IO, 0x2 INHERIT]の論理和
     pub uses_left: u32,         // 残り使用回数

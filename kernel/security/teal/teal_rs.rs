@@ -42,6 +42,9 @@ extern "C" {
         target_name: *const core::ffi::c_char,
         target_dev: u64,
         target_ino: u64,
+        new_target: *const core::ffi::c_char,
+        new_target_dev: u64,
+        new_target_ino: u64,
         teal_mode: u8,
         exec_path: *const core::ffi::c_char,
         script_path: *const core::ffi::c_char,
@@ -118,6 +121,18 @@ pub struct teal_rs_ctx {
     pub target_ino: u64,
 }
 
+#[repr(C)]
+struct teal_rs_rename_ctx {
+    program: *const c_char,
+    script: *const c_char,
+    old_target: *const c_char,
+    old_target_dev: u64,
+    old_target_ino: u64,
+    new_target: *const c_char,
+    new_target_dev: u64,
+    new_target_ino: u64,
+}
+
 static ENFORCING_MODE: AtomicBool = AtomicBool::new(false);
 
 struct TealModule;
@@ -151,44 +166,49 @@ fn request_approval_ex(
     target: &str, 
     target_dev: u64, 
     target_ino: u64, 
+    new_target: &str,
+    new_target_dev: u64,
+    new_target_ino: u64,
     program: &str, 
     script: &str, 
     applet: &str
 ) -> i32 {
     let teal_mode: u8 = (!ENFORCING_MODE.load(Ordering::Relaxed)) as u8;
 
-    let target_c = match to_kcstring_or_empty(target) {
-        Ok(v) => v,
-        Err(e) => return e.to_errno(),
-    };
+    // =========================================================
+    // 変換失敗時（ENOMEM等）に早期リターンするマクロを定義
+    // =========================================================
+    macro_rules! try_cstring {
+        ($val:expr) => {
+            match to_kcstring_or_empty($val) {
+                Ok(v) => v,
+                Err(e) => return e.to_errno(),
+            }
+        };
+    }
 
-    let action_c  = match to_kcstring_or_empty(action) {
-        Ok(v) => v,
-        Err(e) => return e.to_errno(),
-    };
-    let program_c = match to_kcstring_or_empty(program) {
-        Ok(v) => v,
-        Err(e) => return e.to_errno(),
-    };
-    let script_c  = match to_kcstring_or_empty(script) {
-        Ok(v) => v,
-        Err(e) => return e.to_errno(),
-    };
-    let applet_c = match to_kcstring_or_empty(applet) {
-        Ok(v) => v,
-        Err(e) => return e.to_errno(),
-    };
+    // マクロを使って一気にパース（万が一どれか失敗したらその時点で return される）
+    let action_c     = try_cstring!(action);
+    let target_c     = try_cstring!(target);
+    let new_target_c = try_cstring!(new_target);
+    let program_c    = try_cstring!(program);
+    let script_c     = try_cstring!(script);
+    let applet_c     = try_cstring!(applet);
 
     unsafe {
+        // C側のカーネル関数を呼び出す
         teal_wait_for_approval(
-            action_c.as_ptr()  as *const c_char,
-            target_c.as_ptr()  as *const c_char,
-            target_dev as _,         // 3. target_dev (C側の dev_t)
-            target_ino as _,         // 4. target_ino (C側の unsigned long)
-            teal_mode,               // 5. teal_mode
-            program_c.as_ptr() as *const c_char, // 6. exec_path
-            script_c.as_ptr()  as *const c_char, // 7. script_path
-            applet_c.as_ptr()  as *const c_char, // 8. applet
+            action_c.as_ptr()     as *const core::ffi::c_char,
+            target_c.as_ptr()     as *const core::ffi::c_char,
+            target_dev            as _,         
+            target_ino            as _,         
+            new_target_c.as_ptr() as *const core::ffi::c_char,
+            new_target_dev        as _,
+            new_target_ino        as _,
+            teal_mode,               
+            program_c.as_ptr()    as *const core::ffi::c_char, 
+            script_c.as_ptr()     as *const core::ffi::c_char,  
+            applet_c.as_ptr()     as *const core::ffi::c_char,  
         )
     }
 }
@@ -314,6 +334,9 @@ unsafe fn handle_file_event(event_type: i32, ctx: *mut c_void) -> i32 {
         tctx.target, 
         tctx.target_dev, 
         tctx.target_ino, 
+        "",
+        0,
+        0,
         tctx.program, 
         tctx.script, 
         comm_str
@@ -341,6 +364,9 @@ unsafe fn handle_dentry_event(event_type: i32, ctx: *mut c_void) -> i32 {
         tctx.target, 
         tctx.target_dev, 
         tctx.target_ino, 
+        "",
+        0,
+        0,
         tctx.program, 
         tctx.script, 
         comm_str
@@ -365,8 +391,74 @@ unsafe fn handle_connect_event(ctx: *mut c_void) -> i32 {
         tctx.target, 
         tctx.target_dev, // ネットワークでは通常 0
         tctx.target_ino, // ネットワークでは通常 0
+        "",
+        0,
+        0,
         prog,            // 確実に "-" 以上を渡す
         scpt,            // 確実に "-" 以上を渡す
+        comm_str
+    )
+}
+
+#[derive(Clone, Copy)]
+struct TealRenameContext<'a> {
+    program: &'a str,
+    script: &'a str,
+    old_target: &'a str,
+    old_target_dev: u64,
+    old_target_ino: u64,
+    new_target: &'a str,
+    new_target_dev: u64,
+    new_target_ino: u64,
+}
+
+unsafe fn parse_teal_rename_ctx<'a>(ctx: *mut c_void) -> Option<TealRenameContext<'a>> {
+    if ctx.is_null() { return None; }
+    let p = ctx as *const teal_rs_rename_ctx;
+
+    // 非アライメントリードでCの構造体から安全に値を引き出す
+    let pr = unsafe { read_unaligned(addr_of!((*p).program)) };
+    let sc = unsafe { read_unaligned(addr_of!((*p).script)) };
+    let ot = unsafe { read_unaligned(addr_of!((*p).old_target)) };
+    let old_target_dev = unsafe { read_unaligned(addr_of!((*p).old_target_dev)) };
+    let old_target_ino = unsafe { read_unaligned(addr_of!((*p).old_target_ino)) };
+    let nt = unsafe { read_unaligned(addr_of!((*p).new_target)) };
+    let new_target_dev = unsafe { read_unaligned(addr_of!((*p).new_target_dev)) };
+    let new_target_ino = unsafe { read_unaligned(addr_of!((*p).new_target_ino)) };
+
+    Some(TealRenameContext {
+        program: cstr_to_str_lossy::<'a>(pr),
+        script: cstr_to_str_lossy::<'a>(sc),
+        old_target: cstr_to_str_lossy::<'a>(ot),
+        old_target_dev,
+        old_target_ino,
+        new_target: cstr_to_str_lossy::<'a>(nt),
+        new_target_dev,
+        new_target_ino,
+    })
+}
+
+unsafe fn handle_rename_event(ctx: *mut c_void) -> i32 {
+    let action = "RENAME"; // リネーム固定
+
+    let tctx = match unsafe { parse_teal_rename_ctx(ctx) } { // 専用パース関数
+        Some(v) => v,
+        None => return 0,
+    };
+
+    let comm = current_comm_str();
+    let comm_str = comm_bytes_to_str(&comm);
+
+    request_approval_ex(
+        action, 
+        tctx.old_target, // 移動元パス
+        tctx.old_target_dev, 
+        tctx.old_target_ino, 
+        tctx.new_target, // 移動先パス
+        tctx.new_target_dev, // 移動先dev
+        tctx.new_target_ino, // 移動先ino
+        tctx.program, 
+        tctx.script, 
         comm_str
     )
 }
@@ -388,7 +480,8 @@ fn unreachable_tail() -> ! {
 unsafe extern "C" fn teal_decision_logic(event_type: i32, ctx: *mut c_void) -> i32 {
     let r = match event_type {
         EVENT_READ | EVENT_EXECUTE | EVENT_WRITE => unsafe { handle_file_event(event_type, ctx) },
-        EVENT_UNLINK | EVENT_RENAME | EVENT_DELETE => unsafe { handle_dentry_event(event_type, ctx) },
+        EVENT_UNLINK | EVENT_DELETE => unsafe { handle_dentry_event(event_type, ctx) },
+        EVENT_RENAME => unsafe { handle_rename_event(ctx) },
         EVENT_CONNECT => unsafe { handle_connect_event(ctx) },
         _ => 0,
     };

@@ -11,7 +11,7 @@ use uuid::Uuid;
 use blst::min_pk::{PublicKey, Signature};
 use blst::BLST_ERROR;
 
-use crate::app_state;
+use crate::state::app_state;
 use crate::bundle::bundle;
 use crate::management::management;
 use crate::common::DecisionKind;

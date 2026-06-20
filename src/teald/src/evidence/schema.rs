@@ -93,14 +93,23 @@ pub struct SubjectInfo {
 /// カーネルがアクセスしようとしたリソースの情報
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ObjectInfo {
-    /// オブジェクト種別 (例: "file", "directory", "char_dev", "socket")
+    /// オブジェクト種別 (例: "file", "directory")
     pub kind: String,
 
-    /// 解決された絶対パス (例: "/etc/shadow")
+    /// ソースパス (移動元)
     pub path: String,
-
-    /// inode番号
     pub inode: u64,
+    pub device_id: u64,
+
+    /// 移動先パス (RENAME時のみ使用)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_path: Option<String>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_inode: Option<u64>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_device_id: Option<u64>,
 }
 
 impl Default for ObjectInfo {
@@ -109,6 +118,10 @@ impl Default for ObjectInfo {
             kind: "unknown".to_string(),
             path: "unknown".to_string(),
             inode: 0,
+            device_id: 0,
+            new_path: None,
+            new_inode: None,
+            new_device_id: None,
         }
     }
 }

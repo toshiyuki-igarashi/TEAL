@@ -21,6 +21,7 @@ pub struct ReqData {
     pub roles: Vec<String>,
     pub prog: String,
     pub obj: String,
+    pub new_obj: String,
     pub op: String,
     pub rule_id: String,
 }
@@ -136,11 +137,12 @@ impl AlloyChecker {
 
 #[derive(Default)]
 pub struct RawCounterExample {
-    pub goal_name: String,      // 検証ゴールの識別名
-    pub is_violated: bool,      // 脆弱性が見つかったか
-    pub rule_id: String,        // 原因となった rule_id
+    pub goal_name: String,          // 検証ゴールの識別名
+    pub is_violated: bool,          // 脆弱性が見つかったか
+    pub rule_id: String,            // 原因となった rule_id
     pub object_atom: String,
-    pub subject_atom: String,   // 従来の表示用 ("Role_admin + Prog: /tmp/malware")
+    pub new_object_atom: String,
+    pub subject_atom: String,       // 従来の表示用 ("Role_admin + Prog: /tmp/malware")
     pub subject_roles: Vec<String>, // Roleを個別に保持
     pub subject_origin: String,     // プログラム(origin)を個別に保持
     pub action: String,
@@ -157,6 +159,7 @@ impl AlloyChecker {
             rule_id: String::new(),
             subject_atom: String::new(),
             object_atom: String::new(),
+            new_object_atom: String::new(),
             subject_roles: Vec::new(),
             subject_origin: String::new(),
             action: String::new(),
@@ -232,6 +235,7 @@ impl AlloyChecker {
         if let Some(req) = req_map.get(&culprit_req_id) {
             ce.rule_id = req.rule_id.clone();
             ce.object_atom = req.obj.clone();
+            ce.new_object_atom = req.new_obj.clone();
             ce.action = req.op.clone();
 
             // 生のデータをそのまま保持する
@@ -301,11 +305,11 @@ impl AlloyChecker {
                 "role" | "roles" => req.roles.push(val),
                 "origin_program" => req.prog = val,
                 "path" | "object" => req.obj = val,
+                "new_path" | "new_object" => req.new_obj = val,
                 "op" => req.op = val,
                 _ => {}
             }
-        } 
-        else {
+        } else {
             if field_label == "path" {
                 ce.path_map.insert(atoms[0].clone(), atoms[1].clone());
             }
@@ -323,6 +327,7 @@ pub struct DecodedViolation {
     pub counter_example_math: String,
     pub subject_info: String,
     pub object_path: String,
+    pub new_object_path: Option<String>,    // RENAME時の移動先パス
     pub action: String,
     pub triggered_rule_id: String,
     pub rule_description: String,
@@ -341,7 +346,16 @@ impl DecodedViolation {
         // 攻撃パスの表示
         println!("{}", "Detected Attack Path:".bright_white().bold());
         println!("  - {} {}", "Subject:".bold(), self.subject_info);
-        println!("  - {} {}", "Object: ".bold(), self.object_path);
+
+        // Object の表示 (RENAME時は矢印で繋いで直感的に見せるか、行を追加する)
+        if let Some(ref new_path) = self.new_object_path {
+            // RENAMEの場合：移動元 -> 移動先 のように表示すると分かりやすいです
+            println!("  - {} {} -> {}", "Object: ".bold(), self.object_path, new_path.bright_magenta());
+        } else {
+            // 通常のREAD/WRITE/DELETE等の場合
+            println!("  - {} {}", "Object: ".bold(), self.object_path);
+        }
+
         println!("  - {} {}", "Action: ".bold(), self.action);
         println!();
 
@@ -360,20 +374,33 @@ impl AlloyChecker {
         &self,
         raw: &RawCounterExample,
         model: &TealIrModel,
-        _math_proofs: &HashMap<String, String> // 使わないので _ をつけたまま無視
+        _math_proofs: &HashMap<String, String>
     ) -> DecodedViolation {
         // 1. Alloy 固有の $0 サフィックスを除去
         let clean_rule_id = raw.rule_id.split('$').next().unwrap_or("unknown");
         let clean_obj_atom = raw.object_atom.split('$').next().unwrap_or(&raw.object_atom);
+        let clean_new_obj_atom = raw.new_object_atom.split('$').next().unwrap_or(&raw.new_object_atom);
 
-        // 2. パス(Object)のクリーンアップ ("Obj__etc_shadow" -> "/etc/shadow")
-        // path_map にあれば使い、なければプレフィックスを削って "_" を "/" に戻す
-        let object_path = raw.path_map.get(clean_obj_atom)
-            .map(|s| s.trim_matches('"').to_string())
-            .unwrap_or_else(|| {
-                let s = clean_obj_atom.strip_prefix("Obj_").unwrap_or(clean_obj_atom);
-                s.replace("_", "/") // "_etc_shadow" -> "/etc/shadow"
-            });
+        // --- 正確なパス復元ヘルパー ---
+        // sanitize() した結果が Alloyのアトム名 と一致するものを managed_paths から探す
+        let find_original_path = |atom_name: &str| -> String {
+            let stripped = atom_name.strip_prefix("Obj_").unwrap_or(atom_name);
+            if let Some(orig) = model.managed_paths.iter().find(|p| sanitize(p) == stripped) {
+                return orig.clone(); // 正確な生パス（/root/test.txt 等）を返す
+            }
+            // 見つからない場合のフォールバック（ここは最終手段）
+            stripped.replace("_", "/")
+        };
+
+        // 2. パス(Object)の正確な逆引き
+        let object_path = find_original_path(clean_obj_atom);
+
+        // 3. new_object_path の正確な逆引き
+        let new_object_path = if clean_new_obj_atom.is_empty() || clean_new_obj_atom == "none" {
+            None
+        } else {
+            Some(find_original_path(clean_new_obj_atom))
+        };
 
         // 3. ルールIDの逆引き (Alloy用ID -> 元の JSON ID)
         let original_rule_id = model.rules.iter()
@@ -401,10 +428,17 @@ impl AlloyChecker {
             format!("'{}'", raw.subject_origin)
         };
 
-        // 5. 反例の数式を動的に生成（綺麗な文字列で組み立てる）
+        // new_path が存在する場合は、数式に \land (AND) 条件として追加する文字列を作る
+        let new_path_math = match &new_object_path {
+            Some(np) => format!("      \\land object.new_path = '{}'\n", np),
+            None => String::new(), // RENAME以外は何も追加しない
+        };
+
+        // 5. 反例の数式を動的に生成
         let counter_example_math = format!(
-            "\\exists r \\in Requests :\n    (object.path = '{}'\n      \\land action.op = {}\n      \\land subject.role = {}\n      \\land subject.origin = {}\n      \\land AccessAllowed(r))",
+            "\\exists r \\in Requests :\n    (object.path = '{}'\n{}      \\land action.op = {}\n      \\land subject.role = {}\n      \\land subject.origin = {}\n      \\land AccessAllowed(r))",
             object_path,
+            new_path_math,
             clean_action,
             role_str,
             origin_str
@@ -414,6 +448,7 @@ impl AlloyChecker {
             goal_name: raw.goal_name.clone(),
             counter_example_math,
             object_path: object_path.clone(), // Detected Attack Path の Object に使用
+            new_object_path,
             triggered_rule_id: original_rule_id.to_string(),
             subject_info: role_str,           // Detected Attack Path の Subject に使用
             action: clean_action.to_string(), // Detected Attack Path の Action に使用

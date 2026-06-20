@@ -18,7 +18,7 @@ pub struct TealIrModel {
     pub entities: Vec<Entity>,
     pub rules: Vec<IrRule>,
     pub assertions: Vec<IrAssertion>,
-    pub managed_paths: Vec<String>, // 追加: ポリシーによって管理されるリソースパスのリスト
+    pub managed_paths: Vec<String>, // ポリシーによって管理されるリソースパスのリスト
 }
 
 /// 主体(Subject)や客体(Object)を抽象化したエンティティ
@@ -157,6 +157,11 @@ impl TealIrModel {
         // from_rawでの skip 処理により、ここは安全に unwrap できる
         if let Some(obj) = &raw_rule.object {
             entities.insert(Entity { name: obj.path.clone(), category: EntityCategory::ResourcePath });
+            
+            // ルール定義内の new_path も Entity として登録
+            if let Some(np) = &obj.new_path {
+                entities.insert(Entity { name: np.clone(), category: EntityCategory::ResourcePath });
+            }
         }
 
         // ==========================================
@@ -164,7 +169,7 @@ impl TealIrModel {
         // ==========================================
         let act = &raw_rule.action;
         for op in &act.ops {
-            entities.insert(Entity { name: op.clone(), category: EntityCategory::Operation });
+            entities.insert(Entity { name: op.to_string(), category: EntityCategory::Operation });
         }
     }
 
@@ -219,7 +224,13 @@ impl TealIrModel {
         // ==========================================
         // subject_only の場合は object が None になるので安全にスキップされる
         if let Some(obj) = &raw_rule.object {
+            // 1. 移動元(path)の条件
             and_conditions.push(Self::process_matchable_attr("object.path", obj.path.clone()));
+            
+            // 2. 移動先(new_path)の条件
+            if let Some(np) = &obj.new_path {
+                and_conditions.push(Self::process_matchable_attr("object.new_path", np.clone()));
+            }
         }
 
         // ==========================================
@@ -229,7 +240,7 @@ impl TealIrModel {
         if !raw_rule.action.ops.is_empty() {
             // 複数の操作(ops)がある場合は「いずれかに合致(OR)」のツリーを作る
             let op_terms: Vec<IrExpr> = raw_rule.action.ops.iter()
-                .map(|op| Self::process_matchable_attr("action.op", op.clone()))
+                .map(|op| Self::process_matchable_attr("action.op", op.to_string()))
                 .collect();
             
             // Andリストの中に「(READ or WRITE)」のようなOrブロックを追加
@@ -262,6 +273,11 @@ impl TealIrModel {
             // --- このルールが対象とするオブジェクトパスを「管理対象」として記録 ---
             if let Some(obj) = &raw_rule.object {
                 managed_paths_set.insert(obj.path.clone());
+                
+                // RENAME時の移動先（new_path）も管理対象として登録する
+                if let Some(np) = &obj.new_path {
+                    managed_paths_set.insert(np.clone());
+                }
             }
 
             // --- ステップ2: 論理ツリーの組み立て ---
@@ -285,6 +301,14 @@ impl TealIrModel {
                 category: EntityCategory::ResourcePath 
             });
 
+            // new_target も検証用の Entity として登録する
+            if let Some(nt) = &goal.new_target {
+                entities_set.insert(Entity { 
+                    name: nt.clone(),
+                    category: EntityCategory::ResourcePath 
+                });
+            }
+
             let assertion = Self::build_assertion(goal)?;
             assertions.push(assertion);
         }
@@ -303,6 +327,12 @@ impl TealIrModel {
 
         // 1. ターゲット（パス）条件
         conds.push(Self::process_matchable_attr("object.path", goal.target.clone()));
+
+        // 移動先（new_target）の条件
+        // goal.yaml に new_target が指定されている場合のみ、AND条件に追加する
+        if let Some(nt) = &goal.new_target {
+            conds.push(Self::process_matchable_attr("object.new_path", nt.clone()));
+        }
 
         // 2. Action条件 (ops)
         if !goal.action.is_empty() {

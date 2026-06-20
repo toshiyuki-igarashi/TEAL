@@ -10,8 +10,8 @@ use std::fmt;
 use anyhow::{Result, anyhow};
 use globset::Glob;
 
-use crate::types::{Effect, AuditLevel};
-use crate::errors::{CompileError, CompileWarnings};
+use crate::types::{Effect, AuditLevel, Action};
+use crate::errors::CompileWarnings;
 use crate::raw::{RawPreApprovalDefaults, RawTicketProfile};
 
 #[derive(Debug)]
@@ -81,6 +81,20 @@ pub struct ManagedScopeIndex {
 }
 
 impl ManagedScopeIndex {
+    // PathMatcher を適切な Vec/HashSet に振り分けるヘルパー
+    fn add_matcher(
+        pm: &PathMatcher,
+        exact: &mut HashSet<PathBuf>,
+        prefixes: &mut Vec<PathBuf>,
+        globs: &mut Vec<globset::GlobMatcher>,
+    ) {
+        match pm {
+            PathMatcher::Exact(p) => { exact.insert(p.clone()); },
+            PathMatcher::Prefix(p) => { prefixes.push(p.clone()); },
+            PathMatcher::Glob { matcher, .. } => { globs.push(matcher.clone()); },
+        }
+    }
+
     pub fn union(&self, other: &Self) -> Self {
         // Object用のマージ
         let mut exact_paths = self.exact_paths.clone();
@@ -118,27 +132,24 @@ impl ManagedScopeIndex {
         let mut subject_glob = Vec::new();
 
         for r in rules {
-            // 1. 通常ルールの場合：Objectのパスをインデックスに登録
+            // 1. 通常ルールの場合
             if r.rule_type != RuleType::SubjectOnly {
                 if let Some(obj) = &r.object {
+                    // Source Path の登録
                     if let Some(pm) = &obj.path {
-                        match pm {
-                            PathMatcher::Exact(p) => { exact_paths.insert(p.clone()); },
-                            PathMatcher::Prefix(p) => { prefixes.push(p.clone()); },
-                            PathMatcher::Glob { matcher, .. } => { globs.push(matcher.clone()); },
-                        }
+                        Self::add_matcher(pm, &mut exact_paths, &mut prefixes, &mut globs);
+                    }
+                    // Destination Path の登録
+                    if let Some(pm) = &obj.new_path {
+                        Self::add_matcher(pm, &mut exact_paths, &mut prefixes, &mut globs);
                     }
                 }
             }
 
-            // 2. SubjectOnly ルールの場合：Subject (origin_program) のパスをインデックスに登録
+            // 2. SubjectOnly ルールの場合
             if r.rule_type == RuleType::SubjectOnly {
                 if let Some(pm) = &r.subject.origin_program {
-                    match pm {
-                        PathMatcher::Exact(p) => { subject_exact.insert(p.clone()); },
-                        PathMatcher::Prefix(p) => { subject_prefix.push(p.clone()); },
-                        PathMatcher::Glob { matcher, .. } => { subject_glob.push(matcher.clone()); },
-                    }
+                    Self::add_matcher(pm, &mut subject_exact, &mut subject_prefix, &mut subject_glob);
                 }
             }
         }
@@ -149,18 +160,27 @@ impl ManagedScopeIndex {
         }
     }
 
-    // ctx 全体を受け取るように変更
+    // パスが管理スコープに含まれるか判定するヘルパー
+    fn matches_object_scope(&self, path: &Path) -> bool {
+        self.exact_paths.contains(path)
+            || self.prefixes.iter().any(|p| path.starts_with(p))
+            || self.globs.iter().any(|g| g.is_match(path))
+    }
+
     pub fn is_request_managed(&self, ctx: &AccessContext) -> bool {
-        // 1. まずアクセス先の Object パスが管理対象かチェック
-        let obj_path = &ctx.object_path;
-        if self.exact_paths.contains(obj_path) 
-            || self.prefixes.iter().any(|p| obj_path.starts_with(p))
-            || self.globs.iter().any(|g| g.is_match(obj_path)) 
-        {
+        // 1. オブジェクトパス（Source）のチェック
+        if self.matches_object_scope(&ctx.object_path) {
             return true;
         }
 
-        // 2. Subject (origin_program) が SubjectOnly ルールの対象かチェック
+        // 2. 移動先パス（Destination）のチェック (RENAME時)
+        if let Some(new_path) = &ctx.object_new_path {
+            if self.matches_object_scope(new_path) {
+                return true;
+            }
+        }
+
+        // 3. Subject (origin_program) が SubjectOnly ルールの対象かチェック
         if let Some(prog) = &ctx.origin_program {
             if self.subject_exact.contains(prog) 
                 || self.subject_prefix.iter().any(|p| prog.starts_with(p))
@@ -223,7 +243,7 @@ impl CompiledRule {
             },
             object: Some(ObjectMatcher {
                 path: Some(PathMatcher::Prefix(PathBuf::new())),
-                kind: None,
+                ..Default::default()
             }),
             action_match: ActionMatcher::Any,
             approval: None,
@@ -334,9 +354,13 @@ pub struct SubjectMatcher {
     pub origin_applet: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ObjectMatcher {
     pub path: Option<PathMatcher>,
+    
+    // RENAME等の操作における Destination Path (移動先)
+    pub new_path: Option<PathMatcher>,
+    
     pub kind: Option<ObjectKind>,
 }
 
@@ -409,71 +433,6 @@ impl fmt::Display for PathMatcher {
             PathMatcher::Exact(path) => write!(f, "{}", path.display()),
             PathMatcher::Prefix(path) => write!(f, "prefix:{}", path.display()),
             PathMatcher::Glob { pattern, .. } => write!(f, "glob:{}", pattern),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum Action {
-    Read,
-    Write,
-    Execute,
-    Delete,
-    Unlink,
-    Rename,
-    Chmod,
-    Chown,
-    Connect,
-
-    #[default]
-    Unknown,
-}
-
-impl Action {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Action::Read => "FILE_READ",
-            Action::Write => "FILE_WRITE",
-            Action::Execute => "FILE_EXECUTE",
-            Action::Delete => "FILE_DELETE",
-            Action::Unlink => "FILE_UNLINK",
-            Action::Rename => "FILE_RENAME",
-            Action::Chmod => "FILE_CHMOD",
-            Action::Chown => "FILE_CHOWN",
-            Action::Connect => "NET_CONNECT",
-            Action::Unknown => "UNKNOWN_ACTION",
-        }
-    }
-
-    pub fn parse(s: &str) -> Result<Self, CompileError> {
-        let t = s.trim().to_ascii_lowercase();
-        match t.as_str() {
-            "read"  => Ok(Action::Read),
-            "write" => Ok(Action::Write),
-            "execute"  => Ok(Action::Execute),
-            "delete" => Ok(Action::Delete),
-            "unlink" => Ok(Action::Unlink),
-            "rename" => Ok(Action::Rename),
-            "chmod" => Ok(Action::Chmod),
-            "chown" => Ok(Action::Chown),
-            "connect" => Ok(Action::Connect),
-            "unknown" => Ok(Action::Unknown),
-            _ => Err(CompileError::UnknownAction(s.to_string())),
-        }
-    }
-
-    pub fn to_mask(&self) -> u32 {
-        match self {
-            Action::Read => 1,
-            Action::Write => 2,
-            Action::Execute => 4,
-            Action::Delete => 8,
-            Action::Unlink => 16,
-            Action::Rename => 32,
-            Action::Chmod => 64,
-            Action::Chown => 128,
-            Action::Connect => 256,
-            Action::Unknown => 512,
         }
     }
 }
@@ -553,12 +512,13 @@ pub enum AuditSpec {
 #[derive(Debug, Clone)]
 pub struct AccessContext {
     pub uid: u32,
-    pub subject_roles: HashSet<String>, // 要求主体が持つロール集合
+    pub subject_roles: HashSet<String>,     // 要求主体が持つロール集合
     pub origin_program: Option<PathBuf>,
     pub origin_script: Option<PathBuf>,
     pub origin_applet: Option<String>,
     pub action: Action,
-    pub object_path: PathBuf,
+    pub object_path: PathBuf,               // Source Path
+    pub object_new_path: Option<PathBuf>,   // Destination Path (RENAME時のみ使用)
     pub object_kind: Option<ObjectKind>,
 }
 

@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use uuid::Uuid;
 
-use crate::app_state;
+use crate::state::app_state;
 use crate::types::{PreApprovalDraft, PendingEntry, EntityId, ApprovedTicket, MpaState};
 
 use teal_policy_engine::ir::{CompiledRule, ActionMatcher, RuleType};
@@ -108,7 +108,10 @@ pub async fn draft_from_rule(rule: &CompiledRule, uid: u32) -> Result<PreApprova
             origin_program_id,
             origin_script_id,
             origin_applet: rule.subject.origin_applet.clone(),
+            
             object_id,
+            new_object_id: None, 
+            
             op_mask,
 
             mpa_state: MpaState {
@@ -131,10 +134,19 @@ pub async fn ticket_from_entry(rule: &CompiledRule, entry: &PendingEntry) -> App
 
     let origin_program = entry.subject.program_path.clone();
     let object = entry.object.path.clone();
+    let new_object = entry.object.new_path.clone(); // ★追加
 
-    // ファイルシステムへの事前アクセスを行わず、すべて 0:0 でプレースホルダーを作成する
+    // 既存のID構築
     let origin_program_id = EntityId::new((entry.subject.prog_dev, entry.subject.prog_ino));
     let object_id = EntityId::new((entry.object.device_id, entry.object.inode));
+    
+    // 移動先IDの構築 (両方の値が存在する場合のみ EntityId を生成)
+    let new_object_id = if let (Some(dev), Some(ino)) = (entry.object.new_device_id, entry.object.new_inode) {
+        Some(EntityId::new((dev, ino)))
+    } else {
+        None
+    };
+
     let origin_script_id = if entry.subject.script_path.is_some() {
         Some(EntityId::new((entry.subject.script_dev, entry.subject.script_ino)))
     } else {
@@ -149,16 +161,18 @@ pub async fn ticket_from_entry(rule: &CompiledRule, entry: &PendingEntry) -> App
         origin_program,
         origin_script: entry.subject.script_path.clone(),
         object,
+        new_object,
 
         uid: entry.subject.uid,
         origin_program_id,
         origin_script_id,
         origin_applet: rule.subject.origin_applet.clone(),
         object_id,
+        new_object_id,
         op_mask,
 
         ttl_sec: rule.ttl_sec,
-        max_uses: rule.max_uses
+        max_uses: rule.max_uses,
     }
 }
 

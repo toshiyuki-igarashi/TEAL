@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use globset::Glob;
 
-use crate::types::{Effect};
+use crate::types::{Effect, Action};
 use crate::raw::{
     RawRolesV1, RawPolicyV13, RawRule, RawSubject, RawObject, RawAction, RawRoleDef,
     RawDefaults, RawAssignment, RawGroupAssignment, RawPreApprovalDefaults, RawPreApproval
@@ -17,7 +17,7 @@ use crate::ir::{
     CompiledRolesCore, RoleMeta, RoleCatalog, CompiledDefaults, CompiledPreApprovalDefaults,
     SubjectRoleIndex, GroupRoleIndex, CompiledRoles, CompiledPolicy, ManagedScopeIndex,
     PolicyVersion, CompiledRule, SubjectMatcher, ObjectMatcher, ActionMatcher,
-    ApprovalMatcher, AuditCfg, PathMatcher, Action, CompiledPreApproval, RuleType, TicketProfile
+    ApprovalMatcher, AuditCfg, PathMatcher, CompiledPreApproval, RuleType, TicketProfile
 };
 use crate::errors::{CompileWarnings, CompileError};
 use crate::util::name_to_uid;
@@ -856,14 +856,21 @@ pub fn compile_object_v13(
         None => return Ok(None),
     };
 
-    // 2. object が存在する場合は、その中の path 文字列をコンパイルする
-    // （スキーマ上、object があるなら path は必須なので raw_obj.path は String）
+    // 2. object が存在する場合は、path をコンパイルする
     let path_matcher = compile_path_matcher_v13(&raw_obj.path)?;
 
-    // 3. 構築した ObjectMatcher を Some で包んで返す
+    // 3. new_path が存在する場合のみ、同様にコンパイルする
+    let new_path_matcher = if let Some(ref np) = raw_obj.new_path {
+        Some(compile_path_matcher_v13(np)?)
+    } else {
+        None
+    };
+
+    // 4. 構築した ObjectMatcher を返す
     Ok(Some(ObjectMatcher {
         path: Some(path_matcher),
-        kind: None, // v1.3 では未使用 (将来 Socket などが入る余地)
+        new_path: new_path_matcher,
+        kind: None, // 将来の拡張用
     }))
 }
 
@@ -871,39 +878,32 @@ pub fn compile_action_v13(
     action: &RawAction,
     warnings: &mut CompileWarnings,
 ) -> Result<ActionMatcher, CompileError> {
-    // ops が空
+    // 1. ops が空配列 [] の場合は、従来通り Any（すべてのアクションにマッチ）として扱う
     if action.ops.is_empty() {
-        warnings.warn("action.ops is empty; treated as Any (unsafe, please specify explicitly)");
         return Ok(ActionMatcher::Any);
     }
 
     let mut set = HashSet::new();
-    let mut has_any = false;
 
+    // 2. 指定されたアクションを HashSet に詰め込む
     for op in &action.ops {
-        if op == "*" {
-            has_any = true;
+        if *op == Action::Unknown {
+            // Serdeが未知のアクションとして弾いた場合（タイポ等）
+            warnings.warn("Ignored an Unknown action in ops (possible typo in policy).");
             continue;
         }
-
-        let parsed = Action::parse(op)?;
-        set.insert(parsed);
+        set.insert(*op);
     }
 
-    // "*" が含まれている場合
-    if has_any {
-        if !set.is_empty() {
-            warnings.warn("action '*' mixed with specific actions; '*' takes precedence");
-        }
+    // 3. タイポ等で有効なアクションが一つもなかった場合
+    if set.is_empty() {
+        // ポリシー側の記述ミスだが、evaluate 側の仕様(OneOf空集合不可)と
+        // 既存の互換性を考慮し、ワーニングを出した上で Any としてフォールバックする
+        warnings.warn("action.ops resolved to empty due to invalid inputs; treated as Any. Please fix the policy.");
         return Ok(ActionMatcher::Any);
     }
 
-    if set.is_empty() {
-        // "*" だけ or 無効な入力のみ
-        warnings.warn("action resolved to empty set; treated as Any");
-        Ok(ActionMatcher::Any)
-    } else {
-        Ok(ActionMatcher::OneOf(set))
-    }
+    // 正常にパースされたアクションのセットを返す
+    Ok(ActionMatcher::OneOf(set))
 }
 

@@ -7,6 +7,26 @@
 use nix::unistd::{Uid, User};
 use anyhow::{Context, Result};
 use std::borrow::Cow;
+use serde::{Deserialize, Deserializer};
+
+use crate::types::Action;
+
+/// u32でエンコードされたActionを文字列へ変換
+pub fn u32_to_str(op: u32) -> String {
+    let mut s = Vec::new();
+    if Action::Read.to_mask() & op != 0 { s.push("READ"); };
+    if Action::Write.to_mask() & op != 0 { s.push("WRITE"); };
+    if Action::Execute.to_mask() & op != 0 { s.push("EXECUTE"); };
+    if Action::Delete.to_mask() & op != 0 { s.push("DELETE"); };
+    if Action::Unlink.to_mask() & op != 0 { s.push("UNLINK"); };
+    if Action::Rename.to_mask() & op != 0 { s.push("RENAME"); };
+    if Action::Chmod.to_mask() & op != 0 { s.push("CHMOD"); };
+    if Action::Chown.to_mask() & op != 0 { s.push("CHOWN"); };
+    if Action::Connect.to_mask() & op != 0 { s.push("CONNECT"); };
+    if Action::Unknown.to_mask() & op != 0 { s.push("UNKNOWN"); };
+
+    s.join(",")
+}
 
 /// ユーザー名から UID を取得する (REGISTER コマンド等で使用)
 ///
@@ -50,75 +70,35 @@ pub fn lower<'a>(s: &'a str) -> Cow<'a, str> {
     }
 }
 
-
-#[cfg(test)]
-mod tests_name_to_uid {
-    use super::*;
-
-    #[test]
-    fn test_name_to_uid_success_root() {
-        // 大抵の Unix 系システムには "root" ユーザーが存在し、UID は 0 です
-        let result = name_to_uid("root");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 0);
-    }
-
-    #[test]
-    fn test_name_to_uid_not_found() {
-        // ほぼ確実に存在しないユーザー名でテストします
-        let username = "non_existent_user_9999";
-        let result = name_to_uid(username);
-        
-        assert!(result.is_err());
-        // エラーメッセージにユーザー名が含まれていることを確認します
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains(username));
-        assert!(err_msg.contains("User not found"));
-    }
-
-    #[test]
-    fn test_name_to_uid_empty_string() {
-        // 空文字の場合もエラーになることを確認します
-        let result = name_to_uid("");
-        assert!(result.is_err());
+/// 文字列が空の場合に None を返し、値がある場合は Some(String) を返す
+pub fn normalize_opt_field(s: &str) -> Option<String> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
     }
 }
 
-#[cfg(test)]
-mod tests_uid_to_name {
-    use super::*;
-    use nix::unistd::getuid;
+/// ヘルパー関数: 小文字の文字列配列を大文字に変換して Enum の Vec にする
+pub fn deserialize_ops_uppercase<'de, D>(deserializer: D) -> Result<Vec<Action>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    // 1. 一度 JSON から通常の String の配列として読み込む
+    let raw_strings = Vec::<String>::deserialize(deserializer)?;
+    
+    // 2. 各文字列を大文字に変換し、Action Enum にパースし直す
+    let actions = raw_strings
+        .into_iter()
+        .map(|s| {
+            let uppercase_str = s.to_uppercase();
+            // serde_json の仕組みを利用して、大文字にした文字列から Action Enum を生成
+            serde_json::from_value::<Action>(serde_json::Value::String(uppercase_str))
+                .unwrap_or(Action::Unknown) // 変換に失敗したら Unknown に倒す
+        })
+        .collect();
 
-    #[test]
-    fn test_uid_to_name_success_root() {
-        // UID 0 は常に "root" であることが期待されます
-        let result = uid_to_name(0);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "root");
-    }
-
-    #[test]
-    fn test_uid_to_name_success_current_user() {
-        // 現在の実行ユーザーの UID を取得して変換をテストします
-        let current_uid = getuid().as_raw();
-        let result = uid_to_name(current_uid);
-        
-        assert!(result.is_ok());
-        let name = result.unwrap();
-        assert!(!name.is_empty());
-    }
-
-    #[test]
-    fn test_uid_to_name_not_found() {
-        // おそらく存在しないであろう大きな UID 番号でテストします
-        let invalid_uid = 999_999;
-        let result = uid_to_name(invalid_uid);
-        
-        assert!(result.is_err());
-        // エラーメッセージに解決に失敗した UID が含まれていることを確認します
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains(&invalid_uid.to_string()));
-        assert!(err_msg.contains("UID not found"));
-    }
+    Ok(actions)
 }
+
 

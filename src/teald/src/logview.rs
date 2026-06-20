@@ -8,7 +8,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom, IsTerminal, Read};
 use std::path::Path;
 use std::path::PathBuf;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration; // sleep のために追加
 use std::thread;         // sleep のために追加
 
@@ -17,7 +17,8 @@ use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
 use clap::{Parser, Subcommand, ValueEnum};
 
-use teal_policy_engine::types::Effect;
+use teald::evidence::schema::{AuditLogEntry, AuthInfo, LogType};
+
 
 /// ユーザー入力を相対時間 ("15m", "2h") または 絶対時間 (RFC3339) として解釈するパーサー
 fn parse_time(s: &str) -> std::result::Result<DateTime<Utc>, String> {
@@ -35,262 +36,6 @@ fn parse_time(s: &str) -> std::result::Result<DateTime<Utc>, String> {
     }
 
     Err(format!("Invalid time format: '{}'. Use relative (e.g., '15m') or absolute time.", s))
-}
-
-/// ログスキーマ定義
-
-// 共通ヘッダー的なトップレベル構造
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AuditLogEntry {
-    pub ver: String,
-    pub id: String,
-    #[serde(rename = "type")]
-    pub log_type: LogType,
-    pub ts: DateTime<Utc>,
-    pub host: String,
-
-    // 1. Reality (共通)
-    pub syscall_context: SyscallContext,
-
-    // 2. Context (Slow Path: 必須, Fast Path: 省略可)
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub environment_context: Option<EnvironmentContext>,
-
-    // 3. Authorization (Slow Path: Proof, Fast Path: Ref)
-    #[serde(flatten)]
-    pub auth_info: AuthInfo,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")] // JSON出力時は "ACCESS_DENIED" のようになる
-pub enum LogType {
-    /// 1. Slow Path: ユーザー空間での判定 (MPAや承認プロセスを含む)
-    /// ※ PolicyEvalResult を詳細に含む
-    InteractiveDecision,
-
-    /// 2. Slow Path: ポリシーによる自動許可 (承認プロセスなし)
-    /// ※ InteractiveDecision と統合しても良いが、分けると「自動」か「手動」か区別しやすい
-    AccessAllowed,
-
-    /// 3. Slow Path: ポリシーによる拒否、または不正なリクエストによる拒否
-    AccessDenied,
-
-    /// 4. Internal: カーネルに対してチケットを発行した (TEAL -> Kernel)
-    /// ※ 「許可」と「チケット発行」のタイムラグや失敗を追跡するために重要
-    TicketIssued,
-
-    /// 5. Fast Path: カーネルキャッシュによる高速通過 (Kernel -> Audit)
-    /// ※ ユーザー空間デーモンを経由せず処理されたもの
-    TicketConsumed,
-
-    /// 6. Internal: 未使用のまま期限切れとなったチケット (Sweeper)
-    TicketExpired,
-
-    /// 7. Internal: ポリシーの対象外
-    NotManaged,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SyscallContext {
-    pub uid: u32,
-    pub user: String,
-    pub pid: u32,
-    pub action: String,
-    pub subject: SubjectInfo,
-    pub object: ObjectInfo,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct EnvironmentContext {
-    pub tty: String,
-    #[serde(default)]
-    pub ssh_client: Option<String>,
-    pub login_method: String, // "publickey", "unknown" etc.
-}
-
-// Slow Path と Fast Path で分岐する部分
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)] // JSONの構造に合わせてフラット化
-pub enum AuthInfo {
-    // Slow Path: 署名を含む
-    SlowPath {
-        policy_eval: PolicyEvalResult,
-        mpa_proof: MpaState,
-    },
-    // Fast Path: チケット参照のみ
-    FastPath {
-        ticket_context: TicketRef,
-    },
-}
-
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SubjectInfo {
-    pub path: String, // 実行バイナリ (例: /bin/bash, /usr/bin/busybox)
-    pub hash: String, // SHA-256
-    
-    // アプレット名 (例: busybox経由で実行された "ls")
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub applet: Option<String>, 
-
-    // スクリプトパス (例: bashで実行された "/opt/scripts/deploy.sh")
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub script_path: Option<String>, 
-
-    // 実際のコマンドライン引数 (例: "-u root --force")
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub args: Option<String>, 
-}
-
-/// 操作対象オブジェクト情報 (Object Information)
-/// カーネルがアクセスしようとしたリソースの情報
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ObjectInfo {
-    /// オブジェクト種別 (例: "file", "directory", "char_dev", "socket")
-    pub kind: String,
-
-    /// 解決された絶対パス (例: "/etc/shadow")
-    pub path: String,
-
-    /// inode番号
-    pub inode: u64,
-}
-
-/// ポリシー評価結果 (Policy Evaluation Result)
-/// どのルールに基づき、どのような権限が要求されたかを記録する。
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PolicyEvalResult {
-    /// 適用されたルールID / 名前 (例: "admin_ops_01")
-    pub rule_id: String,
-
-    /// マッチしたポリシーファイル名 (例: "20-files.yaml")
-    /// ※ デフォルト拒否などの場合は "implicit_deny" 等が入る想定
-    pub matched_file: String,
-
-    /// 要求されたMPAレベル（必要承認数） (例: 2)
-    pub mpa_level_required: u32,
-
-    /// 判定結果 (ALLOW または DENY)
-    pub decision: Effect,
-
-    /// 発行されたチケット情報 (キャッシュ有効時のみ存在)
-    /// None の場合 = キャッシュ無効 (ttl=0) または 拒否(Deny)
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub issued_ticket: Option<IssuedTicketInfo>,
-}
-
-/// MPA（多人数承認）の進行状態および最終的な証跡
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct MpaState {
-    // --- 1. Requirements (承認要件) ---
-
-    /// 承認しきい値 (例: 2)
-    /// ※ ロジック判定用には u32 が必須。ログ出力で "2-of-3"
-    pub threshold: u32,
-
-    /// 承認可能なロールのセット (例: {"admin", "sre_lead"})
-    /// ※ ここに含まれるロールを持つユーザーのみが approvals に追加できる
-    pub approver_roles: HashSet<String>,
-
-    /// 必須ロール (例: {"security_manager"})
-    /// ※ ここにあるロールが approvals 内に揃わないと完了しない (AND条件)
-    pub required_roles: HashSet<String>,
-
-
-    // --- 2. Current State & Evidence (承認の事実) ---
-
-    /// 承認済みアクションのリスト <key: uid, value: Action詳細>
-    pub approvals: HashMap<String, ApproverAction>,
-
-
-    // --- 3. Final Result (暗号学的証拠) ---
-
-    /// 集約されたBLS署名 (Aggregated Signature) (圧縮形式 96bytes)
-    /// - None: 承認進行中
-    /// - Some: 承認完了 (このバイト列が Ticket に埋め込まれる)
-    #[serde(default, with = "option_hex")]
-    pub aggregated_signature: Option<Vec<u8>>,
-}
-
-/// チケット参照 (Ticket Reference)
-/// Fast Path において、承認の根拠となったチケット情報を記録する。
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TicketRef {
-    /// 使用されたチケットID
-    /// ※ このIDをキーにして Slow Path ログを検索することで、元の署名へ到達できる
-    pub ticket_id: String,
-
-    /// 実行時点での残り使用回数 (uses_left)
-    /// ※ 0 ならば無制限チケット、または使い切り後の状態
-    pub uses_left: u32,
-
-    /// 適用されているポリシー名 (または "cached")
-    /// ※ チケット発行時に決定されたルール名
-    pub policy_rule: String,
-}
-
-// チケット情報の定義
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct IssuedTicketInfo {
-    pub ticket_id: String, // "T-xxxx..."
-    pub ttl_sec: u64,      // 3600 など
-}
-
-/// 承認アクションの記録
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ApproverAction {
-    /// 承認者ユーザー名
-    /// ここでは汎用性を高めるため String としています (例: "1001" や "alice")
-    #[serde(rename = "user")] // JSON出力時は "user" というキー名にする
-    pub account: String,
-
-    /// 承認時のロール (例: "ops_admin")
-    pub role: String,
-
-    /// 承認日時
-    #[serde(rename = "ts")] // JSON出力時は "ts" (timestamp)
-    pub approved_at: DateTime<Utc>,
-
-    /// 認証方式
-    pub method: String,
-
-    /// 承認時のコメント/メモ (任意)
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "note")] // JSON出力時は "note"
-    pub comment: Option<String>,
-
-    /// 個別のBLS署名シェア (圧縮形式 96bytes)
-    #[serde(with = "hex")]
-    pub signature: Vec<u8>,
-}
-
-// --- ヘルパーモジュール ---
-mod option_hex {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(data: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match data {
-            Some(bytes) => serializer.serialize_str(&hex::encode(bytes)),
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: Option<String> = Option::deserialize(deserializer)?;
-        match s {
-            Some(s) => hex::decode(s).map(Some).map_err(serde::de::Error::custom),
-            None => Ok(None),
-        }
-    }
 }
 
 /// ログファイルの初期化とリーダの作成
@@ -325,9 +70,8 @@ type TicketIndex = HashMap<String, TicketMetadata>;
 
 #[derive(Debug, Clone)]
 pub struct TicketMetadata {
-    original_path: String, // syscall_context.object.path から取得
-//    rule_id: String,       // policy_eval.rule_id から取得
-//    subject_path: String,  // syscall_context.subject.path から取得
+    pub original_path: String,      // syscall_context.object.path から取得
+    pub new_path: Option<String>,   // RENAME時の移動先パスをキャッシュ
 }
 
 /// 表示詳細レベルの定義
@@ -360,8 +104,7 @@ pub fn process_log_line(line: &str, index: &mut TicketIndex) -> anyhow::Result<A
                 if let Some(ref ticket_info) = policy_eval.issued_ticket {
                     let meta = TicketMetadata {
                         original_path: entry.syscall_context.object.path.clone(),
-//                        rule_id: policy_eval.rule_id.clone(),
-//                        subject_path: entry.syscall_context.subject.path.clone(),
+                        new_path: entry.syscall_context.object.new_path.clone(), 
                     };
                     index.insert(ticket_info.ticket_id.clone(), meta);
                 }
@@ -382,10 +125,10 @@ pub fn process_log_line(line: &str, index: &mut TicketIndex) -> anyhow::Result<A
 fn header_output(mode: OutputMode) {
     match mode {
         OutputMode::Brief => {
-            println!("TIME,USER,ACTION,TARGET,RESULT,RULE_ID");
+            println!("TIME,USER,ACTION,TARGET,NEW_TARGET,RESULT,RULE_ID");
         }
         OutputMode::Debug => {
-            println!("TIME,LOG_TYPE,USER,ACTION,TARGET,ARGS,RESULT,RULE_ID,TICKET,EPOCH,PROG,SCRIPT,APPLET");
+            println!("TIME,LOG_TYPE,USER,ACTION,TARGET,NEW_TARGET,ARGS,RESULT,RULE_ID,TICKET,EPOCH,PROG,SCRIPT,APPLET");
         }
         OutputMode::Trace => {
             eprintln!("[TODO] Trace mode will be implemented soon.");
@@ -394,26 +137,18 @@ fn header_output(mode: OutputMode) {
 }
 
 fn format_output(entry: &AuditLogEntry, index: &TicketIndex, mode: OutputMode) {
-    let target_path = if entry.log_type == LogType::TicketConsumed {
-        if let AuthInfo::FastPath { ref ticket_context } = entry.auth_info {
-            index.get(&ticket_context.ticket_id)
-                .map(|m| m.original_path.as_str())
-                .unwrap_or("UNKNOWN (Expired or Lost)")
-        } else {
-            "ERROR"
-        }
-    } else {
-        &entry.syscall_context.object.path
-    };
+    // resolve_target_path を使って、タプルで両方受け取る
+    let (target_path, new_target_opt) = resolve_target_path(entry, index);
+    
+    // NEW_TARGET が無い場合(None)は "-" を出力する
+    let new_target_str = new_target_opt.unwrap_or_else(|| "-".to_string());
 
     // --- TTY判定と色付け ---
     let raw_result = extract_result(entry);
     
-    // 出力先がターミナル(画面)かどうかを判定
     let is_tty = std::io::stdout().is_terminal();
 
     let display_result = if is_tty {
-        // 画面出力の場合は色付け（ANSIエスケープシーケンス）
         match raw_result.as_str() {
             "ALLOW" => format!("\x1b[32mALLOW\x1b[0m"),         // 緑色
             "DENY" => format!("\x1b[31mDENY\x1b[0m"),           // 赤色
@@ -421,30 +156,29 @@ fn format_output(entry: &AuditLogEntry, index: &TicketIndex, mode: OutputMode) {
             _ => raw_result,
         }
     } else {
-        // ファイルへのリダイレクト時は色付けなしの純粋な文字列
         raw_result
     };
 
     match mode {
         OutputMode::Brief => {
-            // 時間は to_rfc3339() で出力すると表計算ソフトでのパースが安定します
-            println!("{},{},{},\"{}\",{},{}",
+            println!("{},{},{},\"{}\",\"{}\",{},{}",
                 entry.ts.to_rfc3339(),
                 entry.syscall_context.user,
                 entry.syscall_context.action.replace(",", " "),
                 target_path,
+                new_target_str,
                 display_result,
                 extract_rule_id(entry)
             );
         }
         OutputMode::Debug => {
-            // ARGS などスペースを含む可能性がある列はダブルクォートで囲む
-            println!("{},{},{},{},\"{}\",\"{}\",{},{},{},{},{},{},{}",
+            println!("{},{},{},{},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{},{}",
                 entry.ts.to_rfc3339(),
                 extract_log_type(entry),
                 entry.syscall_context.user,
                 entry.syscall_context.action.replace(",", " "),
                 target_path,
+                new_target_str,
                 extract_args_short(entry).replace("\"", "\"\""), // CSVエスケープ処理
                 display_result,
                 extract_rule_id(entry),
@@ -551,13 +285,14 @@ fn extract_args_short(entry: &AuditLogEntry) -> String {
 }
 
 /// プロファイリングにおける集計用の複合キー
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Hash, Eq, PartialEq, Clone, Debug)]
 pub struct ProfileKey {
     pub user: String,
-    pub subject_program: String, // 実行元バイナリパス
+    pub subject_program: String,    // 実行元バイナリパス
     pub origin_applet: String,
-    pub object_path: String,     // 対象パス (またはプレフィックス)
-    pub action: String,          // 操作 (Ops)
+    pub object_path: String,        // 対象パス (またはプレフィックス)
+    pub new_path: Option<String>,   // RENAME の宛先も集計のキー（ハッシュ計算の対象）に含める
+    pub action: String,             // 操作 (Ops)
 }
 
 /// プロファイリングターゲット 
@@ -645,9 +380,13 @@ pub struct SubjectObj {
     pub roles: Option<Vec<String>>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObjectObj {
     pub path: String,
+
+    // 値が None の場合は JSON 出力時にキーごとスキップする
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_path: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -723,19 +462,25 @@ pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<Pr
             let path_a_len = a.object.as_ref().map(|o| effective_path_len(&o.path)).unwrap_or(0);
             let path_b_len = b.object.as_ref().map(|o| effective_path_len(&o.path)).unwrap_or(0);
 
-            // ① 対象オブジェクトのパスが短い順（昇順：広域なパスや None が最優先）
+            // new_path の長さ計算
+            let npath_a_len = a.object.as_ref().and_then(|o| o.new_path.as_deref()).map(effective_path_len).unwrap_or(0);
+            let npath_b_len = b.object.as_ref().and_then(|o| o.new_path.as_deref()).map(effective_path_len).unwrap_or(0);
+
+            // ① 対象オブジェクトのパスが短い順
             path_a_len.cmp(&path_b_len)
-                // ② プログラムの指定範囲が広い順（Optionの中身を取り出して文字数計算）
+                // ② 移動先のパスが短い順（昇順）
+                .then_with(|| npath_a_len.cmp(&npath_b_len))
+                // ③ プログラムの指定範囲が広い順
                 .then_with(|| {
                     let prog_a_len = a.subject.origin_program.as_deref().map(effective_path_len).unwrap_or(0);
                     let prog_b_len = b.subject.origin_program.as_deref().map(effective_path_len).unwrap_or(0);
                     prog_a_len.cmp(&prog_b_len)
                 })
-                // ③ アプレット指定がない(None)のが先（昇順: None < Some）
+                // ④ アプレット指定がないのが先
                 .then_with(|| a.subject.origin_applet.cmp(&b.subject.origin_applet))
-                // ④ ユーザー指定がない(None)のが先（昇順: None < Some）
+                // ⑤ ユーザー指定がない(None)のが先（昇順: None < Some）
                 .then_with(|| a.subject.user.cmp(&b.subject.user))
-                // ⑤ アクションの権限（ops）の数が多い順（降順）
+                // ⑥ アクションの権限（ops）の数が多い順（降順）
                 .then_with(|| b.action.ops.len().cmp(&a.action.ops.len()))
         });
 
@@ -761,11 +506,26 @@ pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<Pr
                 let is_user_shadowed = kept_rule.subject.user.is_none()
                     || kept_rule.subject.user == current_rule.subject.user;
 
-                // --- D. Object (Path) の包含チェック (修正部分) ---
+                // --- D. Object (Path) の包含チェック ---
                 let is_path_shadowed = match (&kept_rule.object, &current_rule.object) {
-                    (None, None) => true, // 両方とも subject_only (名無しIPC) の場合は包含成立
-                    (Some(kept_obj), Some(curr_obj)) => json_path_contains(&kept_obj.path, &curr_obj.path),
-                    _ => false, // 片方だけが subject_only の場合は別次元のルールなのでマージしない
+                    (None, None) => true,
+                    (Some(kept_obj), Some(curr_obj)) => {
+                        // 1. 移動元(path) の包含チェック
+                        let path_match = json_path_contains(&kept_obj.path, &curr_obj.path);
+
+                        // 2. 移動先(new_path) の包含チェック
+                        let new_path_match = match (&kept_obj.new_path, &curr_obj.new_path) {
+                            // kept側に制限がない(None)なら包含成立
+                            (None, _) => true, 
+                            // kept側に制限があるのに、curr側にないなら包含不可
+                            (Some(_), None) => false, 
+                            // 両方ある場合はパス文字列の包含チェック
+                            (Some(kept_np), Some(curr_np)) => json_path_contains(kept_np, curr_np),
+                        };
+
+                        path_match && new_path_match
+                    },
+                    _ => false,
                 };
 
                 // --- E. Action (ops) の包含チェック ---
@@ -809,7 +569,7 @@ pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<Pr
         *count += 1;
     }
 
-    // 5. 管理者の視認性を高める最終4段階ソート
+    // 5. 管理者の視認性を高める最終5段階ソート
     optimized_rules.sort_by(|a, b| {
         a.subject.origin_program.cmp(&b.subject.origin_program)
             .then_with(|| a.subject.origin_applet.cmp(&b.subject.origin_applet))
@@ -817,6 +577,12 @@ pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<Pr
                 let path_a = a.object.as_ref().map(|o| o.path.as_str()).unwrap_or("");
                 let path_b = b.object.as_ref().map(|o| o.path.as_str()).unwrap_or("");
                 path_a.cmp(path_b)
+            })
+            // new_path を加えたソート
+            .then_with(|| {
+                let npath_a = a.object.as_ref().and_then(|o| o.new_path.as_deref()).unwrap_or("");
+                let npath_b = b.object.as_ref().and_then(|o| o.new_path.as_deref()).unwrap_or("");
+                npath_a.cmp(npath_b)
             })
             .then_with(|| a.subject.user.cmp(&b.subject.user))
     });
@@ -844,6 +610,7 @@ pub fn generate_profile_json(
 
         // パスの抽象化推論 (Heuristic Abstraction)
         // ※実装例: /tmp/ 等の一時ディレクトリへのアクセスをプレフィックス化する
+        // 元パスの抽象化
         let mut final_path = key.object_path.clone();
         if final_path.contains("/tmp/") || final_path.contains("/var/run/") {
             if let Some(idx) = final_path.rfind('/') {
@@ -851,16 +618,27 @@ pub fn generate_profile_json(
             }
         }
 
+        // new_path (移動先) の抽象化
+        let mut final_new_path = key.new_path.clone();
+        if let Some(ref mut np) = final_new_path {
+            if np.contains("/tmp/") || np.contains("/var/run/") {
+                if let Some(idx) = np.rfind('/') {
+                    *np = format!("prefix:{}", &np[..idx + 1]);
+                }
+            }
+        }
+
         // --- 名無しオブジェクト(subject_only)の判定 ---
-        // CONNECTなどの操作で path が "-" や空文字となっている場合
         let is_nameless = final_path == "-" || final_path.is_empty();
 
         let (rule_type_val, object_val, allow_nameless_val) = if is_nameless {
-            // 名無しの場合: rule_type を付与し、object を消滅させる
             (Some("subject_only".to_string()), None, Some(true))
         } else {
             // 通常の場合: object を付与する
-            (None, Some(ObjectObj { path: final_path.clone() }), None)
+            (None, Some(ObjectObj { 
+                path: final_path.clone(),
+                new_path: final_new_path, // 抽象化済みの new_path をセット
+            }), None)
         };
 
         // Subjectの組み立て (存在しない場合はNoneにして出力から消す)
@@ -952,7 +730,7 @@ pub fn generate_profile_json(
         }
     }
 
-    // --- 3. 管理者の視認性を高める 4段階ソート ---
+    // --- 3. 管理者の視認性を高める 5段階ソート --- 
     generated_rules.sort_by(|a, b| {
         a.subject.origin_program.cmp(&b.subject.origin_program)
             .then_with(|| a.subject.origin_applet.cmp(&b.subject.origin_applet))
@@ -961,6 +739,13 @@ pub fn generate_profile_json(
                 let path_b = b.object.as_ref().map(|o| o.path.as_str()).unwrap_or("");
                 path_a.cmp(path_b)
             })
+            // new_path でのソート (4段目)
+            .then_with(|| {
+                let npath_a = a.object.as_ref().and_then(|o| o.new_path.as_deref()).unwrap_or("");
+                let npath_b = b.object.as_ref().and_then(|o| o.new_path.as_deref()).unwrap_or("");
+                npath_a.cmp(npath_b)
+            })
+            // 5段目: ユーザー
             .then_with(|| a.subject.user.cmp(&b.subject.user))
     });
 
@@ -1087,17 +872,22 @@ enum Commands {
     },
 }
 
-fn resolve_target_path(entry: &AuditLogEntry, index: &TicketIndex) -> String {
+fn resolve_target_path(entry: &AuditLogEntry, index: &TicketIndex) -> (String, Option<String>) {
     if entry.log_type == LogType::TicketConsumed {
         if let AuthInfo::FastPath { ref ticket_context } = entry.auth_info {
             index.get(&ticket_context.ticket_id)
-                .map(|m| m.original_path.clone())
-                .unwrap_or_else(|| "UNKNOWN (Expired or Lost)".to_string())
+                // 前回追加した m.new_path も一緒に clone して返す
+                .map(|m| (m.original_path.clone(), m.new_path.clone()))
+                .unwrap_or_else(|| ("UNKNOWN (Expired or Lost)".to_string(), None))
         } else {
-            "ERROR".to_string()
+            ("ERROR".to_string(), None)
         }
     } else {
-        entry.syscall_context.object.path.clone()
+        // 通常ログの場合は syscall_context から両方取得
+        (
+            entry.syscall_context.object.path.clone(),
+            entry.syscall_context.object.new_path.clone(),
+        )
     }
 }
 
@@ -1148,15 +938,19 @@ fn main() -> Result<()> {
                         
                         // --- 3. path フィルタリング ---
                         if let Some(ref filter_path) = path {
-                            // 1. 操作対象(Object)のパスを解決 
-                            // (TicketConsumedの場合はインデックスから復元する)
-                            let target_path = resolve_target_path(&entry, &index);
+                            // 1. 操作対象(Object)のパスを解決
+                            let (target_path, new_path_opt) = resolve_target_path(&entry, &index);
 
                             // 2. 実行バイナリ(Subject)のパス
                             let subject_path = extract_subject_path(&entry);
 
-                            // 3. 対象パス(Object)と実行パス(Subject)のどちらにも一致しない場合はスキップ
-                            if target_path != *filter_path && subject_path != filter_path {
+                            // 各パスがフィルター文字列と一致するか判定
+                            let match_target  = target_path == *filter_path;
+                            let match_subject = subject_path == filter_path;
+                            let match_new     = new_path_opt.as_ref() == Some(filter_path);
+
+                            // 3. どれにも一致しない場合はスキップ (1つでも一致すれば表示)
+                            if !match_target && !match_subject && !match_new {
                                 continue;
                             }
                         }
@@ -1298,14 +1092,15 @@ fn main() -> Result<()> {
                 }
 
                 // 3. 複合キーの作成と集計
-                // ヘルパー関数でパスを解決 (String型で返る)
-                let target_path = resolve_target_path(&entry, &index);
+                // ヘルパー関数でパスを解決 (タプルで受け取る)
+                let (target_path, new_path_opt) = resolve_target_path(&entry, &index);
 
                 let key = ProfileKey {
                     user: entry.syscall_context.user.clone(),
                     subject_program: extract_subject_path(&entry).to_string(),
                     origin_applet: extract_applet(&entry).to_string(),
                     object_path: target_path,
+                    new_path: new_path_opt,
                     action: entry.syscall_context.action.clone(),
                 };
 

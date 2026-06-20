@@ -8,7 +8,8 @@ use std::path::PathBuf;
 
 use crate::types::Request;
 
-use teal_policy_engine::ir::{CompiledRolesCore, AccessContext, Action};
+use teal_policy_engine::types::Action;
+use teal_policy_engine::ir::{CompiledRolesCore, AccessContext};
 
 fn origin_program_from_req(req: &Request) -> Option<PathBuf> {
     let s = req.raw_program.trim();
@@ -53,6 +54,7 @@ pub fn request_to_ctx(req: &Request, roles: &CompiledRolesCore) -> AccessContext
 
         action: Action::parse(&req.raw_action).unwrap_or(Action::Unknown),
         object_path: PathBuf::from(&req.raw_target),
+        object_new_path: req.raw_new_target.as_ref().map(PathBuf::from),
         object_kind: None,
     }
 }

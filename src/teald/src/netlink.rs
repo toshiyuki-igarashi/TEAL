@@ -70,6 +70,11 @@ pub enum TealAttr {
     Epoch = 26,
     AuditFlg = 27,
     AppletHash = 28,
+
+    // --- RENAME対応用 ---
+    NewTargetDev = 29,
+    NewTargetIno = 30,
+    NewTarget    = 31,
 }
 impl NlAttrType for TealAttr {}
 
@@ -96,9 +101,14 @@ pub struct TealReq {
     pub prog_ino: u64,
     pub program: String,
     pub action: String,
+
     pub target_dev: u32,
     pub target_ino: u64,
     pub target: String,
+    pub new_target_dev: u32,
+    pub new_target_ino: u64,
+    pub new_target: String, // RENAMEでない場合は空文字列 "" が入る想定
+
     pub script_dev: u32,
     pub script_ino: u64,
     pub script: String,
@@ -118,6 +128,10 @@ pub struct TealInfo {
     pub prog_ino: u64,
     pub target_dev: u32,
     pub target_ino: u64,
+    
+    // RENAME 用の移動先情報
+    pub new_target_dev: u32,
+    pub new_target_ino: u64,
 }
 
 // --- [定義] 送信リクエストの列挙型 ---
@@ -306,7 +320,11 @@ fn parse_req_msg(genl_msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<TealReq> {
             TealAttr::Applet    => req.applet = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
             TealAttr::LsmLabel  => req.lsm_label = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
             TealAttr::ArgsHead  => req.args_head = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
-            
+
+            TealAttr::NewTargetDev => req.new_target_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::NewTargetIno => req.new_target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::NewTarget    => req.new_target    = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
+
             _ => {} 
         }
     }
@@ -318,14 +336,17 @@ fn parse_info_msg(genl_msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<TealInfo> 
     
     for attr in genl_msg.get_attr_handle().iter() {
         match attr.nla_type.nla_type {
-            TealAttr::InfoEvt => info.is_expired = attr.nla_payload.as_ref()[0] == 1,
-            TealAttr::TicketId => info.ticket_id = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::Uid => info.uid = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::UsesLeft => info.uses_left = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::ProgDev => info.prog_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::ProgIno => info.prog_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::TargetDev => info.target_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::TargetIno => info.target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::InfoEvt     => info.is_expired = attr.nla_payload.as_ref()[0] == 1,
+            TealAttr::TicketId    => info.ticket_id = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::Uid         => info.uid = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::UsesLeft    => info.uses_left = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::ProgDev     => info.prog_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::ProgIno     => info.prog_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::TargetDev   => info.target_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::TargetIno   => info.target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::NewTargetDev => info.new_target_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::NewTargetIno => info.new_target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            
             _ => {}
         }
     }
@@ -404,6 +425,11 @@ fn build_ticket_add(family_id: u16, ticket: &TicketPayload) -> Result<Nlmsghdr<u
     attrs.push(Nlattr::new(false, false, TealAttr::ScriptIno, ticket.script_ino.to_ne_bytes().as_ref())?);
     attrs.push(Nlattr::new(false, false, TealAttr::TargetDev, (ticket.target_dev as u32).to_ne_bytes().as_ref())?);
     attrs.push(Nlattr::new(false, false, TealAttr::TargetIno, ticket.target_ino.to_ne_bytes().as_ref())?);
+
+    // RENAME 用の移動先情報 (Dev/Ino)
+    attrs.push(Nlattr::new(false, false, TealAttr::NewTargetDev, (ticket.new_target_dev as u32).to_ne_bytes().as_ref())?);
+    attrs.push(Nlattr::new(false, false, TealAttr::NewTargetIno, ticket.new_target_ino.to_ne_bytes().as_ref())?);
+    
     attrs.push(Nlattr::new(false, false, TealAttr::ExpiresAt, expires_at.to_ne_bytes().as_ref())?);
     attrs.push(Nlattr::new(false, false, TealAttr::Flags, ticket.flags.to_ne_bytes().as_ref())?);
     attrs.push(Nlattr::new(false, false, TealAttr::UsesLeft, ticket.uses_left.to_ne_bytes().as_ref())?);

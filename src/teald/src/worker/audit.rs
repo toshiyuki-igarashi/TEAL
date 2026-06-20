@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use anyhow::Result;
 use std::fs;
 
-use crate::app_state;
+use crate::state::app_state;
 use crate::types::{Request, InternalEvent, PolicyDecision, PendingEntry, KernelEventLog, TicketPayload, EntityId, ApprovedTicket};
 use crate::bundle::bundle;
 use crate::decide::request_to_ctx;
@@ -18,7 +18,7 @@ use crate::netlink::{self, TealNetlinkMessage, TealReq, TealInfo};
 
 use teal_policy_engine::types::Effect;
 use teal_policy_engine::ir::{Decision, RuleType};
-use teal_policy_engine::util::ktime_prefix;
+use teal_policy_engine::util::{ktime_prefix, normalize_opt_field};
 use teal_policy_engine::eval::evaluate;
 use teal_policy_engine::raw::{TEAL_TICKET_FLG_SILENT_IO, TEAL_TICKET_FLG_INHERIT};
 
@@ -73,7 +73,6 @@ pub async fn audit_worker_loop(
 // =========================================================================
 
 pub async fn handle_internal_event(event: InternalEvent) {
-    // ※ 内部イベント処理は元のコードと「全く同じ」です
     match event {
         InternalEvent::Resolved { req_line: _, parsed_req, decision, rule_id, ticket_id } => {
             if let Err(e) = process_resolved_event(parsed_req, decision, rule_id, ticket_id).await {
@@ -121,9 +120,15 @@ pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
         prog_ino: nl_req.prog_ino,
         raw_program: nl_req.program.clone(),
         raw_action: nl_req.action.clone(),
+
         target_dev: nl_req.target_dev as u64,
         target_ino: nl_req.target_ino,
         raw_target: nl_req.target.clone(),
+        // 移動先情報のマッピング
+        new_target_dev: nl_req.new_target_dev as u64,
+        new_target_ino: nl_req.new_target_ino,
+        raw_new_target: normalize_opt_field(&nl_req.new_target),
+
         script_dev: nl_req.script_dev as u64,
         script_ino: nl_req.script_ino,
         raw_script: normalize_opt_field(&nl_req.script),
@@ -176,6 +181,12 @@ pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
                         } else {
                             (req.target_dev, req.target_ino)
                         };
+                        // 移動先情報もルールタイプに応じて適切にセット
+                        let (new_target_dev, new_target_ino) = if r.rule_type == RuleType::SubjectOnly {
+                            (0, 0)
+                        } else {
+                            (req.new_target_dev, req.new_target_ino)
+                        };
 
                         // --- INHERIT の場合の SILENT_IO 自動補完 ---
                         let mut safe_flags = r.ticket_profile.flags;
@@ -199,6 +210,8 @@ pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
                             applet_hash: 0,
                             target_dev,
                             target_ino,
+                            new_target_dev,
+                            new_target_ino,
                             expires_in_sec: r.ttl_sec,
                             flags: safe_flags,    // 補完済みの安全なフラグをセット
                             uses_left: r.max_uses,
@@ -219,17 +232,23 @@ pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
                             origin_program: req.raw_program.clone(),
                             origin_script: req.raw_script.clone(),
                             object: req.raw_target.clone(),
+                            new_object: req.raw_new_target.clone(),
                             uid: req.uid,
                             origin_program_id: EntityId::new((req.prog_dev, req.prog_ino)),
                             origin_script_id,
                             origin_applet: req.raw_applet.clone(),
                             object_id: EntityId::new((req.target_dev, req.target_ino)),
+                            new_object_id: if req.new_target_dev != 0 || req.new_target_ino != 0 {
+                                Some(EntityId::new((req.new_target_dev, req.new_target_ino)))
+                            } else {
+                                None
+                            },
                             op_mask: r.action_match.to_u32(),
                             ttl_sec: r.ttl_sec,
                             max_uses: r.max_uses,
                         };
 
-                        let mut state = crate::app_state().lock().await;
+                        let mut state = app_state().lock().await;
                         state.fast.tickets.insert(ticket_id, approved_ticket);
                     }
                 }
@@ -278,6 +297,8 @@ fn create_not_managed_ticket(req: &Request) -> TicketPayload {
         applet_hash: 0,
         target_dev: req.target_dev,
         target_ino: req.target_ino,
+        new_target_dev: req.new_target_dev,     // --- 移動先情報を渡す ---
+        new_target_ino: req.new_target_ino,
         expires_in_sec: u64::MAX, // 無期限
         flags: 0,                 // パス単位のパス（T-000000000）には主体特権は不要
         uses_left: 1,
@@ -288,7 +309,7 @@ fn create_not_managed_ticket(req: &Request) -> TicketPayload {
 
 /// AUDITモード用の新規チケットIDを生成する
 async fn generate_audit_ticket_id() -> String {
-    let mut state = crate::app_state().lock().await;
+    let mut state = app_state().lock().await;
     let seq = state.generate_next_ticket_seq();
     format!("T-{:09}", seq)
 }
@@ -324,15 +345,13 @@ pub async fn handle_kernel_info(info: TealInfo) -> Result<()> {
     if let Some(ticket) = target_ticket {
         // EvidenceManager に渡すための互換構造体 (KernelEventLog) に詰め替える
         let event_log = KernelEventLog {
-//            event: event_name.to_string(),
             ticket_id: info.ticket_id,
             uid: info.uid,
             uses_left: info.uses_left,
-//            res: "ALLOW".to_string(),
-//            org_dev: info.prog_dev as u64,
-//            org_ino: info.prog_ino,
-//            obj_dev: info.target_dev as u64,
+            obj_dev: info.target_dev as u64,
             obj_ino: info.target_ino,
+            new_obj_dev: if info.new_target_dev != 0 { Some(info.new_target_dev as u64) } else { None },
+            new_obj_ino: if info.new_target_ino != 0 { Some(info.new_target_ino) } else { None },
         };
 
         match event_name {
@@ -384,14 +403,6 @@ async fn process_resolved_event(
 // =========================================================================
 // ヘルパー関数
 // =========================================================================
-
-fn normalize_opt_field(s: &str) -> Option<String> {
-    if s == "-" || s.is_empty() {
-        None
-    } else {
-        Some(s.to_string())
-    }
-}
 
 pub fn enrich_pending_entry(entry: &mut PendingEntry) {
     let mut current_pid = entry.subject.pid;

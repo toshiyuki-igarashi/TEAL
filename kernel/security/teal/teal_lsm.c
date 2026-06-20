@@ -98,8 +98,8 @@ enum teal_nl_attrs {
     TEAL_ATTR_TARGET_DEV,   // u32
     TEAL_ATTR_TARGET_INO,   // u64
     TEAL_ATTR_TARGET,       // string
-    TEAL_ATTR_OP,           // u32: 操作マスク (追加!)
-    TEAL_ATTR_EXPIRES_AT,   // u64: 有効期限 (追加!)
+    TEAL_ATTR_OP,           // u32: 操作マスク
+    TEAL_ATTR_EXPIRES_AT,   // u64: 有効期限
     TEAL_ATTR_SCRIPT_DEV,   // u32
     TEAL_ATTR_SCRIPT_INO,   // u64
     TEAL_ATTR_SCRIPT,       // string
@@ -113,6 +113,12 @@ enum teal_nl_attrs {
     TEAL_ATTR_EPOCH,        // u32
     TEAL_ATTR_AUDIT_FLG,    // u32
     TEAL_ATTR_APPLET_HASH,  // u64
+
+    // --- RENAME対応用 ---
+    TEAL_ATTR_NEW_TARGET_DEV, // 29
+    TEAL_ATTR_NEW_TARGET_INO, // 30
+    TEAL_ATTR_NEW_TARGET,     // 31
+    
     __TEAL_ATTR_MAX,
 };
 #define TEAL_ATTR_MAX (__TEAL_ATTR_MAX - 1)
@@ -138,6 +144,11 @@ static const struct nla_policy teal_nl_policy[TEAL_ATTR_MAX + 1] = {
     [TEAL_ATTR_TICKET_ID]   = { .type = NLA_U64 },
     [TEAL_ATTR_EPOCH]       = { .type = NLA_U32 },
     [TEAL_ATTR_AUDIT_FLG]   = { .type = NLA_U32 },
+
+    // --- RENAME対応用 ---
+    [TEAL_ATTR_NEW_TARGET_DEV] = { .type = NLA_U32 },
+    [TEAL_ATTR_NEW_TARGET_INO] = { .type = NLA_U64 },
+    [TEAL_ATTR_NEW_TARGET]     = { .type = NLA_NUL_STRING, .len = 256 }, 
 };
 
 struct teal_request {
@@ -154,12 +165,17 @@ struct teal_request {
     dev_t target_dev;
     unsigned long target_ino;
 
+    // 移動先のデバイス番号と inode 番号
+    dev_t new_target_dev;
+    unsigned long new_target_ino;
+
     dev_t script_dev;
     unsigned long script_ino;
 
     char program[TEAL_PATH_MAX];        // exec path（ELF or interpreter）
     char action[TEAL_ACTION_MAX];       // "READ"/"WRITE"/"EXEC" etc
     char target[TEAL_TARGET_MAX];       // file path or "-" for EXEC
+    char new_target[TEAL_TARGET_MAX];   // 移動先の絶対パス文字列
     char script[TEAL_SCRIPT_MAX];       // shebang script or ""
     char applet[TEAL_APPLET_MAX];       // kernel's comm (task name)
 
@@ -237,8 +253,11 @@ int teal_get_current_tgid(void);
 void teal_get_current_comm(char *buf, size_t len);
 int teal_wait_for_approval(const char *action,
                            const char *target_name,
-                           dev_t target_dev,
-                           unsigned long target_ino,
+                           u64 target_dev,
+                           u64 target_ino,
+                           const char *new_target,
+                           u64 new_target_dev,
+                           u64 new_target_ino,
                            u8 teal_mode,
                            const char *exec_path,
                            const char *script_path,
@@ -258,6 +277,9 @@ enum teal_event_type {
     TEAL_EVENT_CONNECT  = 256,
 };
 
+/**
+ * Rust 引き渡しコンテキスト
+ */
 struct teal_rs_ctx {
     const char *target;
     const char *program;
@@ -266,6 +288,23 @@ struct teal_rs_ctx {
     unsigned long target_ino;
 };
 
+/**
+ * リネームフック専用の Rust 引き渡しコンテキスト
+ */
+struct teal_rs_rename_ctx {
+    const char *program;
+    const char *script;
+
+    // 移動元 (Source) 情報
+    const char *old_target;
+    dev_t old_target_dev;
+    unsigned long old_target_ino;
+
+    // 移動先 (Destination) 情報
+    const char *new_target;
+    dev_t new_target_dev;
+    unsigned long new_target_ino;
+};
 
 /**
  * 識別子（デバイス番号とiノード番号）のペア
@@ -285,7 +324,8 @@ struct teal_ticket_add_payload {
     struct teal_id_pair org;
     struct teal_id_pair script;
     __u64 applet_hash;
-    struct teal_id_pair obj;
+    struct teal_id_pair obj;      // 移動元 (Source)
+    struct teal_id_pair new_obj;  // 移動先 (Destination)
     __u64 expires_at;
     atomic_t uses_left;
     __u64 ticket_id;
@@ -341,6 +381,8 @@ struct teal_log_entry {
     dev_t org_dev;
     unsigned long obj_ino;      // Object (ターゲットファイル)
     dev_t obj_dev;
+    unsigned long new_obj_ino;
+    dev_t new_obj_dev;
 };
 
 // チケットの振る舞いフラグ
@@ -447,8 +489,11 @@ static int teal_req_wait(struct teal_request *req);
 static inline int teal_decision_to_rc(int decision);
 static struct teal_request *teal_req_build(const char *action,
                                            const char *target_name,
-                                           dev_t target_dev,
-                                           unsigned long target_ino,
+                                           u64 target_dev,
+                                           u64 target_ino,
+                                           const char *new_target,
+                                           u64 new_target_dev,
+                                           u64 new_target_ino,
                                            const char *exec_path,
                                            const char *script_path,
                                            const char *applet);
@@ -457,8 +502,11 @@ static int teal_req_enqueue(struct teal_request *req, u8 teal_mode);
 // --- 待機ロジック (Rustから呼ばれる) ---
 int teal_wait_for_approval(const char *action,
                            const char *target_name,
-                           dev_t target_dev,
-                           unsigned long target_ino,
+                           u64 target_dev,
+                           u64 target_ino,
+                           const char *new_target,
+                           u64 new_target_dev,
+                           u64 new_target_ino,
                            u8 teal_mode,
                            const char *exec_path,
                            const char *script_path,
@@ -470,11 +518,12 @@ int teal_wait_for_approval(const char *action,
 
     might_sleep();
 
-    /* * 【重要】防御的プログラミング (サニタイズ)
-     * 既存プロセスや d_path() の失敗に備え、不正なポインタを安全なデフォルト文字列に置換する
-     */
+    /* 防御的プログラミング (サニタイズ) */
     if (IS_ERR_OR_NULL(action))      action = "unknown";
     if (IS_ERR_OR_NULL(target_name)) target_name = "unknown";
+    // RENAME以外では空で来るため、安全なデフォルト値 "-" をセット
+    if (IS_ERR_OR_NULL(new_target))  new_target = "-"; 
+    
     if (IS_ERR_OR_NULL(exec_path))   exec_path = "unknown";
     if (IS_ERR_OR_NULL(script_path)) script_path = "none";
     if (IS_ERR_OR_NULL(applet))      applet = "none";
@@ -484,7 +533,9 @@ int teal_wait_for_approval(const char *action,
      * script_path : スクリプト実体（例: foo.sh, bar.py）
      * バイナリ直実行の場合は NULL ("none"に置換済み)
      */
-    req = teal_req_build(action, target_name, target_dev, target_ino, exec_path, script_path, applet);
+    req = teal_req_build(action, target_name, target_dev, target_ino, 
+                         new_target, new_target_dev, new_target_ino,
+                         exec_path, script_path, applet);
     if (!req)
         return -ENOMEM;
 
@@ -539,8 +590,11 @@ static inline struct teal_task_meta *teal_task_meta_current(void)
 
 static struct teal_request *teal_req_build(const char *action,
                                            const char *target_name,
-                                           dev_t target_dev,
-                                           unsigned long target_ino,
+                                           u64 target_dev,
+                                           u64 target_ino,
+                                           const char *new_target,
+                                           u64 new_target_dev,
+                                           u64 new_target_ino,
                                            const char *exec_path,
                                            const char *script_path,
                                            const char *applet)
@@ -623,8 +677,18 @@ static struct teal_request *teal_req_build(const char *action,
     /* ターゲット情報とアクションのセット */
     req->target_dev = target_dev;
     req->target_ino = target_ino;
+    // 新しいターゲット情報をセット
+    req->new_target_dev = new_target_dev;
+    req->new_target_ino = new_target_ino;
+
     strscpy(req->action, !IS_ERR_OR_NULL(action) ? action : "-", sizeof(req->action));
     strscpy(req->target, target_name, sizeof(req->target));
+    
+    // 新しいパス情報を構造体にコピー
+    if (!IS_ERR_OR_NULL(new_target) && new_target[0])
+        strscpy(req->new_target, new_target, sizeof(req->new_target));
+    else
+        strscpy(req->new_target, "-", sizeof(req->new_target));
 
     /* パス情報の最終コピー */
     if (!IS_ERR_OR_NULL(exec_path) && exec_path[0] && exec_path != req->program)
@@ -930,7 +994,20 @@ static int teal_nl_recv_ticket_add(struct sk_buff *skb, struct genl_info *info)
     
     ticket->obj.dev      = nla_get_u32(info->attrs[TEAL_ATTR_TARGET_DEV]);
     ticket->obj.ino      = nla_get_u64(info->attrs[TEAL_ATTR_TARGET_INO]);
-    
+
+    // 移動先の取得
+    // リネーム以外の操作では送られてこない（属性がNULLの）可能性があるため、安全にチェックして取得
+    if (info->attrs[TEAL_ATTR_NEW_TARGET_DEV]) {
+        ticket->new_obj.dev = nla_get_u32(info->attrs[TEAL_ATTR_NEW_TARGET_DEV]);
+    } else {
+        ticket->new_obj.dev = 0;
+    }
+    if (info->attrs[TEAL_ATTR_NEW_TARGET_INO]) {
+        ticket->new_obj.ino = nla_get_u64(info->attrs[TEAL_ATTR_NEW_TARGET_INO]);
+    } else {
+        ticket->new_obj.ino = 0;
+    }
+
     ticket->expires_at   = nla_get_u64(info->attrs[TEAL_ATTR_EXPIRES_AT]);
     atomic_set(&ticket->uses_left, nla_get_u32(info->attrs[TEAL_ATTR_USES_LEFT]));
     ticket->ticket_id    = nla_get_u64(info->attrs[TEAL_ATTR_TICKET_ID]);  // 仕様上は u64 だが構造体が u32 の場合キャスト
@@ -1022,7 +1099,12 @@ static int teal_genl_send_req(struct teal_request *req, u8 teal_mode)
     nla_put_u32(skb, TEAL_ATTR_TARGET_DEV, req->target_dev);
     nla_put_u64_64bit(skb, TEAL_ATTR_TARGET_INO, req->target_ino, TEAL_ATTR_UNSPEC);
     nla_put_string(skb, TEAL_ATTR_TARGET, req->target[0] ? req->target : "-");
-    
+
+    // RENAME用の移動先コンテキストをパッキング
+    nla_put_u32(skb, TEAL_ATTR_NEW_TARGET_DEV, req->new_target_dev);
+    nla_put_u64_64bit(skb, TEAL_ATTR_NEW_TARGET_INO, req->new_target_ino, TEAL_ATTR_UNSPEC);
+    nla_put_string(skb, TEAL_ATTR_NEW_TARGET, req->new_target[0] ? req->new_target : "-");
+
     nla_put_u32(skb, TEAL_ATTR_SCRIPT_DEV, req->script_dev);
     nla_put_u64_64bit(skb, TEAL_ATTR_SCRIPT_INO, req->script_ino, TEAL_ATTR_UNSPEC);
     nla_put_string(skb, TEAL_ATTR_SCRIPT, req->script[0] ? req->script : "-");
@@ -1078,6 +1160,8 @@ static int teal_genl_send_info(struct teal_log_entry *log)
     nla_put_u64_64bit(skb, TEAL_ATTR_PROG_INO, log->org_ino, TEAL_ATTR_UNSPEC);
     nla_put_u32(skb, TEAL_ATTR_TARGET_DEV, log->obj_dev);
     nla_put_u64_64bit(skb, TEAL_ATTR_TARGET_INO, log->obj_ino, TEAL_ATTR_UNSPEC);
+    nla_put_u32(skb, TEAL_ATTR_NEW_TARGET_DEV, log->new_obj_dev);
+    nla_put_u64_64bit(skb, TEAL_ATTR_NEW_TARGET_INO, log->new_obj_ino, TEAL_ATTR_UNSPEC);
 
     genlmsg_end(skb, hdr);
 
@@ -1136,8 +1220,8 @@ static inline bool teal_should_bypass_all(void)
 }
 
 static bool is_ticket_matched(struct teal_ticket_add_payload *ticket, u64 now,
-                         struct inode *obj_inode, struct teal_id_pair *org_id,
-                         enum teal_event_type ev)
+                             struct inode *obj_inode, struct teal_id_pair *org_id,
+                             enum teal_event_type ev, struct teal_id_pair *new_id)
 {
     // A) 有効期限チェック
     if (now > ticket->expires_at)
@@ -1160,11 +1244,22 @@ static bool is_ticket_matched(struct teal_ticket_add_payload *ticket, u64 now,
         ticket->obj.dev != obj_inode->i_sb->s_dev)
         return false;
 
+    // E-2) evがTEAL_EVENT_RENAMEの時は、移動先の識別子も一致確認を行う
+    if (ev == TEAL_EVENT_RENAME) {
+        // 呼び出し側から移動先の情報が提供されていない、もしくはチケット側に移動先情報がセットされていない場合は不一致
+        if (!new_id || ticket->new_obj.ino == 0 || ticket->new_obj.dev == 0)
+            return false;
+
+        if (ticket->new_obj.ino != new_id->ino ||
+            ticket->new_obj.dev != new_id->dev)
+            return false;
+    }
+
     // F) Origin (実行プロセス) の一致確認
     if (ticket->org.ino != org_id->ino || 
         ticket->org.dev != org_id->dev)
         return false;
-        
+
     // G) Script の一致確認
     if (ticket->script.ino != 0 && ticket->script.dev != 0) {
         pr_warn_ratelimited("TEAL: Script support will be implemented in the Beta version.");
@@ -1178,7 +1273,8 @@ static bool is_ticket_matched(struct teal_ticket_add_payload *ticket, u64 now,
  * 現在のコンテキストとターゲットinodeが、有効なチケットと一致するか確認する
  * 一致した場合、uses_left を減らし true を返す
  */
-static bool teal_check_ticket_match(struct inode *obj_inode, enum teal_event_type ev)
+static bool teal_check_ticket_match(struct inode *obj_inode, enum teal_event_type ev, 
+                                    struct teal_id_pair *new_id)
 {
     struct teal_task_meta *meta;
     struct teal_id_pair *org_id;
@@ -1210,7 +1306,7 @@ static bool teal_check_ticket_match(struct inode *obj_inode, enum teal_event_typ
     
     rhl_for_each_entry_rcu(entry, tmp, list, node) {
         // 【ステップ1 & 2】 Epochと有効期限の検証
-        if (is_ticket_matched(entry->ticket, now, obj_inode, org_id, ev)) {
+        if (is_ticket_matched(entry->ticket, now, obj_inode, org_id, ev, new_id)) {
 
             // ==========================================================
             // キャッシュからプロセスの cred へ特権をコピー（昇格）
@@ -1258,6 +1354,9 @@ static bool teal_check_ticket_match(struct inode *obj_inode, enum teal_event_typ
                         log->org_dev = entry->ticket->org.dev;
                         log->obj_ino = entry->ticket->obj.ino;
                         log->obj_dev = entry->ticket->obj.dev;
+                        // RENAME 用に移動先の識別子もログに載せる
+                        log->new_obj_ino = entry->ticket->new_obj.ino;
+                        log->new_obj_dev = entry->ticket->new_obj.dev;
 
                         /* リストに積まず、直接Netlinkで送信して即解放！ */
                         teal_genl_send_info(log);
@@ -1306,6 +1405,17 @@ static void teal_gc_worker(struct work_struct *work)
                     log->uid = ticket->uid;
                     log->uses_left_snapshot = (u32)atomic_read(&ticket->uses_left);
                     log->timestamp = now;
+
+                    // teald (ユーザー空間) がFast Pathログを正しく再現できるように、
+                    // チケットに紐づくすべての物理オブジェクト情報を詰め直す
+                    log->org_ino = ticket->org.ino;
+                    log->org_dev = ticket->org.dev;
+                    log->obj_ino = ticket->obj.ino;
+                    log->obj_dev = ticket->obj.dev;
+                    
+                    // RENAME対応: 移動先情報もコピー
+                    log->new_obj_ino = ticket->new_obj.ino;
+                    log->new_obj_dev = ticket->new_obj.dev;
 
                     teal_genl_send_info(log);
                     kfree(log);
@@ -1427,7 +1537,7 @@ static int teal_bprm_check(struct linux_binprm *bprm)
     }
 
     if (bprm && bprm->file) {
-        if (teal_check_ticket_match(file_inode(bprm->file), TEAL_EVENT_EXECUTE)) {
+        if (teal_check_ticket_match(file_inode(bprm->file), TEAL_EVENT_EXECUTE, NULL)) {
             return 0;
         }
     }
@@ -1589,7 +1699,7 @@ static int teal_file_open(struct file *file)
         return 0; 
     }
 
-    if (teal_check_ticket_match(inode, ev)) {
+    if (teal_check_ticket_match(inode, ev, NULL)) {
         return 0; 
     }
 
@@ -1748,6 +1858,12 @@ static bool teal_check_socket_ticket_match(struct socket *sock, struct sockaddr 
                     log->obj_ino = entry->ticket->obj.ino; 
                     log->obj_dev = entry->ticket->obj.dev;
 
+                    // RENAME対応: ネットワーク(CONNECT)用チケットであっても、
+                    // 拡張したログ構造体のメンバー(new_obj_*)を安全に初期化する。
+                    // ネットワーク系のチケットでは当然 0 (None) になります。
+                    log->new_obj_ino = entry->ticket->new_obj.ino;
+                    log->new_obj_dev = entry->ticket->new_obj.dev;
+
                     teal_genl_send_info(log);
                     kfree(log);
                 }
@@ -1875,7 +1991,7 @@ static int teal_handle_path_deletion(const struct path *dir, struct dentry *dent
 
     // 2. O(1) Fast Path チェック (チケットキャッシュ判定)
     if (d_is_positive(dentry)) {
-        if (teal_check_ticket_match(d_inode(dentry), event_type)) {
+        if (teal_check_ticket_match(d_inode(dentry), event_type, NULL)) {
             return 0; // キャッシュヒットにより即時許可
         }
     }
@@ -1947,6 +2063,130 @@ static int teal_path_rmdir(const struct path *dir, struct dentry *dentry)
     return teal_handle_path_deletion(dir, dentry, TEAL_EVENT_DELETE);
 }
 
+/**
+ * リネーム専用の Slow Path 処理（パス解決、両方のメタデータ抽出、teald転送）
+ */
+static int teal_handle_path_rename_slow(const struct path *old_dir, struct dentry *old_dentry,
+                                        const struct path *new_dir, struct dentry *new_dentry)
+{
+    int ret = 0;
+    char *old_page = NULL, *new_page = NULL;
+    char *resolved_old = "", *resolved_new = "";
+    struct path old_path, new_path;
+    struct teal_rs_rename_ctx ctx;
+
+    const char *exec_path = "-";
+    const char *script_path = "-";
+    struct teal_task_meta *meta;
+
+    // 1. サブジェクト情報取得
+    meta = teal_task_meta_current();
+    if (meta) {
+        exec_path = meta->program;
+        script_path = meta->script;
+    }
+
+    // 2. パス解決用メモリの確保 (2ファイル分必要)
+    old_page = (char *)__get_free_page(GFP_KERNEL);
+    new_page = (char *)__get_free_page(GFP_KERNEL);
+
+    // 3. struct path の再構成
+    old_path.mnt = old_dir->mnt;
+    old_path.dentry = old_dentry;
+    new_path.mnt = new_dir->mnt;
+    new_path.dentry = new_dentry;
+
+    // 4. 絶対パスの解決 (移動元と移動先)
+    if (old_page) {
+        resolved_old = d_path(&old_path, old_page, PAGE_SIZE);
+        if (IS_ERR(resolved_old)) resolved_old = "";
+    }
+    if (new_page) {
+        resolved_new = d_path(&new_path, new_page, PAGE_SIZE);
+        if (IS_ERR(resolved_new)) resolved_new = "";
+    }
+
+    // 5. 構造体のパッキング
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.program = exec_path;
+    ctx.script = script_path;
+
+    // 移動元 ID
+    if (old_dentry && d_is_positive(old_dentry)) {
+        ctx.old_target_dev = old_dentry->d_sb->s_dev;
+        ctx.old_target_ino = d_inode(old_dentry)->i_ino;
+    }
+    ctx.old_target = resolved_old;
+
+    // 移動先 ID
+    if (new_dir && new_dir->mnt) {
+        ctx.new_target_dev = new_dir->mnt->mnt_sb->s_dev;
+        if (new_dentry && d_is_positive(new_dentry)) {
+            ctx.new_target_ino = d_inode(new_dentry)->i_ino;
+        } else {
+            ctx.new_target_ino = 0; // 新規作成リネーム時は 0
+        }
+    }
+    ctx.new_target = resolved_new;
+
+    // 6. 判定実行（リネームイベントとして発射）
+    if (teal_decision_maker) {
+        ret = teal_decision_maker(TEAL_EVENT_RENAME, (void *)&ctx);
+    }
+
+    // 7. メモリ解放
+    if (old_page) free_page((unsigned long)old_page);
+    if (new_page) free_page((unsigned long)new_page);
+
+    return ret;
+}
+
+/**
+ * ファイル移動/リネームフック (LSM path_rename 実装)
+ */
+static int teal_path_rename(const struct path *old_dir, struct dentry *old_dentry,
+                            const struct path *new_dir, struct dentry *new_dentry,
+                            unsigned int flags)
+{
+    struct inode *old_inode;
+    struct teal_id_pair dst_id = {0};
+    
+    // 全体バイパスチェック
+    if (teal_should_bypass_all()) return 0;
+
+    // 移動元の inode を安全に取得
+    if (!old_dentry || !d_is_positive(old_dentry)) return 0;
+    old_inode = d_inode(old_dentry);
+    if (!old_inode) return 0;
+
+    // ==========================================================
+    // 【Tier 1】 Fast Path: チケットキャッシュ判定
+    // ==========================================================
+    if (new_dir && new_dir->mnt && new_dentry) {
+        // 移動先(Destination)のデバイスIDを取得
+        dst_id.dev = new_dir->mnt->mnt_sb->s_dev;
+
+        if (d_is_positive(new_dentry)) {
+            // ケースA: 上書きリネーム（すでに移動先にファイルが存在する）
+            // この場合は移動先の inode 番号が確定しているため、厳密な Fast Path 検証が可能
+            dst_id.ino = d_inode(new_dentry)->i_ino;
+
+            // 構築した dst_id を渡してキャッシュマッチング（リネーム先まで厳密に検証）
+            if (teal_check_ticket_match(old_inode, TEAL_EVENT_RENAME, &dst_id)) {
+                return 0; // キャッシュヒットにより即時許可（爆速パス）
+            }
+        } else {
+            // ケースB: 新規作成リネーム（移動先にまだファイルがない）
+            // この時点では移動先 inode が 0 (確定していない) ため、
+            // キャッシュを用いた O(1) 判定を安全にスキップして Slow Path（teald）に判断を委ねる
+        }
+    }
+
+    // ==========================================================
+    // 【Tier 2】 Slow Path: キャッシュミスまたは新規リネーム時は teald へ転送
+    // ==========================================================
+    return teal_handle_path_rename_slow(old_dir, old_dentry, new_dir, new_dentry);
+}
 
 // ------------------------------
 // LSM hooks
@@ -1969,6 +2209,7 @@ static struct security_hook_list teal_hooks[] __ro_after_init = {
     LSM_HOOK_INIT(cred_prepare, teal_cred_prepare),
     LSM_HOOK_INIT(path_unlink, teal_path_unlink),
     LSM_HOOK_INIT(path_rmdir, teal_path_rmdir),
+    LSM_HOOK_INIT(path_rename, teal_path_rename),
 };
 
 static int __init teal_lsm_init(void)

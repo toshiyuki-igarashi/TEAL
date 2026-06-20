@@ -16,11 +16,10 @@ use tokio::sync::mpsc;
 use tokio::task;
 use uuid::Uuid;
 
-use teal_policy_engine::util::{uid_to_name, ktime_prefix};
+use teal_policy_engine::util::{uid_to_name, ktime_prefix, u32_to_str};
 use teal_policy_engine::types::Effect;
 
 use crate::types::{PreApprovalDraft, ApprovedTicket, PendingEntry, MgmtPendingStart, MgmtPendingStop, KernelEventLog};
-use crate::utils::u32_to_str;
 use self::schema::{
     AuditLogEntry, AuthInfo, LogType, ObjectInfo, PolicyEvalResult, SubjectInfo,
     SyscallContext, TicketRef, IssuedTicketInfo,
@@ -130,7 +129,16 @@ impl EvidenceManager {
                 object: ObjectInfo {
                     kind: u32_to_str(ticket.op_mask),
                     path: ticket.object.clone(),
+                    
+                    // ソース (移動元) --- 物理的な実体 (Reality) ---
                     inode: event_log.obj_ino,
+                    device_id: event_log.obj_dev,
+
+                    // 移動先についても event_log が情報を持っていれば優先する
+                    // (なければ ticket の情報をセカンダリとして使う)
+                    new_path: ticket.new_object.clone(),
+                    new_inode: event_log.new_obj_ino.or(ticket.new_object_id.map(|e| e.ino)),
+                    new_device_id: event_log.new_obj_dev.or(ticket.new_object_id.map(|e| e.dev)),
                 },
             },
             environment_context: None,
@@ -203,6 +211,11 @@ impl EvidenceManager {
                     kind: "unknown".to_string(),
                     path: pending.object.path.clone(),
                     inode: pending.object.inode,
+                    device_id: pending.object.device_id,
+                    
+                    new_path: pending.object.new_path.clone(),
+                    new_inode: pending.object.new_inode,
+                    new_device_id: pending.object.new_device_id,
                 },
             },
             environment_context: Some(env_ctx),
@@ -275,9 +288,17 @@ impl EvidenceManager {
                     args: None,
                 },
                 object: ObjectInfo {
-                    kind: "unknown".to_string(),
+                    kind: u32_to_str(ticket.op_mask),
+                    
+                    // --- Source (移動元) ---
                     path: ticket.object.clone(),
                     inode: ticket.object_id.ino,
+                    device_id: ticket.object_id.dev,
+                    
+                    // --- Destination (移動先: RENAME時のみ) ---
+                    new_path: ticket.new_object.clone(),
+                    new_inode: ticket.new_object_id.map(|e| e.ino),
+                    new_device_id: ticket.new_object_id.map(|e| e.dev),
                 },
             },
             environment_context: None,
@@ -344,6 +365,10 @@ impl EvidenceManager {
                     kind: "unknown".to_string(),
                     path: "system:mode/enforce".to_string(),
                     inode: 0,
+                    device_id: 0,
+                    new_path: None,
+                    new_device_id: None,
+                    new_inode: None,
                 },
             },
             environment_context: None,
@@ -404,6 +429,10 @@ impl EvidenceManager {
                     kind: "unknown".to_string(),
                     path: "system:mode/audit".to_string(),
                     inode: 0,
+                    device_id: 0,
+                    new_path: None,
+                    new_device_id: None,
+                    new_inode: None,
                 },
             },
             environment_context: None,

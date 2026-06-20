@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use anyhow::Result;
 
 // プロジェクト内の必要なモジュールをインポート
-use crate::app_state;
+use crate::state::app_state;
 use crate::types::{
     AppState, Request, InternalEvent, PolicyDecision, EntityId, PendingEntry,
     ApprovedTicket, PolicyResult, TicketPayload
@@ -17,7 +17,8 @@ use crate::bundle::bundle;
 use crate::decide::request_to_ctx;
 use crate::netlink::{TealNetlinkMessage, NlWriter};
 
-use teal_policy_engine::ir::{Decision, Action};
+use teal_policy_engine::types::Action;
+use teal_policy_engine::ir::Decision;
 use teal_policy_engine::util::ktime_prefix;
 use teal_policy_engine::eval::evaluate;
 use teal_policy_engine::types::AuditLevel;
@@ -56,9 +57,18 @@ pub async fn decision_worker_loop(
             prog_ino: nl_req.prog_ino,
             raw_program: nl_req.program.clone(),
             raw_action: nl_req.action.clone(),
+            
+            // --- Source ---
             target_dev: nl_req.target_dev as u64,
             target_ino: nl_req.target_ino,
             raw_target: nl_req.target.clone(),
+            
+            // --- Destination ---
+            new_target_dev: nl_req.new_target_dev as u64,
+            new_target_ino: nl_req.new_target_ino,
+            raw_new_target: normalize_opt_field(&nl_req.new_target),
+            
+            // --- その他 ---
             script_dev: nl_req.script_dev as u64,
             script_ino: nl_req.script_ino,
             raw_script: normalize_opt_field(&nl_req.script),
@@ -117,6 +127,8 @@ pub fn evaluate_policy(req: &Request, state: &mut AppState) -> PolicyResult {
                 applet_hash: 0,             // Alphaフェーズ固定
                 target_dev: req.target_dev,
                 target_ino: req.target_ino,
+                new_target_dev: req.new_target_dev,
+                new_target_ino: req.new_target_ino,
                 expires_in_sec: u64::MAX,   // Epochが変わるまで無限
                 flags: 0,
                 uses_left: 1,               // 予約値0でもプロトコル要件として1以上
@@ -174,6 +186,8 @@ pub fn evaluate_policy(req: &Request, state: &mut AppState) -> PolicyResult {
                     applet_hash: 0,
                     target_dev: req.target_dev,
                     target_ino: req.target_ino,
+                    new_target_dev: req.new_target_dev,
+                    new_target_ino: req.new_target_ino,
                     expires_in_sec: r.ttl_sec,
                     flags: r.ticket_profile.flags,
                     uses_left: r.max_uses,
@@ -204,6 +218,8 @@ pub fn evaluate_policy(req: &Request, state: &mut AppState) -> PolicyResult {
                             applet_hash: 0,
                             target_dev: req.target_dev,
                             target_ino: req.target_ino,
+                            new_target_dev: req.new_target_dev,
+                            new_target_ino: req.new_target_ino,
                             expires_in_sec: approved.ttl_sec,
                             flags: r.ticket_profile.flags,
                             uses_left: approved.max_uses,
@@ -265,12 +281,26 @@ async fn reply_to_kernel(nl_tx: &NlWriter, req: &Request, policy_result: &mut Po
             // メタデータの補完
             approved.origin_program = req.raw_program.clone();
             approved.origin_script = req.raw_script.clone();
+
+            // --- パスの補完 ---
             approved.object = req.raw_target.clone();
+            approved.new_object = req.raw_new_target.clone();
+
+            // --- EntityID (inode/dev) の補完 ---
             approved.uid = req.uid;
             approved.origin_program_id = EntityId::new((req.prog_dev, req.prog_ino));
             approved.origin_script_id = Some(EntityId::new((req.script_dev, req.script_ino)));
             approved.origin_applet = req.raw_applet.clone();
+
             approved.object_id = EntityId::new((req.target_dev, req.target_ino));
+            
+            // new_object_id がある場合のみセット
+            if req.new_target_dev != 0 || req.new_target_ino != 0 {
+                approved.new_object_id = Some(EntityId::new((req.new_target_dev, req.new_target_ino)));
+            } else {
+                approved.new_object_id = None;
+            }
+
             approved.op_mask = Action::parse(&req.raw_action).unwrap_or(Action::Unknown).to_mask();
 
             {

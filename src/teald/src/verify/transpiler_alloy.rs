@@ -54,9 +54,15 @@ impl AlloyTranspiler {
     /// トランスパイル実行
     /// エントリポイント：TealIrModel を Alloy コード文字列に変換
     pub fn transpile(&mut self, ir: &TealIrModel) -> String {
-        // --- Pass 1: 解析 (実体の抽出) ---
-        for rule in &ir.rules { self.scan_expression(&rule.condition); }
-        for assertion in &ir.assertions { self.scan_expression(assertion.condition()); }
+        // --- Pass 1: 解析 (実体の抽出とマッチの事前登録) ---
+        for rule in &ir.rules { 
+            self.scan_expression(&rule.condition); 
+            self.collect_matches(&rule.condition, &rule.id); // ★追加
+        }
+        for assertion in &ir.assertions { 
+            self.scan_expression(assertion.condition()); 
+            self.collect_matches(assertion.condition(), assertion.name()); // ★追加
+        }
         for path in &ir.managed_paths { self.discovered_objs.insert(path.clone()); }
 
         // --- Pass 2: コード生成 ---
@@ -103,6 +109,57 @@ impl AlloyTranspiler {
     }
 
     /// 2. Alloyシグネチャ（集合）の生成
+    fn generate_request_sig(&self, als: &mut String) {
+        writeln!(als, "sig Request {{").unwrap();
+        
+        // カテゴリごとのフィールド生成 (存在する場合のみ)
+        if !self.discovered_users.is_empty() { 
+            writeln!(als, "  user: lone User,").unwrap(); 
+        }
+        if !self.discovered_uids.is_empty() { 
+            writeln!(als, "  uid: lone Uid,").unwrap(); 
+        }
+        
+        // Role は set なので、空でも許容されるため常に定義してOK
+        writeln!(als, "  role: set Role,").unwrap();
+        
+        if !self.discovered_progs.is_empty() { 
+            writeln!(als, "  origin_program: lone Program,").unwrap(); 
+        }
+        if !self.discovered_scripts.is_empty() { 
+            writeln!(als, "  origin_script: lone Script,").unwrap(); 
+        }
+        if !self.discovered_applets.is_empty() { 
+            writeln!(als, "  applet: lone Applet,").unwrap(); 
+        }
+        
+        // 必須フィールド
+        // --- オブジェクト（パス）フィールド ---
+        writeln!(als, "  path: one Object,").unwrap();     // 移動元（必須）
+        // RENAME時のみ値を持つため、0または1を表す `lone` を指定
+        writeln!(als, "  new_path: lone Object,").unwrap(); 
+        
+        // その他の必須フィールド
+        writeln!(als, "  op: one Operation,").unwrap();
+        writeln!(als, "  has_ticket: one Boolean,").unwrap();
+        writeln!(als, "  triggered_by: one RuleID").unwrap();
+        
+        writeln!(als, "}}").unwrap();
+
+
+        // SATソルバが不要なゴミを割り当てるのを防ぐ構造的制約 (Fact)
+        writeln!(als, "// --- Structural Constraints ---").unwrap();
+        writeln!(als, "fact RequestConstraints {{").unwrap();
+        // ポリシーの中に RENAME アクションが存在する場合のみ条件を追加
+        if self.discovered_ops.iter().any(|op| op.to_uppercase() == "RENAME") {
+            writeln!(als, "  all r: Request | (Op_RENAME not in r.op) implies no r.new_path").unwrap();
+        } else {
+            // ポリシーに RENAME が一つもない場合は、常に new_path は存在しない
+            writeln!(als, "  all r: Request | no r.new_path").unwrap();
+        }
+        writeln!(als, "}}\n").unwrap();
+    }
+
     fn generate_signatures(&self, als: &mut String, ir: &TealIrModel) {
         // --- 1. 基底型の定義 ---
         writeln!(als, "abstract sig Boolean {{}}").unwrap();
@@ -111,9 +168,13 @@ impl AlloyTranspiler {
         // ルール追跡用の基底
         writeln!(als, "abstract sig RuleID {{}}").unwrap();
         writeln!(als, "abstract sig Object {{}}").unwrap();    // パス用
-        writeln!(als, "abstract sig Role {{}}").unwrap();      // ロール用 (追加)
-        writeln!(als, "abstract sig Operation {{}}").unwrap(); // 操作(READ/WRITE)用 (追加)
-        writeln!(als, "abstract sig Program {{}}\n").unwrap();   // プログラム名用 (追加)
+        writeln!(als, "abstract sig Role {{}}").unwrap();      // ロール用
+        writeln!(als, "abstract sig Operation {{}}").unwrap(); // 操作(READ/WRITE)用
+        writeln!(als, "abstract sig Program {{}}\n").unwrap(); // プログラム名用
+        writeln!(als, "abstract sig User {{}}").unwrap();
+        writeln!(als, "abstract sig Applet {{}}").unwrap();
+        writeln!(als, "abstract sig Uid {{}}").unwrap();
+        writeln!(als, "abstract sig Script {{}}").unwrap();
 
         // --- 2. 各ルールのIDを実体化 ---
         writeln!(als, "// --- Rule Identities ---").unwrap();
@@ -126,59 +187,57 @@ impl AlloyTranspiler {
         writeln!(als, "").unwrap();
 
         // --- 3. Request 構造の定義 (ここを String から変更！) ---
-        writeln!(als, "/// TEALへのアクセス要求 (Request)").unwrap();
-        writeln!(als, "sig Request {{").unwrap();
-        writeln!(als, "  user: lone String,").unwrap();
-        writeln!(als, "  uid: lone String,").unwrap();
-        writeln!(als, "  role: set Role,").unwrap();
-        writeln!(als, "  origin_program: lone Program,").unwrap();
-        writeln!(als, "  path: one Object,").unwrap();
-        writeln!(als, "  op: one Operation,").unwrap();
-        writeln!(als, "  has_ticket: one Boolean,").unwrap();
-
-        // --- 原因特定（Root Cause Analysis）用のフィールド ---
-        // 反例が見つかったとき、この Request を許可した犯人のルールIDがここに入ります
-        writeln!(als, "  triggered_by: one RuleID").unwrap();
-        writeln!(als, "}}\n").unwrap();
+        self.generate_request_sig(als);
     }
 
     /// 3. 具体的な実体（Atoms）の生成
+    // ヘルパー: 特定のセットをイテレートして sig を出力する
+    fn emit_sig_group(als: &mut String, items: &HashSet<String>, prefix: &str, parent: &str) {
+        let mut seen = HashSet::new(); // 出力済みのサニタイズ後名を記録
+        
+        for item in items {
+            let clean = sanitize(item); // 共通のサニタイズ
+            // ※操作名のように大文字化が必要な場合は、ここにも to_uppercase() を適用するルールを統一してください
+            
+            if seen.insert(clean.clone()) { // サニタイズ後名で重複チェック
+                writeln!(als, "one sig {}_{} extends {} {{}}", prefix, clean, parent).unwrap();
+            }
+        }
+    }
+
     fn generate_entities(&self, als: &mut String) {
         writeln!(als, "// --- 実体宣言 ---").unwrap();
-        // 発見されたすべてのパス文字列を Object として定義
-        for path_atom in &self.discovered_objs {
-            let clean_name = sanitize(path_atom);
-            // "one sig Obj_... extends Object {}" を必ず出力する
-            writeln!(als, "one sig Obj_{} extends Object {{}}", clean_name).unwrap();
-        }
-        // ロール
-        for role in &self.discovered_roles {
-            writeln!(als, "one sig Role_{} extends Role {{}}", sanitize(role)).unwrap();
-        }
-        // 操作
+
+        // これらすべてで、内部的に重複チェックが行われるようになります
+        Self::emit_sig_group(als, &self.discovered_users, "User", "User");
+        Self::emit_sig_group(als, &self.discovered_objs, "Obj", "Object");
+        Self::emit_sig_group(als, &self.discovered_roles, "Role", "Role");
+        Self::emit_sig_group(als, &self.discovered_progs, "Prog", "Program");
+        Self::emit_sig_group(als, &self.discovered_uids, "Uid", "Uid");
+        Self::emit_sig_group(als, &self.discovered_scripts, "Script", "Script");
+        Self::emit_sig_group(als, &self.discovered_applets, "Applet", "Applet");
+
+        let mut seen_ops = HashSet::new();
         for op in &self.discovered_ops {
-            writeln!(als, "one sig Op_{} extends Operation {{}}", sanitize(op).to_uppercase()).unwrap();
+            let clean = sanitize(op).to_uppercase();
+            if seen_ops.insert(clean.clone()) {
+                writeln!(als, "one sig Op_{} extends Operation {{}}", clean).unwrap();
+            }
         }
-        // プログラム
-        for prog in &self.discovered_progs {
-            writeln!(als, "one sig Prog_{} extends Program {{}}", sanitize(prog)).unwrap();
-        }
-        writeln!(als, "").unwrap();
     }
 
     /// 4. 文字列マッチング事実 (Facts) の生成
     fn generate_match_facts(&self, als: &mut String) {
         writeln!(als, "// --- Pattern Matching Facts ---").unwrap();
-        writeln!(als, "// Alloyが理解できない Glob/Prefix を Rust 側で計算して注入").unwrap();
 
         // Object (Path) のマッチング解決
         for (set_name, pattern) in &self.unresolved_obj_matches {
             let matched: Vec<String> = self.discovered_objs.iter()
                 .filter(|path| self.rust_glob_match(pattern, path))
-                .map(|path| format!("\"{}\"", path)) // 文字列リテラルとして扱う
+                .map(|path| format!("Obj_{}", sanitize(path))) 
                 .collect();
 
-            writeln!(als, "sig {} in String {{}}", set_name).unwrap();
+            writeln!(als, "sig {} in Object {{}}", set_name).unwrap();
             writeln!(als, "fact {{ {} = {} }}", 
                 set_name, 
                 if matched.is_empty() { "none".into() } else { matched.join(" + ") }
@@ -189,10 +248,10 @@ impl AlloyTranspiler {
         for (set_name, pattern) in &self.unresolved_prog_matches {
             let matched: Vec<String> = self.discovered_progs.iter()
                 .filter(|prog| self.rust_glob_match(pattern, prog))
-                .map(|prog| format!("\"{}\"", prog))
+                .map(|prog| format!("Prog_{}", sanitize(prog)))
                 .collect();
 
-            writeln!(als, "sig {} in String {{}}", set_name).unwrap();
+            writeln!(als, "sig {} in Program {{}}", set_name).unwrap();
             writeln!(als, "fact {{ {} = {} }}", 
                 set_name, 
                 if matched.is_empty() { "none".into() } else { matched.join(" + ") }
@@ -256,7 +315,9 @@ impl AlloyTranspiler {
 
         // 判定述語
         writeln!(als, "pred AccessAllowed[r: Request] {{").unwrap();
-        writeln!(als, "  let is_managed = r.path in ManagedObjects |").unwrap();
+        
+        // r.path または r.new_path の少なくとも一方が ManagedObjects と交差(some &)するか判定
+        writeln!(als, "  let is_managed = (some r.path & ManagedObjects) or (some r.new_path & ManagedObjects) |").unwrap();
         writeln!(als, "  (").unwrap();
         writeln!(als, "    // 1. 管理対象パスの場合: Allowがあり、かつDenyがないこと").unwrap();
         writeln!(als, "    (is_managed => (AnyAllow[r] and not AnyDeny[r]))").unwrap();
@@ -279,7 +340,7 @@ impl AlloyTranspiler {
         // AnyDeny
         writeln!(als, "pred AnyDeny[r: Request] {{").unwrap();
         if deny_rules.is_empty() {
-            writeln!(als, "  no none").unwrap(); // Denyルールがない場合は「常に偽」
+            writeln!(als, "  some none").unwrap(); 
         } else {
             // 各ルール名の後ろに [r] を付与して or で連結する
             let rules_with_args: Vec<String> = deny_rules
@@ -343,6 +404,8 @@ impl AlloyTranspiler {
             "subject.origin_script"  => format!("r.script = Script_{}", s_val),
             "subject.origin_applet"  => format!("r.applet = Applet_{}", s_val),
             "object.path"  => format!("r.path = Obj_{}", s_val),
+            // new_path を Alloy の r.new_path プロパティにマッピング
+            "object.new_path" => format!("r.new_path = Obj_{}", s_val),
             "action.op"    => format!("r.op = Op_{}", s_val.to_uppercase()),
             _ => format!("/* unknown attr: {} */", attr),
         }
@@ -360,6 +423,12 @@ impl AlloyTranspiler {
                         self.unresolved_obj_matches.insert(set_name.clone(), pattern.clone());
                         format!("r.path in {}", set_name)
                     }
+                    // new_path のパターンマッチ
+                    "object.new_path" => {
+                        let set_name = format!("MatchSet_NewObj_{}", rule_id);
+                        self.unresolved_obj_matches.insert(set_name.clone(), pattern.clone());
+                        format!("r.new_path in {}", set_name)
+                    },
                     "subject.origin_program" => {
                         let set_name = format!("MatchSet_Prog_{}", rule_id);
                         // 重要: 後で Rust 側で計算するために登録
@@ -428,7 +497,10 @@ impl AlloyTranspiler {
                     "subject.role" => { self.discovered_roles.insert(val.clone()); }
                     "subject.user" => { self.discovered_users.insert(val.clone()); }
                     "subject.uid"  => { self.discovered_uids.insert(val.clone()); }
-                    "object.path"  => { self.discovered_objs.insert(val.clone()); }
+
+                    // "object.new_path" も一緒に discovered_objs に追加する
+                    "object.path" | "object.new_path" => { self.discovered_objs.insert(val.clone()); }
+
                     "subject.origin_program" => { self.discovered_progs.insert(val.clone()); }
                     "subject.origin_script"  => { self.discovered_scripts.insert(val.clone()); }
                     "subject.origin_applet"  => { self.discovered_applets.insert(val.clone()); }
@@ -443,6 +515,36 @@ impl AlloyTranspiler {
                         "action.op" => { self.discovered_ops.insert(val.clone()); }
                         _ => {}
                     }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// パターンマッチ(IrTerm::Match)を探して、事前計算用のマップに登録する
+    fn collect_matches(&mut self, expr: &IrExpr, context_id: &str) {
+        match expr {
+            IrExpr::And(children) | IrExpr::Or(children) => {
+                for child in children {
+                    self.collect_matches(child, context_id);
+                }
+            }
+            IrExpr::Term(IrTerm::Match { attr, pattern }) => {
+                let s_id = sanitize(context_id);
+                match attr.as_str() {
+                    "object.path" => {
+                        let set_name = format!("MatchSet_Obj_{}", s_id);
+                        self.unresolved_obj_matches.insert(set_name, pattern.clone());
+                    }
+                    "object.new_path" => {
+                        let set_name = format!("MatchSet_NewObj_{}", s_id);
+                        self.unresolved_obj_matches.insert(set_name, pattern.clone());
+                    }
+                    "subject.origin_program" => {
+                        let set_name = format!("MatchSet_Prog_{}", s_id);
+                        self.unresolved_prog_matches.insert(set_name, pattern.clone());
+                    }
+                    _ => {}
                 }
             }
             _ => {}
