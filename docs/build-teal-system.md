@@ -49,7 +49,7 @@ Clone the repository:
 
 ```bash
 cd ~
-git clone https://github.com/toshiyuki/TEAL.git
+git clone https://github.com/toshiyuki-igarashi/TEAL.git
 
 ```
 
