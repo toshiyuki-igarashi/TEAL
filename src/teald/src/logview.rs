@@ -608,8 +608,6 @@ pub fn generate_profile_json(
             continue;
         }
 
-        // パスの抽象化推論 (Heuristic Abstraction)
-        // ※実装例: /tmp/ 等の一時ディレクトリへのアクセスをプレフィックス化する
         // 元パスの抽象化
         let mut final_path = key.object_path.clone();
         if final_path.contains("/tmp/") || final_path.contains("/var/run/") {
@@ -618,8 +616,20 @@ pub fn generate_profile_json(
             }
         }
 
-        // new_path (移動先) の抽象化
-        let mut final_new_path = key.new_path.clone();
+        // Action (ops) の配列化
+        // ログのパース時点で小文字化されていると仮定しますが、念のため lowercase で判定します
+        let ops_list = parse_ops(&key.action);
+        let is_rename = ops_list.iter().any(|op| op.to_lowercase() == "rename");
+
+        // RENAME 専用の new_path 処理
+        // RENAME 以外の場合は、仮に key.new_path にゴミが入っていても強制的に None にする
+        let mut final_new_path = if is_rename {
+            key.new_path.clone() // RENAME の場合はそのまま取得
+        } else {
+            None // それ以外は new_path があってはならない
+        };
+
+        // new_path の抽象化 (RENAME かつ new_path が存在する場合のみ実行される)
         if let Some(ref mut np) = final_new_path {
             if np.contains("/tmp/") || np.contains("/var/run/") {
                 if let Some(idx) = np.rfind('/') {
@@ -637,7 +647,7 @@ pub fn generate_profile_json(
             // 通常の場合: object を付与する
             (None, Some(ObjectObj { 
                 path: final_path.clone(),
-                new_path: final_new_path, // 抽象化済みの new_path をセット
+                new_path: final_new_path, // RENAME時は値が入り、それ以外はNone（JSON出力時にスキップされる想定）
             }), None)
         };
 
@@ -663,10 +673,9 @@ pub fn generate_profile_json(
             ProfileTarget::AntiStorm => "suppress",
         };
         let prog_name = key.subject_program.split('/').last().unwrap_or("unknown");
-        let rule_id = format!("auto_{}_{}_{}", rule_prefix, prog_name, generated_rules.len());
-
-        // Action (ops) の配列化
-        let ops_list = parse_ops(&key.action);
+        // IDに action を含めることで、同一プログラム・同一対象でもRENAMEとREAD等が区別しやすくなります
+        let action_str = if is_rename { "rename" } else { "ops" };
+        let rule_id = format!("auto_{}_{}_{}_{}", rule_prefix, prog_name, action_str, generated_rules.len());
 
         // ターゲットに応じたルールの組み立て
         let rule = match target {
