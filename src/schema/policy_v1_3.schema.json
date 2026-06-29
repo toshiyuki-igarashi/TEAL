@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://teal.example/schema/policy_v1_3.schema.json",
-  "title": "TEAL Policy Schema v1.3",
+  "title": "TEAL Policy Schema v1.3.2",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "rules", "ttl_minutes", "sweep_minutes"],
@@ -69,7 +69,7 @@
         "ttl_sec": {
           "type": "integer",
           "minimum": 0,
-          "description": "Fast Path cache duration (Ticket TTL). 0 = No Cache, >0 = Cache Enabled."
+          "description": "Fast Path cache duration (Ticket Ticket TTL). 0 = No Cache, >0 = Cache Enabled."
         },
         "max_uses": {
           "type": "integer",
@@ -181,6 +181,34 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "required": ["action"],
+            "properties": {
+              "action": {
+                "properties": {
+                  "ops": {
+                    "contains": { "const": "RENAME" }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "object": {
+                "required": ["new_path"]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "object": {
+                "not": { "required": ["new_path"] }
+              }
+            }
+          }
         }
       ]
     },
@@ -193,7 +221,7 @@
         "roles": { "type": "array", "items": { "type": "string" } },
         "origin_program": { "type": "string" },
         "origin_script": { "type": "string" },
-	    "origin_applet": { "type": "string" }
+        "origin_applet": { "type": "string" }
       }
     },
     "object": {
@@ -201,7 +229,8 @@
       "additionalProperties": false,
       "required": ["path"],
       "properties": {
-        "path": { "type": "string" }
+        "path": { "type": "string", "description": "操作対象オブジェクトの絶対パス、または移動元パス。" },
+        "new_path": { "type": "string", "description": "RENAMEアクション時のみ使用される移動先絶対パス。" }
       }
     },
     "action": {
@@ -210,11 +239,13 @@
       "properties": {
         "ops": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string",
+            "enum": ["READ", "WRITE", "EXECUTE", "DELETE", "RENAME", "CHMOD", "CHOWN", "CONNECT"]
+          },
           "default": []
         }
       }
     }
   }
 }
-
