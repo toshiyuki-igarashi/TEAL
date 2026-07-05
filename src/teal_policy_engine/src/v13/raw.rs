@@ -4,7 +4,7 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 
 use crate::util::deserialize_ops_uppercase;
 use crate::types::{Effect, AuditLevel, Action};
@@ -18,7 +18,7 @@ pub struct RawBundleV1 {
     pub policy_files: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct RawPolicyV13 {
     /// const "1.3"
@@ -46,7 +46,7 @@ pub struct RawPolicyV13 {
     pub rules: Vec<RawRule>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct RawPreApprovalDefaults {
     /// Default TTL (seconds) for JIT_ALLOW when rule.pre_approval.ttl_sec is not specified.
@@ -60,7 +60,7 @@ pub struct RawPreApprovalDefaults {
     pub ttl_sec_max: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawRule {
     pub id: String,
@@ -116,7 +116,7 @@ fn default_max_uses() -> u32 {
     1
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawSubject {
     #[serde(default)]
@@ -138,7 +138,7 @@ pub struct RawSubject {
     pub origin_applet: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawObject {
     pub path: String,
@@ -148,14 +148,14 @@ pub struct RawObject {
     pub new_path: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawAction {
     #[serde(default, deserialize_with = "deserialize_ops_uppercase")]
     pub ops: Vec<Action>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawPreApproval {
     /// Whether pre-approval (JIT_ALLOW) is enabled for this rule.
@@ -167,7 +167,7 @@ pub struct RawPreApproval {
     pub ttl_sec: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct RawTicketProfile {
     #[serde(default)] pub silent_io: bool,

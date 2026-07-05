@@ -48,6 +48,14 @@ pub enum AuditLevel {
 }
 
 impl AuditLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AuditLevel::Standard => "Standard",
+            AuditLevel::Silent => "Silent",
+            AuditLevel::Strict => "Strict",
+        }
+    }
+
     pub fn to_u32(&self) -> u32 {
         match self {
             AuditLevel::Standard => 0,
@@ -57,7 +65,7 @@ impl AuditLevel {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Action {
     Read,

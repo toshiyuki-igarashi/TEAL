@@ -14,11 +14,11 @@ use std::thread;         // sleep のために追加
 
 use anyhow::{Context, Result}; // エラーハンドリング用
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use teald::evidence::schema::{AuditLogEntry, AuthInfo, LogType};
-
+use teal_policy_engine::types::{Action, Effect, AuditLevel};
+use teal_policy_engine::raw::{RawPreApprovalDefaults, RawPolicyV13, RawRule, RawObject, RawSubject, RawTicketProfile, RawAction};
 
 /// ユーザー入力を相対時間 ("15m", "2h") または 絶対時間 (RFC3339) として解釈するパーサー
 fn parse_time(s: &str) -> std::result::Result<DateTime<Utc>, String> {
@@ -302,113 +302,13 @@ pub enum ProfileTarget {
     AntiStorm,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct PreApprovalDefaults {
-    pub ttl_sec_default: u64,
-    pub ttl_sec_max: u64,
-}
-
-// ポリシードラフトのルート構造体
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ProfiledPolicyDraft {
-    pub version: String,
-    
-    // 省略可能なトップレベルフィールドを追加
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_effect: Option<String>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_reason: Option<String>,
-    
-    pub ttl_minutes: u32,
-    pub sweep_minutes: u32,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pre_approval_defaults: Option<PreApprovalDefaults>,
-    
-    pub rules: Vec<ProfiledRule>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ProfiledRule {
-    pub id: String,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rule_type: Option<String>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-
-    pub subject: SubjectObj,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub object: Option<ObjectObj>,
-    
-    pub action: ActionObj,
-    pub effect: String,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub audit_level: Option<String>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_uses: Option<usize>,
-    
-    pub ttl_sec: u64,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ticket_profile: Option<TicketProfileObj>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub required_roles: Option<Vec<String>>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub threshold: Option<u32>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct SubjectObj {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user: Option<String>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub origin_program: Option<String>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub origin_applet: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub roles: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ObjectObj {
-    pub path: String,
-
-    // 値が None の場合は JSON 出力時にキーごとスキップする
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub new_path: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ActionObj {
-    pub ops: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct TicketProfileObj {
-    pub silent_io: bool,
-    pub inherit: bool,
-    
-    // 名無しオブジェクト用の高速化フラグ
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub allow_nameless_ipc: Option<bool>, 
-}
-
-/// "READ, WRITE" のようなカンマ区切り文字列を Vec<String> に展開する
-fn parse_ops(action_str: &str) -> Vec<String> {
-    action_str.split(',')
-        .map(|s| s.trim().to_string())
+/// "READ, WRITE" のようなカンマ区切り文字列を Vec<Action> に展開する
+fn parse_ops(action_str: &str) -> Vec<Action> {
+    action_str
+        .split(',')
+        .map(|s| s.trim())
         .filter(|s| !s.is_empty())
+        .filter_map(|s| Action::parse(s).ok()) // パース成功したものだけを残す
         .collect()
 }
 
@@ -440,15 +340,15 @@ fn json_path_contains(kept: &str, target: &str) -> bool {
 }
 
 /// 包含関係にある冗長なルールをクリーンアップし、ポリシーを最小化する
-pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<ProfiledRule> {
+pub fn optimize_rules(rules: Vec<RawRule>, annotate_reason: bool) -> Vec<RawRule> {
     // 1. Grouping（バケツを Effect と AuditLevel に）
     // これにより、プログラムを跨いだクロスグループ・マージを同一バケツ内で一元評価可能にする
-    let mut groups: HashMap<MergeKey, Vec<ProfiledRule>> = HashMap::new();
+    let mut groups: HashMap<MergeKey, Vec<RawRule>> = HashMap::new();
 
     for rule in rules {
         let key = MergeKey {
-            effect: rule.effect.clone(),
-            audit_level: rule.audit_level.clone(),
+            effect: rule.effect.as_str().to_string(),
+            audit_level: Some(rule.audit_level.as_str().to_string()),
         };
         groups.entry(key).or_insert_with(Vec::new).push(rule);
     }
@@ -484,7 +384,7 @@ pub fn optimize_rules(rules: Vec<ProfiledRule>, annotate_reason: bool) -> Vec<Pr
                 .then_with(|| b.action.ops.len().cmp(&a.action.ops.len()))
         });
 
-        let mut kept_rules: Vec<ProfiledRule> = Vec::new();
+        let mut kept_rules: Vec<RawRule> = Vec::new();
 
         for current_rule in group_rules {
             let mut is_shadowed = false;
@@ -599,7 +499,7 @@ pub fn generate_profile_json(
 ) {
     eprintln!("[INFO] Starting heuristic abstraction...");
 
-    let mut generated_rules: Vec<ProfiledRule> = Vec::new();
+    let mut generated_rules: Vec<RawRule> = Vec::new();
 
     // --- 1. 抽象化推論とルールの生成 ---
     for (key, count) in profile_counts {
@@ -619,7 +519,7 @@ pub fn generate_profile_json(
         // Action (ops) の配列化
         // ログのパース時点で小文字化されていると仮定しますが、念のため lowercase で判定します
         let ops_list = parse_ops(&key.action);
-        let is_rename = ops_list.iter().any(|op| op.to_lowercase() == "rename");
+        let is_rename = ops_list.iter().any(|op| *op == Action::Rename);
 
         // RENAME 専用の new_path 処理
         // RENAME 以外の場合は、仮に key.new_path にゴミが入っていても強制的に None にする
@@ -642,29 +542,31 @@ pub fn generate_profile_json(
         let is_nameless = final_path == "-" || final_path.is_empty();
 
         let (rule_type_val, object_val, allow_nameless_val) = if is_nameless {
-            (Some("subject_only".to_string()), None, Some(true))
+            ("subject_only".to_string(), None, true)
         } else {
             // 通常の場合: object を付与する
-            (None, Some(ObjectObj { 
+            ("standard".to_string(), Some(RawObject { 
                 path: final_path.clone(),
                 new_path: final_new_path, // RENAME時は値が入り、それ以外はNone（JSON出力時にスキップされる想定）
-            }), None)
+            }), false)
         };
 
         // Subjectの組み立て (存在しない場合はNoneにして出力から消す)
-        let subject_obj = SubjectObj {
+        let subject_obj = RawSubject {
             user: if key.user.is_empty() || key.user == "-" { None } else { Some(key.user.clone()) },
+            uid: None,
             origin_program: if key.subject_program.is_empty() || key.subject_program == "-" {
                 None
             } else {
                 Some(key.subject_program.clone())
             },
+            origin_script: None,
             origin_applet: if key.origin_applet.is_empty() || key.origin_applet == "-" {
                 None
             } else {
                 Some(key.origin_applet.clone())
             },
-            roles: None, // または既存の実装に合わせる
+            roles: Vec::new(), // または既存の実装に合わせる
         };
 
         // ルールIDの自動生成
@@ -679,45 +581,51 @@ pub fn generate_profile_json(
 
         // ターゲットに応じたルールの組み立て
         let rule = match target {
-            ProfileTarget::AllowDraft => ProfiledRule {
+            ProfileTarget::AllowDraft => RawRule {
                 id: rule_id,
                 rule_type: rule_type_val.clone(),
                 subject: subject_obj.clone(),
                 object: object_val.clone(),
-                action: ActionObj { ops: ops_list.clone() },
-                effect: "allow".to_string(),
-                audit_level: None,
-                max_uses: None,
+                action: RawAction { ops: ops_list.clone() },
+                effect: Effect::Allow,
+                audit_level: AuditLevel::Standard,
+                max_uses: 1,
                 ttl_sec: 3600,
+                pre_approval: None,
                 // 名無しの場合のみ ticket_profile を生成し allow_nameless_ipc をセット
                 ticket_profile: if is_nameless {
-                    Some(TicketProfileObj {
+                    RawTicketProfile {
                         silent_io: false,
                         inherit: false,
                         allow_nameless_ipc: allow_nameless_val,
-                    })
+                    }
                 } else {
-                    None
+                    RawTicketProfile {
+                        silent_io: false,
+                        inherit: false,
+                        allow_nameless_ipc: false,
+                    }
                 },
                 reason: Some("Auto-generated allow draft".to_string()),
                 required_roles: None,
                 threshold: None,
             },
-            ProfileTarget::AntiStorm => ProfiledRule {
+            ProfileTarget::AntiStorm => RawRule {
                 id: rule_id,
                 rule_type: rule_type_val, 
                 subject: subject_obj,
                 object: object_val,
-                action: ActionObj { ops: ops_list },
-                effect: "allow".to_string(),
-                audit_level: Some("silent".to_string()),
-                max_uses: Some(10000),
+                action: RawAction { ops: ops_list },
+                effect: Effect::Allow,
+                audit_level: AuditLevel::Silent,
+                max_uses: 10000,
                 ttl_sec: 86400,
-                ticket_profile: Some(TicketProfileObj {
+                pre_approval: None,
+                ticket_profile: RawTicketProfile {
                     silent_io: true,
                     inherit: true,
                     allow_nameless_ipc: allow_nameless_val,
-                }),
+                },
                 reason: Some(format!("Auto-generated suppress rule (count: {})", count)),
                 required_roles: None,
                 threshold: None,
@@ -759,19 +667,19 @@ pub fn generate_profile_json(
     });
 
     // --- 4. TEAL v1.3 スキーマ準拠の JSON オブジェクト出力 ---
-    let draft = ProfiledPolicyDraft {
+    let draft = RawPolicyV13 {
         version: "1.3".to_string(),
         
-        default_effect: Some("allow".to_string()),
+        default_effect: Some(Effect::Allow),
         default_reason: Some("No matching rule; default allow.".to_string()),
         
         ttl_minutes: 60,
         sweep_minutes: 5,
         
-        pre_approval_defaults: Some(PreApprovalDefaults {
+        pre_approval_defaults: RawPreApprovalDefaults {
             ttl_sec_default: 600,
-            ttl_sec_max: 900,
-        }),
+            ttl_sec_max: Some(900),
+        },
         
         rules: generated_rules,
     };
@@ -1135,14 +1043,14 @@ fn main() -> Result<()> {
             };
 
             // JSONデシリアライズ
-            let draft: ProfiledPolicyDraft = serde_json::from_str(&input_data)
+            let draft: RawPolicyV13 = serde_json::from_str(&input_data)
                 .context("Failed to parse policy JSON")?;
 
             // 最適化の実行
             let optimized_rules = optimize_rules(draft.rules, annotate_reason);
 
             // 新しいドラフトの構築
-            let optimized_draft = ProfiledPolicyDraft {
+            let optimized_draft = RawPolicyV13 {
                 rules: optimized_rules,
                 ..draft // version や ttl_minutes などは引き継ぐ
             };
