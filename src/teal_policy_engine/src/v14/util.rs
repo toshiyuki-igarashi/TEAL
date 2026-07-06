@@ -17,12 +17,12 @@ pub fn u32_to_str(op: u32) -> String {
     if Action::Read.to_mask() & op != 0 { s.push("READ"); };
     if Action::Write.to_mask() & op != 0 { s.push("WRITE"); };
     if Action::Execute.to_mask() & op != 0 { s.push("EXECUTE"); };
-    if Action::Delete.to_mask() & op != 0 { s.push("DELETE"); };
-    if Action::Unlink.to_mask() & op != 0 { s.push("UNLINK"); };
-    if Action::Rename.to_mask() & op != 0 { s.push("RENAME"); };
-    if Action::Chmod.to_mask() & op != 0 { s.push("CHMOD"); };
-    if Action::Chown.to_mask() & op != 0 { s.push("CHOWN"); };
-    if Action::Connect.to_mask() & op != 0 { s.push("CONNECT"); };
+    if Action::FileDelete.to_mask() & op != 0 { s.push("DELETE"); };
+    if Action::FileUnlink.to_mask() & op != 0 { s.push("UNLINK"); };
+    if Action::FileRename.to_mask() & op != 0 { s.push("RENAME"); };
+    if Action::FileChmod.to_mask() & op != 0 { s.push("CHMOD"); };
+    if Action::FileChown.to_mask() & op != 0 { s.push("CHOWN"); };
+    if Action::NetConnect.to_mask() & op != 0 { s.push("CONNECT"); };
     if Action::Unknown.to_mask() & op != 0 { s.push("UNKNOWN"); };
 
     s.join(",")

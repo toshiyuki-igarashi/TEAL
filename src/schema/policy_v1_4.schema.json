@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://teal.example/schema/policy_v1_4.schema.json",
+  "title": "TEAL Policy Schema v1.4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "rules", "ttl_minutes", "sweep_minutes"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Policy schema version. Updated to 1.4 for TTY/Login Context and Time Constraints.",
+      "const": "1.4"
+    },
+    "default_effect": {
+      "type": "string",
+      "enum": ["allow", "deny", "need_approval", "audit_only"]
+    },
+    "default_reason": { "type": "string" },
+    "ttl_minutes": { "type": "integer", "minimum": 1 },
+    "sweep_minutes": { "type": "integer", "minimum": 1 },
+    "pre_approval_defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [ "ttl_sec_default" ],
+      "properties": {
+        "ttl_sec_default": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Default TTL (seconds) for JIT_ALLOW when rule.pre_approval.ttl_sec is not specified."
+        },
+        "ttl_sec_max": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum allowed TTL (seconds)."
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "subject", "action", "effect"],
+        "properties": {
+          "id": { "type": "string" },
+          "description": { "type": "string" },
+          "rule_type": {
+            "type": "string",
+            "enum": ["standard", "subject_only"],
+            "description": "Rule evaluation type. 'subject_only' skips object matching (O(1) bypass)."
+          },
+          "subject": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "user": { "type": "string" },
+              "uid": { "type": "integer", "minimum": 0 },
+              "roles": { "type": "array", "items": { "type": "string" } },
+              "origin_program": { "type": "string" },
+              "origin_script": { "type": "string" },
+              "origin_applet": { "type": "string" },
+              "login_context": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "source_ip": { "type": "string", "description": "IPv4/v6 address or CIDR" },
+                  "auth_method": { 
+                    "type": "string", 
+                    "enum": ["password", "publickey", "fido2", "pam_unknown"] 
+                  },
+                  "require_interactive_tty": { "type": "boolean" },
+                  "bind_registered_session": { "type": "boolean" }
+                }
+              }
+            }
+          },
+          "time_constraints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["days", "window"],
+              "properties": {
+                "days": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+                  }
+                },
+                "window": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["start", "end"],
+                  "properties": {
+                    "start": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+                    "end": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" }
+                  }
+                }
+              }
+            }
+          },
+          "object": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path"],
+            "properties": {
+              "path": { "type": "string" },
+              "new_path": { "type": "string" }
+            }
+          },
+          "action": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "ops": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "READ", "WRITE", "EXECUTE", 
+                    "FILE_DELETE", "FILE_UNLINK", "FILE_RENAME", 
+                    "FILE_CHMOD", "FILE_CHOWN", 
+                    "NET_CONNECT"
+                  ]
+                }
+              }
+            }
+          },
+          "effect": {
+            "type": "string",
+            "enum": ["allow", "deny", "need_approval", "audit_only"]
+          },
+          "mpa": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["threshold"],
+            "properties": {
+              "threshold": { "type": "integer", "minimum": 1 },
+              "approver_roles": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "audit_level": {
+            "type": "string",
+            "enum": ["silent", "standard", "strict"],
+            "default": "standard"
+          },
+          "max_uses": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 1,
+            "description": "Maximum number of times the ticket can be used."
+          },
+          "pre_approval": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "ttl_sec": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "reason": { "type": "string" },
+          "ticket_profile": {
+            "type": "object",
+            "description": "プロセスベースの高速化（Fast Path）およびチケット継承の設定",
+            "additionalProperties": false,
+            "properties": {
+              "allow_nameless_ipc": {
+                "type": "boolean",
+                "description": "trueの場合、このプロセスによるソケットやパイプ等の名無しオブジェクトへのアクセスを、パス文字列評価なしで即時許可する (O(1)バイパス)",
+                "default": false
+              },
+              "silent_io": {
+                "type": "boolean",
+                "description": "trueの場合、このプロセスによるテンポラリ/無名ファイルへのI/Oログを抑制し、即時許可する (0x01)",
+                "default": false
+              },
+              "inherit": {
+                "type": "boolean",
+                "description": "trueの場合、この権限を子プロセスにも自動継承させる (0x02)",
+                "default": false
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "properties": {
+                    "ops": {
+                      "contains": { "const": "FILE_RENAME" }
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "object": {
+                  "required": ["new_path"]
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "object": {
+                  "not": { "required": ["new_path"] }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

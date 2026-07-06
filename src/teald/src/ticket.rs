@@ -24,7 +24,8 @@ use uuid::Uuid;
 use crate::state::app_state;
 use crate::types::{PreApprovalDraft, PendingEntry, EntityId, ApprovedTicket, MpaState};
 
-use teal_policy_engine::ir::{CompiledRule, ActionMatcher, RuleType};
+use teal_policy_engine::types::RuleType;
+use teal_policy_engine::ir::{CompiledRule, ActionMatcher};
 
 // ==================================
 //  Ticketable 判定と Draft 生成

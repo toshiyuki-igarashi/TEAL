@@ -15,9 +15,9 @@ use uuid::Uuid;
 use hex;
 use blst::min_pk::{Signature, AggregateSignature};
 
-use teal_policy_engine::ir::{CompiledRule, RuleType};
+use teal_policy_engine::ir::CompiledRule;
 use teal_policy_engine::util::{uid_to_name, ktime_prefix};
-use teal_policy_engine::types::Effect;
+use teal_policy_engine::types::{Effect, RuleType};
 
 use crate::evidence;
 use crate::state::app_state;

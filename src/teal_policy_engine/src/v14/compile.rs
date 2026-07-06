@@ -10,14 +10,14 @@ use globset::Glob;
 
 use crate::types::{Effect, Action};
 use crate::raw::{
-    RawRolesV1, RawPolicyV13, RawRule, RawSubject, RawObject, RawAction, RawRoleDef,
+    RawRolesV1, RawPolicyV14, RawRule, RawSubject, RawObject, RawAction, RawRoleDef,
     RawDefaults, RawAssignment, RawGroupAssignment, RawPreApprovalDefaults, RawPreApproval
 };
 use crate::ir::{
     CompiledRolesCore, RoleMeta, RoleCatalog, CompiledDefaults, CompiledPreApprovalDefaults,
     SubjectRoleIndex, GroupRoleIndex, CompiledRoles, CompiledPolicy, ManagedScopeIndex,
     PolicyVersion, CompiledRule, SubjectMatcher, ObjectMatcher, ActionMatcher,
-    ApprovalMatcher, AuditCfg, PathMatcher, CompiledPreApproval, RuleType, TicketProfile
+    ApprovalMatcher, AuditCfg, PathMatcher, CompiledPreApproval, TicketProfile
 };
 use crate::errors::{CompileWarnings, CompileError};
 use crate::util::name_to_uid;
@@ -485,7 +485,7 @@ fn validate_pre_approval_defaults(p: &RawPreApprovalDefaults) -> Result<(), Comp
 }
 
 pub fn compile_policy_v13(
-    raw: RawPolicyV13,
+    raw: RawPolicyV14,
     roles: &CompiledRoles,
 ) -> Result<(CompiledPolicy, CompileWarnings), CompileError> {
     let mut warnings = CompileWarnings::default();
@@ -495,7 +495,7 @@ pub fn compile_policy_v13(
     validate_pre_approval_defaults(&raw.pre_approval_defaults)?;
 
     // --- 1. version check ---
-    if raw.version != "1.3" {
+    if raw.version != "1.4" {
         return Err(CompileError::UnsupportedVersion(raw.version));
     }
 
@@ -514,7 +514,7 @@ pub fn compile_policy_v13(
     let mut compiled_rules = Vec::with_capacity(raw.rules.len());
 
     for rr in raw.rules {
-        let rule = compile_rule_v13(&rr, roles, &mut warnings)?;
+        let rule = compile_rule_v13(&rr, pre_approval_defaults.ttl_sec_default, roles, &mut warnings)?;
         compiled_rules.push(rule);
     }
     // ソート: 優先度が高い順（降順）、同じなら元の順序（安定ソート）
@@ -578,6 +578,7 @@ fn validate_pre_approval_for_rule(
 /// - この関数は "panic しない" を優先し、足りない情報は安全側のデフォルトで埋める想定。
 pub fn compile_rule_v13(
     rule: &RawRule,
+    default_ttl_sec: u64,
     roles: &CompiledRoles,
     warnings: &mut CompileWarnings,
 ) -> Result<CompiledRule, CompileError> {
@@ -595,8 +596,8 @@ pub fn compile_rule_v13(
     
     // 1. RawRule から値を取り出し、デフォルト値を適用
     //    スキーマで "need_approval" 時は必須だが、Rust上は Option なので unwrap_or で安全策をとる
-    let raw_threshold = rule.threshold.unwrap_or(0);
-    let raw_roles = rule.required_roles.clone().unwrap_or_default();
+    let raw_threshold = rule.mpa.as_ref().map(|m| m.threshold).unwrap_or(0);
+    let raw_roles = rule.mpa.as_ref().map(|m| m.approver_roles.clone()).unwrap_or_default();
 
     // 2. ApprovalMatcher の構築
     //    threshold が 1以上、または required_roles が指定されている場合に ApprovalMatcher を作成する
@@ -637,18 +638,15 @@ pub fn compile_rule_v13(
         },
     };
 
-    // --- rule_type のパース ---
-    let rule_type = match rule.rule_type.as_str() {
-        "subject_only" => RuleType::SubjectOnly,
-        _ => RuleType::Standard,
-    };
-
     Ok(CompiledRule {
         id: rule.id.clone(),
-        rule_type,
+        rule_type: rule.rule_type,
         effect: rule.effect.clone(),
         audit_level: rule.audit_level.clone(),
-        ttl_sec: rule.ttl_sec,
+        ttl_sec: rule.pre_approval
+            .as_ref()
+            .and_then(|p| p.ttl_sec)
+            .unwrap_or(default_ttl_sec),
         max_uses: rule.max_uses,
 
         subject,

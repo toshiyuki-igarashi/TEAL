@@ -17,8 +17,8 @@ use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use teald::evidence::schema::{AuditLogEntry, AuthInfo, LogType};
-use teal_policy_engine::types::{Action, Effect, AuditLevel};
-use teal_policy_engine::raw::{RawPreApprovalDefaults, RawPolicyV13, RawRule, RawObject, RawSubject, RawTicketProfile, RawAction};
+use teal_policy_engine::types::{Action, Effect, AuditLevel, RuleType};
+use teal_policy_engine::raw::{RawPreApprovalDefaults, RawPolicyV14, RawRule, RawObject, RawSubject, RawTicketProfile, RawAction, RawPreApproval};
 
 /// ユーザー入力を相対時間 ("15m", "2h") または 絶対時間 (RFC3339) として解釈するパーサー
 fn parse_time(s: &str) -> std::result::Result<DateTime<Utc>, String> {
@@ -519,7 +519,7 @@ pub fn generate_profile_json(
         // Action (ops) の配列化
         // ログのパース時点で小文字化されていると仮定しますが、念のため lowercase で判定します
         let ops_list = parse_ops(&key.action);
-        let is_rename = ops_list.iter().any(|op| *op == Action::Rename);
+        let is_rename = ops_list.iter().any(|op| *op == Action::FileRename);
 
         // RENAME 専用の new_path 処理
         // RENAME 以外の場合は、仮に key.new_path にゴミが入っていても強制的に None にする
@@ -542,10 +542,10 @@ pub fn generate_profile_json(
         let is_nameless = final_path == "-" || final_path.is_empty();
 
         let (rule_type_val, object_val, allow_nameless_val) = if is_nameless {
-            ("subject_only".to_string(), None, true)
+            (RuleType::SubjectOnly, None::<RawObject>, true)
         } else {
             // 通常の場合: object を付与する
-            ("standard".to_string(), Some(RawObject { 
+            (RuleType::Standard, Some(RawObject { 
                 path: final_path.clone(),
                 new_path: final_new_path, // RENAME時は値が入り、それ以外はNone（JSON出力時にスキップされる想定）
             }), false)
@@ -566,7 +566,8 @@ pub fn generate_profile_json(
             } else {
                 Some(key.origin_applet.clone())
             },
-            roles: Vec::new(), // または既存の実装に合わせる
+            roles: Vec::new(),
+            login_context: None,
         };
 
         // ルールIDの自動生成
@@ -583,15 +584,17 @@ pub fn generate_profile_json(
         let rule = match target {
             ProfileTarget::AllowDraft => RawRule {
                 id: rule_id,
-                rule_type: rule_type_val.clone(),
+                description: None,
+                rule_type: rule_type_val,
                 subject: subject_obj.clone(),
+                time_constraints: Vec::new(),
                 object: object_val.clone(),
                 action: RawAction { ops: ops_list.clone() },
                 effect: Effect::Allow,
+                mpa: None,
                 audit_level: AuditLevel::Standard,
                 max_uses: 1,
-                ttl_sec: 3600,
-                pre_approval: None,
+                pre_approval: Some(RawPreApproval{ enabled: false, ttl_sec: Some(3600) }),
                 // 名無しの場合のみ ticket_profile を生成し allow_nameless_ipc をセット
                 ticket_profile: if is_nameless {
                     RawTicketProfile {
@@ -607,28 +610,26 @@ pub fn generate_profile_json(
                     }
                 },
                 reason: Some("Auto-generated allow draft".to_string()),
-                required_roles: None,
-                threshold: None,
             },
             ProfileTarget::AntiStorm => RawRule {
                 id: rule_id,
+                description: None,
                 rule_type: rule_type_val, 
                 subject: subject_obj,
+                time_constraints: Vec::new(),
                 object: object_val,
                 action: RawAction { ops: ops_list },
                 effect: Effect::Allow,
+                mpa: None,
                 audit_level: AuditLevel::Silent,
                 max_uses: 10000,
-                ttl_sec: 86400,
-                pre_approval: None,
+                pre_approval: Some(RawPreApproval{ enabled: false, ttl_sec: Some(86400) }),
                 ticket_profile: RawTicketProfile {
                     silent_io: true,
                     inherit: true,
                     allow_nameless_ipc: allow_nameless_val,
                 },
                 reason: Some(format!("Auto-generated suppress rule (count: {})", count)),
-                required_roles: None,
-                threshold: None,
             },
         };
 
@@ -666,9 +667,9 @@ pub fn generate_profile_json(
             .then_with(|| a.subject.user.cmp(&b.subject.user))
     });
 
-    // --- 4. TEAL v1.3 スキーマ準拠の JSON オブジェクト出力 ---
-    let draft = RawPolicyV13 {
-        version: "1.3".to_string(),
+    // --- 4. TEAL v1.4 スキーマ準拠の JSON オブジェクト出力 ---
+    let draft = RawPolicyV14 {
+        version: "1.4".to_string(),
         
         default_effect: Some(Effect::Allow),
         default_reason: Some("No matching rule; default allow.".to_string()),
@@ -1043,14 +1044,14 @@ fn main() -> Result<()> {
             };
 
             // JSONデシリアライズ
-            let draft: RawPolicyV13 = serde_json::from_str(&input_data)
+            let draft: RawPolicyV14 = serde_json::from_str(&input_data)
                 .context("Failed to parse policy JSON")?;
 
             // 最適化の実行
             let optimized_rules = optimize_rules(draft.rules, annotate_reason);
 
             // 新しいドラフトの構築
-            let optimized_draft = RawPolicyV13 {
+            let optimized_draft = RawPolicyV14 {
                 rules: optimized_rules,
                 ..draft // version や ttl_minutes などは引き継ぐ
             };

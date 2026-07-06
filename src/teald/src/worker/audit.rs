@@ -16,8 +16,8 @@ use crate::evidence::EvidenceManager;
 use crate::evidence::schema::LogType;
 use crate::netlink::{self, TealNetlinkMessage, TealReq, TealInfo};
 
-use teal_policy_engine::types::Effect;
-use teal_policy_engine::ir::{Decision, RuleType};
+use teal_policy_engine::types::{Effect, RuleType};
+use teal_policy_engine::ir::Decision;
 use teal_policy_engine::util::{ktime_prefix, normalize_opt_field};
 use teal_policy_engine::eval::evaluate;
 use teal_policy_engine::raw::{TEAL_TICKET_FLG_SILENT_IO, TEAL_TICKET_FLG_INHERIT};

@@ -10,7 +10,7 @@ use std::fmt;
 use anyhow::{Result, anyhow};
 use globset::Glob;
 
-use crate::types::{Effect, AuditLevel, Action};
+use crate::types::{Effect, AuditLevel, Action, RuleType};
 use crate::errors::CompileWarnings;
 use crate::raw::{RawPreApprovalDefaults, RawTicketProfile};
 
@@ -313,12 +313,6 @@ impl TicketProfile {
     pub fn from_raw(raw: &RawTicketProfile) -> Self {
         Self { flags: raw.to_u32() }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RuleType {
-    Standard,
-    SubjectOnly,
 }
 
 #[derive(Debug, Clone, Default)]

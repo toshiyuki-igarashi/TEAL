@@ -15,12 +15,12 @@ use crate::bundle::POLICIES_DIR;
 use teal_policy_engine::errors::CompileWarnings;
 use teal_policy_engine::load::load_json_file;
 use teal_policy_engine::schema::validate_against_schema;
-use teal_policy_engine::raw::{RawPolicyV13, RawBundleV1};
+use teal_policy_engine::raw::{RawPolicyV14, RawBundleV1};
 use teal_policy_engine::compile::compile_policy_v13;
 use teal_policy_engine::ir::{CompiledRoles, CompiledPolicy};
 
 const POLICY_SCHEMA_JSON: &str =
-    include_str!("../../schema/policy_v1_3.schema.json");
+    include_str!("../../schema/policy_v1_4.schema.json");
 
 static SCHEMA: OnceLock<Value> = OnceLock::new();
 
@@ -47,7 +47,7 @@ pub fn load_policy(
         .with_context(|| format!("policy schema validation failed: {}", path))?;
 
     // 3) Value -> Raw（構造体化）
-    let raw: RawPolicyV13 = serde_json::from_value(v)
+    let raw: RawPolicyV14 = serde_json::from_value(v)
         .with_context(|| format!("deserialize policy raw struct failed: {}", path))?;
 
     // 4) compile（意味解釈 + 正規化）

@@ -19,11 +19,3 @@ pub fn load_json_file(path: impl AsRef<Path>) -> Result<Value, ValidateError> {
     })
 }
 
-pub fn load_policy_v13_json(path: impl AsRef<Path>) -> Result<Value, ValidateError> {
-    load_json_file(path)
-}
-
-pub fn load_roles_db_json(path: impl AsRef<Path>) -> Result<Value, ValidateError> {
-    load_json_file(path)
-}
-
