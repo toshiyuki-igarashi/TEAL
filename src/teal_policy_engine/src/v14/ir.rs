@@ -30,11 +30,76 @@ pub struct CompiledPolicy {
 
     // ---- 互換・既存 decide() API 用 ----
 
-    /// マッチしなかった場合のデフォルト action
-    pub default_action: String,
+    /// マッチしなかった場合のデフォルト effect
+    pub default_effect: Effect,
 
     /// マッチしなかった場合の理由（ログ用）
     pub default_reason: String,
+
+    /// Mpa (複数人承認) チケットや全体の監査キャッシュの有効期限（分）で使われる設定値
+    pub ttl_minutes: u64,
+
+    /// クリーンアップ用
+    pub sweep_minutes: u64,
+}
+
+impl CompiledPolicy {
+    /// 別の CompiledPolicy を自身にマージします。
+    pub fn merge(
+        &mut self,
+        next: CompiledPolicy,
+        warnings: &mut CompileWarnings,
+    ) -> Result<()> {
+        // 1) version は一致必須
+        if self.version != next.version {
+            return Err(anyhow!(
+                "policy version mismatch: base={:?} next={:?}",
+                self.version, next.version
+            ));
+        }
+
+        // 2) defaults とグローバル設定は base を採用し、next が違うなら警告
+        if self.default_effect != next.default_effect {
+            warnings.warn(format!(
+                "default_effect differs across policy files: base='{:?}' next='{:?}' (keeping base)",
+                self.default_effect, next.default_effect
+            ));
+        }
+        if self.default_reason != next.default_reason {
+            warnings.warn(format!(
+                "default_reason differs across policy files: base='{}' next='{}' (keeping base)",
+                self.default_reason, next.default_reason
+            ));
+        }
+
+        // ttl_minutes と sweep_minutes の差異チェック
+        if self.ttl_minutes != next.ttl_minutes {
+            warnings.warn(format!(
+                "ttl_minutes differs across policy files: base={} next={} (keeping base)",
+                self.ttl_minutes, next.ttl_minutes
+            ));
+        }
+        if self.sweep_minutes != next.sweep_minutes {
+            warnings.warn(format!(
+                "sweep_minutes differs across policy files: base={} next={} (keeping base)",
+                self.sweep_minutes, next.sweep_minutes
+            ));
+        }
+
+        // 3) scope は union
+        self.scope = self.scope.union(&next.scope);
+
+        // 4) rules は結合。ただし rule id 重複はエラー
+        let mut seen: HashSet<String> = self.rules.iter().map(|r| r.id.clone()).collect();
+        for r in next.rules {
+            if !seen.insert(r.id.clone()) {
+                return Err(anyhow!("duplicate rule id while merging: {}", r.id));
+            }
+            self.rules.push(r);
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +130,7 @@ impl Default for CompiledPreApprovalDefaults {
 pub enum PolicyVersion {
     V1_2,
     V1_3,
+    V1_4,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -205,24 +271,21 @@ pub enum Specificity {
 #[derive(Debug, Clone)]
 pub struct CompiledRule {
     pub id: String,
+    pub description: Option<String>,
     pub rule_type: RuleType, 
     pub effect: Effect,
-    pub ttl_sec: u64,
     pub max_uses: u32,
 
     pub subject: SubjectMatcher,
+    pub time_constraints: Vec<TimeConstraintMatcher>,
     pub object: Option<ObjectMatcher>,
     pub action_match: ActionMatcher,
 
-    pub approval: Option<ApprovalMatcher>,
+    pub mpa: Option<MpaMatcher>,
     pub audit: AuditCfg,
-
-    /// Pre-approval (JIT_ALLOW) configuration for this rule.
     pub pre_approval: CompiledPreApproval,
-
     pub audit_level: AuditLevel,
     pub out_reason: String,
-
     pub ticket_profile: TicketProfile,
 }
 
@@ -230,9 +293,9 @@ impl CompiledRule {
     pub fn default_with_reason(effect: Effect, reason: &str) -> Self {
         Self {
             id: "default_rule".to_string(),
+            description: None,
             rule_type: RuleType::Standard,
             effect,
-            ttl_sec: 0,
             max_uses: 1,
             subject: SubjectMatcher {
                 uid: None,
@@ -240,19 +303,22 @@ impl CompiledRule {
                 origin_program: None,
                 origin_script: None,
                 origin_applet: None,
+                login_context: None,
             },
+            time_constraints: Vec::<TimeConstraintMatcher>::new(),
             object: Some(ObjectMatcher {
                 path: Some(PathMatcher::Prefix(PathBuf::new())),
                 ..Default::default()
             }),
             action_match: ActionMatcher::Any,
-            approval: None,
+            mpa: None,
             audit: AuditCfg {
                 tag: None,
                 log_level: None,
             },
             pre_approval: CompiledPreApproval {
                 enabled: false,
+                ttl_sec: 0,
             },
             audit_level: AuditLevel::Standard,
             out_reason: reason.to_string(),
@@ -262,15 +328,15 @@ impl CompiledRule {
 }
 
 impl CompiledRule {
-    pub fn required_roles(&self) -> HashSet<String> {
-        match &self.approval {
-            Some(a) => a.required_roles.clone(),
+    pub fn approver_roles(&self) -> HashSet<String> {
+        match &self.mpa {
+            Some(a) => a.approver_roles.clone(),
             None => HashSet::new(),
         }
     }
 
     pub fn threshold(&self) -> u32 {
-        match &self.approval {
+        match &self.mpa {
             Some(a) => a.threshold,
             None => 0,
         }
@@ -324,6 +390,7 @@ pub struct AuditCfg {
 #[derive(Debug, Clone)]
 pub struct CompiledPreApproval {
     pub enabled: bool,
+    pub ttl_sec: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -337,15 +404,33 @@ pub enum LogLevel {
 
 #[derive(Debug, Clone)]
 pub struct SubjectMatcher {
-    pub uid: Option<u32>,
+    pub uid: Option<u32>, // user はコンパイル時にuidへ解決されるため不要
 
-    /// 要求主体が持つ roles の集合と、
-    /// ルールが要求する roles の集合の関係
     pub required_roles: HashSet<String>,
-
     pub origin_program: Option<PathMatcher>,
     pub origin_script: Option<PathMatcher>,
     pub origin_applet: Option<String>,
+
+    pub login_context: Option<LoginContextMatcher>,
+}
+
+// コンテキスト評価用の新しい構造体
+#[derive(Debug, Clone)]
+pub struct LoginContextMatcher {
+    pub source_ip_network: Option<ipnetwork::IpNetwork>, // CIDRマッチング用にコンパイル
+    pub auth_method: Option<String>,
+    pub require_interactive_tty: bool,
+    pub bind_registered_session: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct TimeConstraintMatcher {
+    // 例: ["Mon", "Tue"] を 曜日enumのHashSetやビットマスクに変換したもの
+    pub allowed_days: HashSet<chrono::Weekday>, 
+
+    // 例: "09:00" -> 9 * 60 = 540分 のように、深夜0時からの分数に変換しておくと高速
+    pub start_minutes_from_midnight: u32,
+    pub end_minutes_from_midnight: u32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -467,12 +552,12 @@ impl ActionMatcher {
 }
 
 #[derive(Debug, Clone)]
-pub struct ApprovalMatcher {
+pub struct MpaMatcher {
     /// 何人分の承認が必要か
     pub threshold: u32,
 
     /// 承認者が持っていなければならないロール条件
-    pub required_roles: HashSet<String>,
+    pub approver_roles: HashSet<String>,
 }
 
 #[derive(Debug)]
@@ -526,12 +611,16 @@ pub enum Decision<'a> {
 
 pub fn default_policy() -> CompiledPolicy {
     CompiledPolicy {
-        version: PolicyVersion::V1_3,
+        version: PolicyVersion::V1_4,
         rules: vec![],
         scope: ManagedScopeIndex::default(),
-        default_action: "deny".to_string(),
+        default_effect: Effect::Deny,
         default_reason: "Default policy".to_string(),
         pre_approval_defaults: CompiledPreApprovalDefaults::default(),
+
+        // 安全なデフォルト値
+        ttl_minutes: 10,
+        sweep_minutes: 5,
     }
 }
 
