@@ -599,6 +599,13 @@ pub struct AccessContext {
     pub object_path: PathBuf,               // Source Path
     pub object_new_path: Option<PathBuf>,   // Destination Path (RENAME時のみ使用)
     pub object_kind: Option<ObjectKind>,
+
+    // カーネルから来た生のTTY文字列 (例: "pts/0", "" など)
+    pub session_tty: String,
+
+    // この(UID, TTY)の組み合わせが、PAMの正規ログインとして
+    // 現在 AppState に登録されているかどうかのフラグ
+    pub is_registered_session: bool, 
 }
 
 /// v1.2の evaluate() は「一致したルール」を返せば最も楽（互換が簡単）

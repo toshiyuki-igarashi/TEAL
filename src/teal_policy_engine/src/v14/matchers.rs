@@ -72,6 +72,26 @@ pub fn match_subject(m: &SubjectMatcher, ctx: &AccessContext) -> bool {
         }
     }
 
+    // ログインコンテキストのチェック
+    if let Some(login_ctx) = &m.login_context {
+
+        // 1. 対話型TTYが要求されている場合
+        if login_ctx.require_interactive_tty {
+            // TTYが空、または "pts/" や "tty" 等から始まっていない場合はバックグラウンドとみなしてDeny
+            if ctx.session_tty.is_empty() || !(ctx.session_tty.starts_with("pts/") || ctx.session_tty.starts_with("tty")) {
+                return false; // マッチ失敗（拒否）
+            }
+        }
+
+        // 2. 正規のPAMログインセッションとの紐づけが要求されている場合
+        if login_ctx.bind_registered_session {
+            // AppState側で未登録と判定されていればDeny
+            if !ctx.is_registered_session {
+                return false; // マッチ失敗（不正なバックドアセッションとして拒否）
+            }
+        }
+    }
+
     true
 }
 

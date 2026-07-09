@@ -125,6 +125,7 @@ impl EvidenceManager {
                     applet: ticket.origin_applet.clone(),
                     script_path: ticket.origin_script.clone(),
                     args: None,
+                    session_tty: None,
                 },
                 object: ObjectInfo {
                     kind: u32_to_str(ticket.op_mask),
@@ -206,6 +207,7 @@ impl EvidenceManager {
                     applet: pending.subject.applet_name.clone(),
                     script_path: pending.subject.script_path.clone(),
                     args: None,
+                    session_tty: Some(pending.subject.session_tty.clone()),
                 },
                 object: ObjectInfo {
                     kind: "unknown".to_string(),
@@ -286,6 +288,7 @@ impl EvidenceManager {
                     applet: ticket.origin_applet.clone(),
                     script_path: ticket.origin_script.clone(),
                     args: None,
+                    session_tty: None,
                 },
                 object: ObjectInfo {
                     kind: u32_to_str(ticket.op_mask),
@@ -360,6 +363,7 @@ impl EvidenceManager {
                     applet: None,
                     script_path: None,
                     args: Some("start".to_string()),
+                    session_tty: None,
                 },
                 object: ObjectInfo {
                     kind: "unknown".to_string(),
@@ -424,6 +428,7 @@ impl EvidenceManager {
                     applet: None,
                     script_path: None,
                     args: Some("stop".to_string()),
+                    session_tty: None,
                 },
                 object: ObjectInfo {
                     kind: "unknown".to_string(),

@@ -4,8 +4,7 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
-use anyhow::{Context, Result, anyhow};
-use std::collections::HashSet;
+use anyhow::{Context, Result};
 use std::path::Path;
 use std::sync::OnceLock;
 use serde_json::Value;
@@ -16,7 +15,7 @@ use teal_policy_engine::errors::CompileWarnings;
 use teal_policy_engine::load::load_json_file;
 use teal_policy_engine::schema::validate_against_schema;
 use teal_policy_engine::raw::{RawPolicyV14, RawBundleV1};
-use teal_policy_engine::compile::compile_policy_v13;
+use teal_policy_engine::compile::compile_policy_v14;
 use teal_policy_engine::ir::{CompiledRoles, CompiledPolicy};
 
 const POLICY_SCHEMA_JSON: &str =
@@ -51,7 +50,7 @@ pub fn load_policy(
         .with_context(|| format!("deserialize policy raw struct failed: {}", path))?;
 
     // 4) compile（意味解釈 + 正規化）
-    let (compiled, warnings) = compile_policy_v13(raw, roles)
+    let (compiled, warnings) = compile_policy_v14(raw, roles)
         .with_context(|| format!("compile policy failed: {}", path))?;
 
     Ok((compiled, warnings))
@@ -86,47 +85,6 @@ fn uppercase_ops_in_value(value: &mut serde_json::Value) {
     }
 }
 
-fn merge_compiled_policies(
-    mut base: CompiledPolicy,
-    next: CompiledPolicy,
-    warnings: &mut CompileWarnings,
-) -> Result<CompiledPolicy> {
-    // 1) version は一致必須
-    if base.version != next.version {
-        return Err(anyhow!(
-            "policy version mismatch: base={:?} next={:?}",
-            base.version, next.version
-        ));
-    }
-
-    // 2) defaults は base を採用し、next が違うなら運用事故なので警告（厳格運用なら Err にしても良い）
-    if base.default_action != next.default_action {
-        warnings.warn(format!(
-            "default_action differs across policy files: base='{}' next='{}' (keeping base)",
-            base.default_action, next.default_action
-        ));
-    }
-    if base.default_reason != next.default_reason {
-        warnings.warn(format!(
-            "default_reason differs across policy files: base='{}' next='{}' (keeping base)",
-            base.default_reason, next.default_reason
-        ));
-    }
-
-    // 3) scope は union（ManagedScopeIndex に union API がある想定）
-    base.scope = base.scope.union(&next.scope);
-
-    // 4) rules は結合。ただし rule id 重複はエラー
-    let mut seen: HashSet<String> = base.rules.iter().map(|r| r.id.clone()).collect();
-    for r in next.rules {
-        if !seen.insert(r.id.clone()) {
-            return Err(anyhow!("duplicate rule id while merging: {}", r.id));
-        }
-        base.rules.push(r);
-    }
-
-    Ok(base)
-}
 
 pub fn load_policies_listed_in_bundle(
     bundle: &RawBundleV1,
@@ -151,8 +109,12 @@ pub fn load_policies_listed_in_bundle(
 
         merged = Some(match merged {
             None => cp,
-            Some(acc) => merge_compiled_policies(acc, cp, &mut warnings)
-                .with_context(|| format!("merge policies failed at: {}", path_s))?,
+            // acc を mut として受け取る
+            Some(mut acc) => {
+                acc.merge(cp, &mut warnings)
+                    .with_context(|| format!("merge policies failed at: {}", path_s))?;
+                acc
+            }
         });
     }
 
