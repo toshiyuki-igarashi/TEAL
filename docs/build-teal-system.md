@@ -33,7 +33,7 @@ First, install the necessary build tools (excluding Rust):
 sudo apt update
 sudo apt install -y \
   build-essential bc bison flex libssl-dev libelf-dev dwarves \
-  clang-17 llvm-17 lld-17 curl wget git
+  clang-17 llvm-17 lld-17 curl wget git libpam0g-dev
 ```
 Next, install rustup via the official installer to manage the Rust toolchain. When prompted, choose "1) Proceed with installation (default)".
 
