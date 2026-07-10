@@ -1,0 +1,10 @@
+[package]
+name = "pam_teal"
+version = "0.1.0"
+edition = "2021"
+
+# ここが最重要：C言語の動的ライブラリ(.so)としてビルドする指示
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]

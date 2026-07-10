@@ -2,6 +2,7 @@
 members = [
   "teald",
   "teal_policy_engine",
+  "pam_teal",
 ]  
 resolver = "2"
 
