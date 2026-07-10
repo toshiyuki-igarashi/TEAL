@@ -46,6 +46,7 @@
 #include <linux/anon_inodes.h>
 #include <linux/mount.h>
 #include <linux/fs_struct.h>
+#include <linux/tty.h>
 
 #include <net/genetlink.h>
 #include <net/net_namespace.h>
@@ -119,7 +120,10 @@ enum teal_nl_attrs {
     TEAL_ATTR_NEW_TARGET_DEV, // 29
     TEAL_ATTR_NEW_TARGET_INO, // 30
     TEAL_ATTR_NEW_TARGET,     // 31
-    
+
+    // --- ログインコンテキスト（TTY）用 ---
+    TEAL_ATTR_SESSION_TTY,    // 32
+
     __TEAL_ATTR_MAX,
 };
 #define TEAL_ATTR_MAX (__TEAL_ATTR_MAX - 1)
@@ -1118,6 +1122,25 @@ static int teal_genl_send_req(struct teal_request *req, u8 teal_mode)
     nla_put_string(skb, TEAL_ATTR_ARGS_HEAD, "-");
     
     nla_put_u32(skb, TEAL_ATTR_FLAGS, req->flags);
+
+    // ========================================================================
+    // カレントプロセスからのTTY情報の安全な抽出とパッキング
+    // ========================================================================
+    struct tty_struct *tty = get_current_tty();
+    if (tty) {
+        // tty_name() は文字列(const char *)を直接返す
+        const char *t_name = tty_name(tty);
+
+        // 文字列としてNetlinkパケットに詰め込む (安全のためNULLチェックを入れる)
+        nla_put_string(skb, TEAL_ATTR_SESSION_TTY, t_name ? t_name : "");
+
+        // ★超重要: get_current_tty() で取得した参照カウントを必ず減らす！
+        tty_kref_put(tty); 
+    } else {
+        // TTYを持たないバックグラウンドプロセス (cron, デーモン等) の場合は空文字列を送る
+        nla_put_string(skb, TEAL_ATTR_SESSION_TTY, "");
+    }
+    // ========================================================================
 
     genlmsg_end(skb, hdr);
 
