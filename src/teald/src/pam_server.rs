@@ -56,13 +56,24 @@ pub async fn start_pam_listener() {
                         // 5. JSONをパースする
                         match serde_json::from_str::<PamEvent>(&buffer) {
                             Ok(event) => {
-                                // ログインイベントの場合、AppStateに登録
-                                if event.action == "login" {
-                                    let mut st = app_state().lock().await;
-                                    st.slow.active_tty_sessions.insert(event.tty.clone(), event.user.clone());
+                                let mut st = app_state().lock().await;
 
-                                    println!("[teald-PAM] Registered session: user={} at {}", event.user, event.tty);
+                                // アクションによる分岐（ログインとログアウト）
+                                match event.action.as_str() {
+                                    "login" => {
+                                        st.slow.active_tty_sessions.insert(event.tty.clone(), event.user.clone());
+                                        println!("[teald-PAM] Registered session: user={} at {}", event.user, event.tty);
+                                    }
+                                    "logout" => {
+                                        // ログアウト時は該当するTTYのセッション情報を削除する
+                                        st.slow.active_tty_sessions.remove(&event.tty);
+                                        println!("[teald-PAM] Removed session for TTY {}", event.tty);
+                                    }
+                                    _ => {
+                                        eprintln!("[WARN] teald-PAM: Unknown action '{}'", event.action);
+                                    }
                                 }
+
                             }
                             Err(e) => {
                                 eprintln!("[WARN] teald-PAM: Failed to parse JSON from PAM: {}. Received: {}", e, buffer);
