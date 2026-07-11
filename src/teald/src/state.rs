@@ -35,6 +35,7 @@ pub async fn init_state() {
                 registered_keys: HashMap::new(),
                 pending_start: None,
                 pending_stop: None,
+                active_tty_sessions: HashMap::new(),
             },
             dev: TealDeviceState {
                 dev_teal_path: String::from("netlink:teal_ctrl"),

@@ -110,6 +110,11 @@ pub struct SlowState {
 
     pub pending_start: Option<MgmtPendingStart>,
     pub pending_stop: Option<MgmtPendingStop>,
+
+    // PAMから通知されたアクティブなログインセッション
+    // キー: TTY名 (例: "pts/1")
+    // 値: ログインしたユーザー名 (例: "alice")
+    pub active_tty_sessions: HashMap<String, String>, 
 }
 
 #[derive(Debug)]
