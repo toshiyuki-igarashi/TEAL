@@ -128,7 +128,7 @@ fn header_output(mode: OutputMode) {
             println!("TIME,USER,ACTION,TARGET,NEW_TARGET,RESULT,RULE_ID");
         }
         OutputMode::Debug => {
-            println!("TIME,LOG_TYPE,USER,ACTION,TARGET,NEW_TARGET,ARGS,RESULT,RULE_ID,TICKET,EPOCH,PROG,SCRIPT,APPLET");
+            println!("TIME,LOG_TYPE,USER,ACTION,TARGET,NEW_TARGET,ARGS,RESULT,RULE_ID,TICKET,EPOCH,PROG,SCRIPT,APPLET,TTY");
         }
         OutputMode::Trace => {
             eprintln!("[TODO] Trace mode will be implemented soon.");
@@ -172,7 +172,7 @@ fn format_output(entry: &AuditLogEntry, index: &TicketIndex, mode: OutputMode) {
             );
         }
         OutputMode::Debug => {
-            println!("{},{},{},{},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{},{}",
+            println!("{},{},{},{},\"{}\",\"{}\",\"{}\",{},{},{},{},{},{},{},{}",
                 entry.ts.to_rfc3339(),
                 extract_log_type(entry),
                 entry.syscall_context.user,
@@ -186,7 +186,8 @@ fn format_output(entry: &AuditLogEntry, index: &TicketIndex, mode: OutputMode) {
                 0, // extract_epoch(entry),
                 extract_subject_path(entry),
                 extract_script(entry),
-                extract_applet(entry)
+                extract_applet(entry),
+                extract_session_tty(entry)
             );
         }
         OutputMode::Trace => {}
@@ -268,6 +269,11 @@ fn extract_script(entry: &AuditLogEntry) -> &str {
 // アプレット名の抽出 (存在しない場合は "-")
 fn extract_applet(entry: &AuditLogEntry) -> &str {
     entry.syscall_context.subject.applet.as_deref().unwrap_or("-")
+}
+
+// セッションのtty名の抽出 (存在しない場合は "-")
+fn extract_session_tty(entry: &AuditLogEntry) -> &str {
+    entry.syscall_context.subject.session_tty.as_deref().unwrap_or("-")
 }
 
 // Argsの抽出（短縮版）
