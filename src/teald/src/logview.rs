@@ -18,7 +18,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use teald::evidence::schema::{AuditLogEntry, AuthInfo, LogType};
 use teal_policy_engine::types::{Action, Effect, AuditLevel, RuleType};
-use teal_policy_engine::raw::{RawPreApprovalDefaults, RawPolicyV14, RawRule, RawObject, RawSubject, RawTicketProfile, RawAction, RawPreApproval};
+use teal_policy_engine::raw::{RawPreApprovalDefaults, RawPolicyV14, RawRule, RawObject, RawSubject,
+    RawTicketProfile, RawAction, RawLoginContext, RawPreApproval};
 
 /// ユーザー入力を相対時間 ("15m", "2h") または 絶対時間 (RFC3339) として解釈するパーサー
 fn parse_time(s: &str) -> std::result::Result<DateTime<Utc>, String> {
@@ -299,6 +300,7 @@ pub struct ProfileKey {
     pub object_path: String,        // 対象パス (またはプレフィックス)
     pub new_path: Option<String>,   // RENAME の宛先も集計のキー（ハッシュ計算の対象）に含める
     pub action: String,             // 操作 (Ops)
+    pub login_context: Option<RawLoginContext>,
 }
 
 /// プロファイリングターゲット 
@@ -496,7 +498,141 @@ pub fn optimize_rules(rules: Vec<RawRule>, annotate_reason: bool) -> Vec<RawRule
     optimized_rules
 }
 
-// プロファイリング結果からポリシードラフトを生成し、標準出力へ書き出す
+// --- ヘルパー1: パスの抽象化 ---
+fn abstract_path(path: &str) -> String {
+    if path.contains("/tmp/") || path.contains("/var/run/") {
+        if let Some(idx) = path.rfind('/') {
+            return format!("prefix:{}", &path[..idx + 1]);
+        }
+    }
+    path.to_string()
+}
+
+// --- ヘルパー2: プロファイルから単一ルールの生成 ---
+fn build_raw_rule(
+    key: &ProfileKey,
+    count: usize,
+    target: &ProfileTarget,
+    rule_index: usize,
+) -> RawRule {
+    // 1. パスと new_path の抽象化
+    let final_path = abstract_path(&key.object_path);
+
+    let ops_list = parse_ops(&key.action);
+    let is_rename = ops_list.iter().any(|op| *op == Action::FileRename);
+
+    let final_new_path = if is_rename {
+        key.new_path.as_ref().map(|np| abstract_path(np))
+    } else {
+        None
+    };
+
+    // 2. 名無しオブジェクト判定と Object の生成
+    let is_nameless = final_path == "-" || final_path.is_empty();
+    let (rule_type_val, object_val, allow_nameless_val) = if is_nameless {
+        (RuleType::SubjectOnly, None::<RawObject>, true)
+    } else {
+        (RuleType::Standard, Some(RawObject { 
+            path: final_path.clone(),
+            new_path: final_new_path,
+        }), false)
+    };
+
+    // 3. Subject の組み立て
+    let subject_obj = RawSubject {
+        user: if key.user.is_empty() || key.user == "-" { None } else { Some(key.user.clone()) },
+        uid: None,
+        origin_program: if key.subject_program.is_empty() || key.subject_program == "-" {
+            None
+        } else {
+            Some(key.subject_program.clone())
+        },
+        origin_script: None,
+        origin_applet: if key.origin_applet.is_empty() || key.origin_applet == "-" {
+            None
+        } else {
+            Some(key.origin_applet.clone())
+        },
+        roles: Vec::new(),
+        login_context: key.login_context.clone(),
+    };
+
+    // 4. ルールIDの生成
+    let rule_prefix = match target {
+        ProfileTarget::AllowDraft => "allow",
+        ProfileTarget::AntiStorm => "suppress",
+    };
+    let prog_name = key.subject_program.split('/').last().unwrap_or("unknown");
+    let action_str = if is_rename { "rename" } else { "ops" };
+    let rule_id = format!("auto_{}_{}_{}_{}", rule_prefix, prog_name, action_str, rule_index);
+
+    // 5. ターゲットに応じたルールの組み立て
+    match target {
+        ProfileTarget::AllowDraft => RawRule {
+            id: rule_id,
+            description: None,
+            rule_type: rule_type_val,
+            subject: subject_obj,
+            time_constraints: Vec::new(),
+            object: object_val,
+            action: RawAction { ops: ops_list },
+            effect: Effect::Allow,
+            mpa: None,
+            audit_level: AuditLevel::Standard,
+            max_uses: 1,
+            pre_approval: Some(RawPreApproval { enabled: false, ttl_sec: Some(3600) }),
+            ticket_profile: RawTicketProfile {
+                silent_io: false,
+                inherit: false,
+                allow_nameless_ipc: allow_nameless_val,
+            },
+            reason: Some("Auto-generated allow draft".to_string()),
+        },
+        ProfileTarget::AntiStorm => RawRule {
+            id: rule_id,
+            description: None,
+            rule_type: rule_type_val, 
+            subject: subject_obj,
+            time_constraints: Vec::new(),
+            object: object_val,
+            action: RawAction { ops: ops_list },
+            effect: Effect::Allow,
+            mpa: None,
+            audit_level: AuditLevel::Silent,
+            max_uses: 10000,
+            pre_approval: Some(RawPreApproval { enabled: false, ttl_sec: Some(86400) }),
+            ticket_profile: RawTicketProfile {
+                silent_io: true,
+                inherit: true,
+                allow_nameless_ipc: allow_nameless_val,
+            },
+            reason: Some(format!("Auto-generated suppress rule (count: {})", count)),
+        },
+    }
+}
+
+// --- ヘルパー3: ルールの5段階ソート ---
+fn sort_rules(rules: &mut Vec<RawRule>) {
+    rules.sort_by(|a, b| {
+        a.subject.origin_program.cmp(&b.subject.origin_program)
+            .then_with(|| a.subject.origin_applet.cmp(&b.subject.origin_applet))
+            .then_with(|| {
+                let path_a = a.object.as_ref().map(|o| o.path.as_str()).unwrap_or("");
+                let path_b = b.object.as_ref().map(|o| o.path.as_str()).unwrap_or("");
+                path_a.cmp(path_b)
+            })
+            .then_with(|| {
+                let npath_a = a.object.as_ref().and_then(|o| o.new_path.as_deref()).unwrap_or("");
+                let npath_b = b.object.as_ref().and_then(|o| o.new_path.as_deref()).unwrap_or("");
+                npath_a.cmp(npath_b)
+            })
+            .then_with(|| a.subject.user.cmp(&b.subject.user))
+    });
+}
+
+// =====================================================================
+// メインルーチン：プロファイリング結果からポリシードラフトを生成し、標準出力へ書き出す
+// =====================================================================
 pub fn generate_profile_json(
     profile_counts: HashMap<ProfileKey, usize>,
     target: ProfileTarget,
@@ -505,144 +641,15 @@ pub fn generate_profile_json(
 ) {
     eprintln!("[INFO] Starting heuristic abstraction...");
 
-    let mut generated_rules: Vec<RawRule> = Vec::new();
+    // 1. ルールの生成
+    let mut generated_rules: Vec<RawRule> = profile_counts
+        .into_iter()
+        .filter(|(_, count)| !(target == ProfileTarget::AntiStorm && *count < threshold))
+        .enumerate()
+        .map(|(index, (key, count))| build_raw_rule(&key, count, &target, index))
+        .collect();
 
-    // --- 1. 抽象化推論とルールの生成 ---
-    for (key, count) in profile_counts {
-        // Anti-Storm モード時の閾値チェック
-        if target == ProfileTarget::AntiStorm && count < threshold {
-            continue;
-        }
-
-        // 元パスの抽象化
-        let mut final_path = key.object_path.clone();
-        if final_path.contains("/tmp/") || final_path.contains("/var/run/") {
-            if let Some(idx) = final_path.rfind('/') {
-                final_path = format!("prefix:{}", &final_path[..idx + 1]);
-            }
-        }
-
-        // Action (ops) の配列化
-        // ログのパース時点で小文字化されていると仮定しますが、念のため lowercase で判定します
-        let ops_list = parse_ops(&key.action);
-        let is_rename = ops_list.iter().any(|op| *op == Action::FileRename);
-
-        // RENAME 専用の new_path 処理
-        // RENAME 以外の場合は、仮に key.new_path にゴミが入っていても強制的に None にする
-        let mut final_new_path = if is_rename {
-            key.new_path.clone() // RENAME の場合はそのまま取得
-        } else {
-            None // それ以外は new_path があってはならない
-        };
-
-        // new_path の抽象化 (RENAME かつ new_path が存在する場合のみ実行される)
-        if let Some(ref mut np) = final_new_path {
-            if np.contains("/tmp/") || np.contains("/var/run/") {
-                if let Some(idx) = np.rfind('/') {
-                    *np = format!("prefix:{}", &np[..idx + 1]);
-                }
-            }
-        }
-
-        // --- 名無しオブジェクト(subject_only)の判定 ---
-        let is_nameless = final_path == "-" || final_path.is_empty();
-
-        let (rule_type_val, object_val, allow_nameless_val) = if is_nameless {
-            (RuleType::SubjectOnly, None::<RawObject>, true)
-        } else {
-            // 通常の場合: object を付与する
-            (RuleType::Standard, Some(RawObject { 
-                path: final_path.clone(),
-                new_path: final_new_path, // RENAME時は値が入り、それ以外はNone（JSON出力時にスキップされる想定）
-            }), false)
-        };
-
-        // Subjectの組み立て (存在しない場合はNoneにして出力から消す)
-        let subject_obj = RawSubject {
-            user: if key.user.is_empty() || key.user == "-" { None } else { Some(key.user.clone()) },
-            uid: None,
-            origin_program: if key.subject_program.is_empty() || key.subject_program == "-" {
-                None
-            } else {
-                Some(key.subject_program.clone())
-            },
-            origin_script: None,
-            origin_applet: if key.origin_applet.is_empty() || key.origin_applet == "-" {
-                None
-            } else {
-                Some(key.origin_applet.clone())
-            },
-            roles: Vec::new(),
-            login_context: None,
-        };
-
-        // ルールIDの自動生成
-        let rule_prefix = match target {
-            ProfileTarget::AllowDraft => "allow",
-            ProfileTarget::AntiStorm => "suppress",
-        };
-        let prog_name = key.subject_program.split('/').last().unwrap_or("unknown");
-        // IDに action を含めることで、同一プログラム・同一対象でもRENAMEとREAD等が区別しやすくなります
-        let action_str = if is_rename { "rename" } else { "ops" };
-        let rule_id = format!("auto_{}_{}_{}_{}", rule_prefix, prog_name, action_str, generated_rules.len());
-
-        // ターゲットに応じたルールの組み立て
-        let rule = match target {
-            ProfileTarget::AllowDraft => RawRule {
-                id: rule_id,
-                description: None,
-                rule_type: rule_type_val,
-                subject: subject_obj.clone(),
-                time_constraints: Vec::new(),
-                object: object_val.clone(),
-                action: RawAction { ops: ops_list.clone() },
-                effect: Effect::Allow,
-                mpa: None,
-                audit_level: AuditLevel::Standard,
-                max_uses: 1,
-                pre_approval: Some(RawPreApproval{ enabled: false, ttl_sec: Some(3600) }),
-                // 名無しの場合のみ ticket_profile を生成し allow_nameless_ipc をセット
-                ticket_profile: if is_nameless {
-                    RawTicketProfile {
-                        silent_io: false,
-                        inherit: false,
-                        allow_nameless_ipc: allow_nameless_val,
-                    }
-                } else {
-                    RawTicketProfile {
-                        silent_io: false,
-                        inherit: false,
-                        allow_nameless_ipc: false,
-                    }
-                },
-                reason: Some("Auto-generated allow draft".to_string()),
-            },
-            ProfileTarget::AntiStorm => RawRule {
-                id: rule_id,
-                description: None,
-                rule_type: rule_type_val, 
-                subject: subject_obj,
-                time_constraints: Vec::new(),
-                object: object_val,
-                action: RawAction { ops: ops_list },
-                effect: Effect::Allow,
-                mpa: None,
-                audit_level: AuditLevel::Silent,
-                max_uses: 10000,
-                pre_approval: Some(RawPreApproval{ enabled: false, ttl_sec: Some(86400) }),
-                ticket_profile: RawTicketProfile {
-                    silent_io: true,
-                    inherit: true,
-                    allow_nameless_ipc: allow_nameless_val,
-                },
-                reason: Some(format!("Auto-generated suppress rule (count: {})", count)),
-            },
-        };
-
-        generated_rules.push(rule);
-    }
-
-    // --- 2. 包含マージの実行 (最適化オプション有効時) ---
+    // 2. 包含マージの実行 (最適化オプション有効時)
     if optimize {
         let before_count = generated_rules.len();
         generated_rules = optimize_rules(generated_rules, true); 
@@ -654,47 +661,26 @@ pub fn generate_profile_json(
         }
     }
 
-    // --- 3. 管理者の視認性を高める 5段階ソート --- 
-    generated_rules.sort_by(|a, b| {
-        a.subject.origin_program.cmp(&b.subject.origin_program)
-            .then_with(|| a.subject.origin_applet.cmp(&b.subject.origin_applet))
-            .then_with(|| {
-                let path_a = a.object.as_ref().map(|o| o.path.as_str()).unwrap_or("");
-                let path_b = b.object.as_ref().map(|o| o.path.as_str()).unwrap_or("");
-                path_a.cmp(path_b)
-            })
-            // new_path でのソート (4段目)
-            .then_with(|| {
-                let npath_a = a.object.as_ref().and_then(|o| o.new_path.as_deref()).unwrap_or("");
-                let npath_b = b.object.as_ref().and_then(|o| o.new_path.as_deref()).unwrap_or("");
-                npath_a.cmp(npath_b)
-            })
-            // 5段目: ユーザー
-            .then_with(|| a.subject.user.cmp(&b.subject.user))
-    });
+    // 3. 管理者の視認性を高めるソート
+    sort_rules(&mut generated_rules);
 
-    // --- 4. TEAL v1.4 スキーマ準拠の JSON オブジェクト出力 ---
+    // 4. TEAL v1.4 スキーマ準拠の JSON オブジェクト出力
     let draft = RawPolicyV14 {
         version: "1.4".to_string(),
-        
         default_effect: Some(Effect::Allow),
         default_reason: Some("No matching rule; default allow.".to_string()),
-        
         ttl_minutes: 60,
         sweep_minutes: 5,
-        
         pre_approval_defaults: RawPreApprovalDefaults {
             ttl_sec_default: 600,
             ttl_sec_max: Some(900),
         },
-        
         rules: generated_rules,
     };
 
     let json_output = serde_json::to_string_pretty(&draft)
         .expect("Failed to serialize generated rules");
 
-    // 標準出力へ書き出し (リダイレクト用)
     println!("{}", json_output);
     eprintln!("[INFO] Profile generation complete.");
 }
@@ -782,6 +768,10 @@ enum Commands {
         /// 拒否(ACCESS_DENIED)されたログのみをプロファイリングの対象とする
         #[arg(long)]
         deny_only: bool,
+
+        /// 特定のオブジェクト（パス）に関連するログのみをプロファイリング対象とする
+        #[arg(short, long)]
+        object: Option<String>,
     },
 
     /// ポリシーファイルの冗長なルールを評価し、包含関係にあるルールを集約・最適化する
@@ -813,6 +803,42 @@ fn resolve_target_path(entry: &AuditLogEntry, index: &TicketIndex) -> (String, O
             entry.syscall_context.object.new_path.clone(),
         )
     }
+}
+
+/// --object オプションによるパスの柔軟な照合を行うヘルパー関数
+fn is_object_match(filter: &str, target_path: &str) -> bool {
+    if let Some(prefix) = filter.strip_prefix("prefix:") {
+        // "prefix:" で始まる場合は前方一致
+        target_path.starts_with(prefix)
+    } else if let Some(glob_str) = filter.strip_prefix("glob:") {
+        // "glob:" で始まる場合はワイルドカード(glob)一致
+        // ※ TEALエンジン側で使っている既存の glob 照合関数があれば、それに置き換えてください。
+        // 以下は Rust標準でよく使われる `glob` クレートを使用する場合の例です。
+        if let Ok(pattern) = glob::Pattern::new(glob_str) {
+            pattern.matches(target_path)
+        } else {
+            false // globパターンの文法エラー時は安全側に倒してマッチ失敗とする
+        }
+    } else {
+        // プレフィックスがない場合は完全一致
+        target_path == filter
+    }
+}
+
+// ログエントリから集計用の LoginContext を抽出するヘルパー関数
+fn extract_raw_login_context(entry: &AuditLogEntry) -> Option<RawLoginContext> {
+    if let Some(tty_name) = &entry.syscall_context.subject.session_tty {
+        let is_interactive = tty_name.starts_with("pts") || tty_name.starts_with("tty");
+
+        return Some(RawLoginContext {
+            source_ip: None,
+            auth_method: None,
+            require_interactive_tty: Some(is_interactive), 
+            bind_registered_session: Some(true),
+        });
+    }
+
+    None 
 }
 
 fn main() -> Result<()> {
@@ -963,7 +989,7 @@ fn main() -> Result<()> {
                 eprintln!("Verbose mode enabled.");
             }
         },
-        Commands::Profile { since, target, threshold, optimize, deny_only } => {
+        Commands::Profile { since, target, threshold, optimize, deny_only, object } => {
             let log_reader = LogReader::new(&cli.file)?;
             let mut index = TicketIndex::new();
             
@@ -1019,6 +1045,22 @@ fn main() -> Result<()> {
                 // ヘルパー関数でパスを解決 (タプルで受け取る)
                 let (target_path, new_path_opt) = resolve_target_path(&entry, &index);
 
+                // object フィルタリング
+                if let Some(ref filter_obj) = object {
+                    // target_path に対する評価
+                    let is_target_match = is_object_match(filter_obj, &target_path);
+
+                    // new_path に対する評価 (RENAMEの宛先考慮)
+                    let is_new_path_match = new_path_opt
+                        .as_ref()
+                        .map_or(false, |np| is_object_match(filter_obj, np));
+
+                    // どちらにも該当しなければ、このログはプロファイリング対象外としてスキップ
+                    if !is_target_match && !is_new_path_match {
+                        continue;
+                    }
+                }
+
                 let key = ProfileKey {
                     user: entry.syscall_context.user.clone(),
                     subject_program: extract_subject_path(&entry).to_string(),
@@ -1026,6 +1068,7 @@ fn main() -> Result<()> {
                     object_path: target_path,
                     new_path: new_path_opt,
                     action: entry.syscall_context.action.clone(),
+                    login_context: extract_raw_login_context(&entry), 
                 };
 
                 // カウントアップ
