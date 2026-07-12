@@ -110,7 +110,9 @@ pub async fn decision_worker_loop(
 
 pub fn evaluate_policy(req: &Request, state: &mut AppState) -> PolicyResult {
     let compiled = bundle();
-    let ctx = request_to_ctx(&req, &compiled.roles, true);
+    // PAMのデータと突き合わせる
+    let is_registered = state.check_registered_session(&req.session_tty, req.uid);
+    let ctx = request_to_ctx(&req, &compiled.roles, is_registered);
 
     match evaluate(&compiled.policy, &ctx) {
         // ---------------------------------------------------------

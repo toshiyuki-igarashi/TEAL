@@ -16,7 +16,7 @@ use hex;
 use blst::min_pk::{Signature, AggregateSignature};
 
 use teal_policy_engine::ir::CompiledRule;
-use teal_policy_engine::util::{uid_to_name, ktime_prefix};
+use teal_policy_engine::util::{uid_to_name, normalize_tty_name, ktime_prefix};
 use teal_policy_engine::types::{Effect, RuleType};
 
 use crate::evidence;
@@ -84,6 +84,43 @@ impl AppState {
         
         self.fast.next_draft_seq = next;
         next
+    }
+
+    /// 指定されたTTYとUIDが、PAMで認証済みの正規セッションか厳密に検証する
+    pub fn check_registered_session(&self, tty: &str, uid: u32) -> bool {
+        if tty.is_empty() || tty == "-" {
+            return false; // TTYが存在しない場合は未登録とみなす
+        }
+
+        // 1. TTY名の正規化（例: "/dev/pts/1" や "pts1" をすべて "pts1" に統一）
+        let normalized_key = normalize_tty_name(tty);
+
+        // 2. システム関数 (getpwuid) を使って、カーネルから来た UID をユーザー名に変換
+        let request_user = match uid_to_name(uid) {
+            Ok(name) => name,
+            Err(e) => {
+                eprintln!("[WARN] teald-Auth: Failed to resolve UID {}: {}", uid, e);
+                return false; // UIDがシステム上で解決できない場合は不正プロセスとして拒否
+            }
+        };
+
+        // 3. PAMがセッション開始時に登録したユーザー名と厳密に突き合わせる（ハイジャック防止）
+        if let Some(registered_user) = self.slow.active_tty_sessions.get(&normalized_key) {
+            // カーネルが証明する実行ユーザー名と、PAM認証を通過してその端末を開いた本人が一致するか検証
+            let is_valid = request_user == *registered_user;
+            
+            if !is_valid {
+                eprintln!(
+                    "[SECURITY ALERT] TTY Hijack detected! Process (UID={}, User='{}') tried to use TTY {} which belongs to Registered User '{}'",
+                    uid, request_user, normalized_key, registered_user
+                );
+            }
+            
+            is_valid
+        } else {
+            // そもそもPAMによるログインセッションが確立されていない端末からの要求
+            false
+        }
     }
 }
 

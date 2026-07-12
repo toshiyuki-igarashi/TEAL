@@ -147,7 +147,12 @@ pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
 
     let (effect, rule_id) = {
         let compiled = bundle();
-        let ctx = request_to_ctx(&req, &compiled.roles, true);
+
+        let state = app_state().lock().await;
+        // PAMのデータと突き合わせる
+        let is_registered = state.check_registered_session(&req.session_tty, req.uid);
+        let ctx = request_to_ctx(&req, &compiled.roles, is_registered);
+        drop(state); 
 
         match evaluate(&compiled.policy, &ctx) {
             Decision::Pass => {

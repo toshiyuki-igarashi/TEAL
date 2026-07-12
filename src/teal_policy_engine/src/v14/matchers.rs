@@ -77,9 +77,12 @@ pub fn match_subject(m: &SubjectMatcher, ctx: &AccessContext) -> bool {
 
         // 1. 対話型TTYが要求されている場合
         if login_ctx.require_interactive_tty {
-            // TTYが空、または "pts/" や "tty" 等から始まっていない場合はバックグラウンドとみなしてDeny
-            if ctx.session_tty.is_empty() || !(ctx.session_tty.starts_with("pts") || ctx.session_tty.starts_with("tty")) {
-                return false; // マッチ失敗（拒否）
+            let is_cui_terminal = ctx.session_tty.starts_with("pts") || ctx.session_tty.starts_with("tty");
+            
+            if !is_cui_terminal {
+                // ここでログに「端末タイプ」を記録しておく
+                // 例: error!("Interactive TTY required, but got: {}", ctx.session_tty);
+                return false;   // マッチ失敗（拒否）
             }
         }
 

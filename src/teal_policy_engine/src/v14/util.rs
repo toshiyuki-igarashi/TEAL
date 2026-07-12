@@ -50,6 +50,14 @@ pub fn uid_to_name(uid: u32) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("UID not found: {}", uid))
 }
 
+/// "/dev/pts/1" や "pts/1" などの様々なTTY表記を "pts1" のような共通の短い形式に正規化する
+pub fn normalize_tty_name(tty: &str) -> String {
+    tty.replace("/dev/", "")   // "/dev/" プレフィックスを削除
+       .replace("/", "")       // スラッシュをすべて削除 ("pts/1" -> "pts1")
+       .trim()
+       .to_string()
+}
+
 /// カーネルの起動後の時間を文字列に変換
 pub fn ktime_prefix() -> String {
     // dmesg と合わせるなら MONOTONIC（起動後秒）

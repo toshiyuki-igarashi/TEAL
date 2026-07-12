@@ -12,6 +12,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use serde::Deserialize;
 
+use teal_policy_engine::util::normalize_tty_name;
+
 use crate::state::app_state; // AppStateへのアクセス用（※プロジェクトの構造に合わせてパスは調整してください）
 
 // 受信する JSON の構造体を定義
@@ -61,13 +63,15 @@ pub async fn start_pam_listener() {
                                 // アクションによる分岐（ログインとログアウト）
                                 match event.action.as_str() {
                                     "login" => {
-                                        st.slow.active_tty_sessions.insert(event.tty.clone(), event.user.clone());
-                                        println!("[teald-PAM] Registered session: user={} at {}", event.user, event.tty);
+                                        // PAMから来た形式 (例: "/dev/pts/1") を "pts1" に正規化して格納
+                                        let normalized_key = normalize_tty_name(&event.tty);
+                                        st.slow.active_tty_sessions.insert(normalized_key, event.user.clone());
+                                        println!("[teald-PAM] Registered session: user={} at {} (normalized)", event.user, event.tty);
                                     }
                                     "logout" => {
-                                        // ログアウト時は該当するTTYのセッション情報を削除する
-                                        st.slow.active_tty_sessions.remove(&event.tty);
-                                        println!("[teald-PAM] Removed session for TTY {}", event.tty);
+                                        let normalized_key = normalize_tty_name(&event.tty);
+                                        st.slow.active_tty_sessions.remove(&normalized_key);
+                                        println!("[teald-PAM] Removed session for TTY {} (normalized)", event.tty);
                                     }
                                     _ => {
                                         eprintln!("[WARN] teald-PAM: Unknown action '{}'", event.action);
