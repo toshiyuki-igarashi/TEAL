@@ -538,6 +538,7 @@ pub fn compile_policy_v14(
 
     let policy = CompiledPolicy {
         version: PolicyVersion::V1_4,
+        system_type: raw.system_type, 
         rules: compiled_rules,
         scope,
         pre_approval_defaults,

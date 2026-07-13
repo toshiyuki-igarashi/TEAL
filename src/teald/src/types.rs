@@ -17,7 +17,7 @@ use blst::min_pk::{Signature, AggregateSignature};
 
 use teal_policy_engine::ir::CompiledRule;
 use teal_policy_engine::util::{uid_to_name, normalize_tty_name, ktime_prefix};
-use teal_policy_engine::types::{Effect, RuleType};
+use teal_policy_engine::types::{Effect, SystemType, RuleType};
 
 use crate::evidence;
 use crate::state::app_state;
@@ -87,12 +87,13 @@ impl AppState {
     }
 
     /// 指定されたTTYとUIDが、PAMで認証済みの正規セッションか厳密に検証する
-    pub fn check_registered_session(&self, tty: &str, uid: u32) -> bool {
+    pub fn check_registered_session(&self, tty: &str, uid: u32, system_type: SystemType) -> bool {
+        // TTYが空、またはプレースホルダーの場合は未登録とみなす（バックグラウンドプロセス等）
         if tty.is_empty() || tty == "-" {
-            return false; // TTYが存在しない場合は未登録とみなす
+            return false; 
         }
 
-        // 1. TTY名の正規化（例: "/dev/pts/1" や "pts1" をすべて "pts1" に統一）
+        // 1. TTY名の正規化（例: "/dev/pts/1" -> "pts1", ":0" -> ":0"）
         let normalized_key = normalize_tty_name(tty);
 
         // 2. システム関数 (getpwuid) を使って、カーネルから来た UID をユーザー名に変換
@@ -100,13 +101,13 @@ impl AppState {
             Ok(name) => name,
             Err(e) => {
                 eprintln!("[WARN] teald-Auth: Failed to resolve UID {}: {}", uid, e);
-                return false; // UIDがシステム上で解決できない場合は不正プロセスとして拒否
+                return false; 
             }
         };
 
-        // 3. PAMがセッション開始時に登録したユーザー名と厳密に突き合わせる（ハイジャック防止）
+        // 3. PAMがセッション開始時に登録したユーザー名と突き合わせる
         if let Some(registered_user) = self.slow.active_tty_sessions.get(&normalized_key) {
-            // カーネルが証明する実行ユーザー名と、PAM認証を通過してその端末を開いた本人が一致するか検証
+            // 台帳に完全に一致する端末名（ptsX や :0 等）が見つかった場合は、UID（ユーザー名）を厳格に比較
             let is_valid = request_user == *registered_user;
             
             if !is_valid {
@@ -118,8 +119,22 @@ impl AppState {
             
             is_valid
         } else {
-            // そもそもPAMによるログインセッションが確立されていない端末からの要求
-            false
+            // 台帳に直接端末名が見つからなかった場合の処理を環境（SystemType）で分岐
+            match system_type {
+                SystemType::Server => {
+                    // サーバー環境では、すべての対話型操作が物理端末(tty)かSSH(pts)経由で必ずPAMを通るため、
+                    // 台帳に存在しない端末からの要求は一律で「バックドアや不正セッション」とみなして弾く (Fail-Safe)
+                    false
+                }
+                SystemType::Workstation => {
+                    // ワークステーション環境（GUI）の場合、PAMには ":0" が登録されるが、
+                    // 実行プロセスからは裏の仮想端末 "pts1" 等が降ってくるため、台帳の直接一致をすり抜ける。
+                    // そのため、ここでは一律拒否とせず暫定的に true (セッション自体は既知と仮定) を返し、
+                    // 最終的な適格性判定（starts_with(':')によるGUIの救済チェックなど）は
+                    // `match_subject` 側の `SystemType::Workstation` 評価層に委ねる
+                    true
+                }
+            }
         }
     }
 }

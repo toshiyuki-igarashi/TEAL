@@ -6,10 +6,10 @@
  */
 use std::path::Path;
 
-use crate::types::Action;
+use crate::types::{Action, SystemType};
 use crate::ir::{CompiledRule, AccessContext, SubjectMatcher, ObjectMatcher, ActionMatcher, PathMatcher, ObjectKind};
 
-pub fn rule_matches(rule: &CompiledRule, ctx: &AccessContext) -> bool {
+pub fn rule_matches(rule: &CompiledRule, ctx: &AccessContext, system_type: SystemType) -> bool {
     // .as_deref() を使うことで、Option<PathBuf> を Option<&Path> に変換できます
     if match_object(
         &rule.object, 
@@ -17,21 +17,25 @@ pub fn rule_matches(rule: &CompiledRule, ctx: &AccessContext) -> bool {
         ctx.object_new_path.as_deref(),
         ctx.object_kind
     ) && match_action(&rule.action_match, ctx.action) {
-        match_subject(&rule.subject, ctx)
+        match_subject(&rule.subject, ctx, system_type)
     } else {
         false
     }
 }
 
-pub fn match_subject(m: &SubjectMatcher, ctx: &AccessContext) -> bool {
-    // uid match
+pub fn match_subject(
+    m: &SubjectMatcher, 
+    ctx: &AccessContext, 
+    system_type: SystemType
+) -> bool {
+    // 1) uid match
     if let Some(rule_uid) = m.uid {
         if ctx.uid != rule_uid {
             return false;
         }
     }
 
-    // roles match (OR)
+    // 2) roles match (OR)
     if !m.required_roles.is_empty() {
         let ok = m.required_roles.iter().any(|r| ctx.subject_roles.contains(r));
         if !ok {
@@ -39,7 +43,7 @@ pub fn match_subject(m: &SubjectMatcher, ctx: &AccessContext) -> bool {
         }
     }
 
-    // origin_program match (exec path / interpreter)
+    // 3) origin_program match (exec path / interpreter)
     if let Some(rule_pm) = m.origin_program.as_ref() {
         let ctx_prog = match ctx.origin_program.as_ref() {
             Some(p) => p,
@@ -50,7 +54,7 @@ pub fn match_subject(m: &SubjectMatcher, ctx: &AccessContext) -> bool {
         }
     }
 
-    // origin_script match (shebang script)
+    // 4) origin_script match (shebang script)
     if let Some(rule_pm) = m.origin_script.as_ref() {
         let ctx_script = match ctx.origin_script.as_ref() {
             Some(p) => p,
@@ -61,7 +65,7 @@ pub fn match_subject(m: &SubjectMatcher, ctx: &AccessContext) -> bool {
         }
     }
 
-    // origin_applet match (argv[0] / task comm 相当)
+    // 5) origin_applet match (argv[0] / task comm 相当)
     if let Some(rule_applet) = m.origin_applet.as_ref() {
         let ctx_applet = match ctx.origin_applet.as_ref() {
             Some(a) => a,
@@ -72,16 +76,29 @@ pub fn match_subject(m: &SubjectMatcher, ctx: &AccessContext) -> bool {
         }
     }
 
-    // ログインコンテキストのチェック
+    // 6) ログインコンテキストのチェック
     if let Some(login_ctx) = &m.login_context {
 
         // 1. 対話型TTYが要求されている場合
         if login_ctx.require_interactive_tty {
+            // CUIの標準的な仮想端末（pts/X や ttyX）であるか
             let is_cui_terminal = ctx.session_tty.starts_with("pts") || ctx.session_tty.starts_with("tty");
             
-            if !is_cui_terminal {
-                // ここでログに「端末タイプ」を記録しておく
-                // 例: error!("Interactive TTY required, but got: {}", ctx.session_tty);
+            // system_type に応じて判定を切り替える
+            let is_allowed_terminal = match system_type {
+                SystemType::Server => {
+                    // Server は厳格モード: GUI由来（:0 等）は一律で拒否し、純粋なCUI端末のみ許可
+                    is_cui_terminal
+                }
+                SystemType::Workstation => {
+                    // Workstation は柔軟モード: CUIに加え、X11やWayland等のローカルGUIセッション（例: ":0", ":1"）も対話型とみなす
+                    is_cui_terminal || ctx.session_tty.starts_with(':')
+                }
+            };
+            
+            if !is_allowed_terminal {
+                // 必要に応じてログ出力を挟むとデバッグが容易になります
+                // error!("Interactive TTY required ({:?}), but got: '{}'", system_type, ctx.session_tty);
                 return false;   // マッチ失敗（拒否）
             }
         }

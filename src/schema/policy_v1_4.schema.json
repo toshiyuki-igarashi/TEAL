@@ -11,6 +11,11 @@
       "description": "Policy schema version. Updated to 1.4 for TTY/Login Context and Time Constraints.",
       "const": "1.4"
     },
+    "system_type": {
+      "type": "string",
+      "enum": ["workstation", "server"],
+      "description": "Defines the operating context for policy optimization and baseline enforcement."
+    },
     "default_effect": {
       "type": "string",
       "enum": ["allow", "deny", "need_approval", "audit_only"]

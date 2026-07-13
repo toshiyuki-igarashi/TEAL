@@ -13,7 +13,7 @@ pub fn evaluate<'a>(policy: &'a CompiledPolicy, ctx: &AccessContext) -> Decision
     }
 
     for r in &policy.rules {
-        if rule_matches(r, ctx) {
+        if rule_matches(r, ctx, policy.system_type) {
             return Decision::Matched(r);
         }
     }

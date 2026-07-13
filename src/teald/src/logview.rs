@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use teald::evidence::schema::{AuditLogEntry, AuthInfo, LogType};
-use teal_policy_engine::types::{Action, Effect, AuditLevel, RuleType};
+use teal_policy_engine::types::{Action, Effect, AuditLevel, SystemType, RuleType};
 use teal_policy_engine::raw::{RawPreApprovalDefaults, RawPolicyV14, RawRule, RawObject, RawSubject,
     RawTicketProfile, RawAction, RawLoginContext, RawPreApproval};
 
@@ -667,6 +667,7 @@ pub fn generate_profile_json(
     // 4. TEAL v1.4 スキーマ準拠の JSON オブジェクト出力
     let draft = RawPolicyV14 {
         version: "1.4".to_string(),
+        system_type: SystemType::Server, 
         default_effect: Some(Effect::Allow),
         default_reason: Some("No matching rule; default allow.".to_string()),
         ttl_minutes: 60,

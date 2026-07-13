@@ -8,6 +8,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::CompileError;
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemType {
+    Server,      // 厳格: 物理端末/SSHのみ、GUI不可
+    Workstation, // 柔軟: GUIセッションも対話型として許容
+}
+
+// default値を Server に設定
+impl Default for SystemType {
+    fn default() -> Self {
+        Self::Server
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleType {

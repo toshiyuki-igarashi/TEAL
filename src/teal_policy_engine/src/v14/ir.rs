@@ -10,14 +10,17 @@ use std::fmt;
 use anyhow::{Result, anyhow};
 use globset::Glob;
 
-use crate::types::{Effect, AuditLevel, Action, RuleType};
+use crate::types::{Effect, AuditLevel, Action, SystemType, RuleType};
 use crate::errors::CompileWarnings;
 use crate::raw::{RawPreApprovalDefaults, RawTicketProfile};
 
 #[derive(Debug)]
 pub struct CompiledPolicy {
-    /// ポリシーバージョン（Raw の "1.2" 文字列はここで enum 化）
+    /// ポリシーバージョン
     pub version: PolicyVersion,
+
+    /// ワークステーションならGUIも対話型として許容、サーバーならCUI端末のみ
+    pub system_type: SystemType,
 
     /// 評価対象となるルール群（priority 昇順などに並び替え済み）
     pub rules: Vec<CompiledRule>,
@@ -55,6 +58,14 @@ impl CompiledPolicy {
             return Err(anyhow!(
                 "policy version mismatch: base={:?} next={:?}",
                 self.version, next.version
+            ));
+        }
+
+        // system_type も一致必須（セキュリティ前提の衝突を防ぐ）
+        if self.system_type != next.system_type {
+            return Err(anyhow!(
+                "policy system_type mismatch: base={:?} next={:?} (cannot merge different operation contexts)",
+                self.system_type, next.system_type
             ));
         }
 
@@ -619,10 +630,11 @@ pub enum Decision<'a> {
 pub fn default_policy() -> CompiledPolicy {
     CompiledPolicy {
         version: PolicyVersion::V1_4,
+        system_type: SystemType::Server,
         rules: vec![],
         scope: ManagedScopeIndex::default(),
         default_effect: Effect::Deny,
-        default_reason: "Default policy".to_string(),
+        default_reason: "Default policy (Fail-Safe)".to_string(),
         pre_approval_defaults: CompiledPreApprovalDefaults::default(),
 
         // 安全なデフォルト値

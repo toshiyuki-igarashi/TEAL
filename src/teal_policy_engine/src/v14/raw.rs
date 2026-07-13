@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::util::deserialize_ops_uppercase;
-use crate::types::{RuleType, Effect, AuditLevel, Action};
+use crate::types::{SystemType, RuleType, Effect, AuditLevel, Action};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,6 +23,10 @@ pub struct RawBundleV1 {
 pub struct RawPolicyV14 {
     /// const "1.4"
     pub version: String,
+
+    // デフォルトで Server が適用されるよう設定
+    #[serde(default)]
+    pub system_type: SystemType,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_effect: Option<Effect>,
