@@ -1,5 +1,6 @@
 {
-  "version": "1.3",
+  "version": "1.4",
+  "system_type": "workstation",
   "default_effect": "allow",
   "default_reason": "No matching rule; default allow.",
   "ttl_minutes": 60,
@@ -10,8 +11,43 @@
   },
   "rules": [
     {
+      "id": "auto_allow_bash_ops_0",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "bash",
+        "login_context": {
+          "require_interactive_tty": true,
+          "bind_registered_session": true
+        }
+      },
+      "object": {
+        "path": "/usr/local/bin/teal-cli"
+      },
+      "action": {
+        "ops": [
+          "READ",
+          "EXECUTE"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
       "id": "auto_suppress_dash_8",
-      "reason": "Auto-generated suppress rule (count: 2934)",
+      "rule_type": "standard",
       "subject": {
         "origin_program": "/usr/bin/dash",
         "origin_applet": "Cache2 I/O"
@@ -27,15 +63,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 2934)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_pgrep_16",
-      "reason": "Auto-generated suppress rule (count: 391)",
+      "rule_type": "standard",
       "subject": {
         "user": "gdm",
         "origin_program": "/usr/bin/pgrep",
@@ -52,15 +89,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 391)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_python3.12_10",
-      "reason": "Auto-generated suppress rule (count: 342)",
+      "rule_type": "standard",
       "subject": {
         "origin_program": "/usr/bin/python3.12",
         "origin_applet": "apport"
@@ -76,15 +114,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 342)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_python3.12_1",
-      "reason": "Auto-generated suppress rule (count: 342)",
+      "rule_type": "standard",
       "subject": {
         "origin_program": "/usr/bin/python3.12",
         "origin_applet": "apport"
@@ -100,15 +139,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 342)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_python3.12_2",
-      "reason": "Auto-generated suppress rule (count: 354)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/bin/python3.12",
@@ -125,15 +165,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 354)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_python3.12_39",
-      "reason": "Auto-generated suppress rule (count: 121)",
+      "rule_type": "standard",
       "subject": {
         "origin_program": "/usr/bin/python3.12",
         "origin_applet": "apt-check"
@@ -149,15 +190,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 121)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_sudo_10",
-      "reason": "Auto-generated suppress rule (count: 102)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/bin/sudo",
@@ -174,15 +216,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 102)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_udevadm_35",
-      "reason": "Auto-generated suppress rule (count: 122)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/bin/udevadm",
@@ -199,15 +242,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 122)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_udevadm_9",
-      "reason": "Auto-generated suppress rule (count: 298)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/bin/udevadm",
@@ -224,15 +268,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 298)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_udevadm_15",
-      "reason": "Auto-generated suppress rule (count: 802)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/bin/udevadm",
@@ -249,15 +294,41 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 802)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_suppress_firefox_3",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/firefox/firefox"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
+      },
+      "action": {
+        "ops": [
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "silent",
+      "max_uses": 10000,
+      "reason": "Auto-generated suppress rule (count: 4496)",
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_firefox_2",
-      "reason": "Auto-generated suppress rule (count: 6916)",
+      "rule_type": "standard",
       "subject": {
         "origin_program": "/usr/lib/firefox/firefox",
         "origin_applet": "Cache2 I/O"
@@ -273,15 +344,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 6916)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_firefox_4",
-      "reason": "Auto-generated suppress rule (count: 178)",
+      "rule_type": "standard",
       "subject": {
         "origin_program": "/usr/lib/firefox/firefox",
         "origin_applet": "MemoryPoller"
@@ -297,69 +369,45 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 178)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_firefox_3",
-      "reason": "Auto-generated suppress rule (count: 4496)",
-      "subject": {
-        "user": "toshiyuki",
-        "origin_program": "/usr/lib/firefox/firefox",
-        "origin_applet": "glean.dispatche"
-      },
-      "object": {
-        "path": "/home/toshiyuki/.config/mozilla/firefox/zksbvil6.default-release/datareporting/glean/db/data.safe.tmp"
-      },
-      "action": {
-        "ops": [
-          "WRITE"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_ibus-engine-mozc_3",
       "rule_type": "subject_only",
-      "reason": "Auto-generated suppress rule (count: 165)",
       "subject": {
         "origin_program": "/usr/lib/ibus-mozc/ibus-engine-mozc",
         "origin_applet": "ibus-engine-moz"
       },
       "action": {
         "ops": [
-          "CONNECT"
+          "NET_CONNECT"
         ]
       },
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 165)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_ibus-engine-mozc_1",
-      "reason": "Auto-generated suppress rule (count: 1505)",
+      "rule_type": "standard",
       "subject": {
         "user": "toshiyuki",
         "origin_program": "/usr/lib/ibus-mozc/ibus-engine-mozc",
         "origin_applet": "ibus-engine-moz"
       },
       "object": {
-        "path": "/home/toshiyuki/.config/mozc/.renderer.:0.ipc"
+        "path": "prefix:/home/toshiyuki/.config/mozc"
       },
       "action": {
         "ops": [
@@ -369,15 +417,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 1505)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_polkitd_0",
-      "reason": "Auto-generated suppress rule (count: 1911)",
+      "rule_type": "standard",
       "subject": {
         "user": "polkitd",
         "origin_program": "/usr/lib/polkit-1/polkitd",
@@ -394,90 +443,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 1911)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_polkitd_31",
-      "reason": "Auto-generated suppress rule (count: 115)",
-      "subject": {
-        "user": "polkitd",
-        "origin_program": "/usr/lib/polkit-1/polkitd",
-        "origin_applet": "polkitd"
-      },
-      "object": {
-        "path": "/run/systemd/sessions/2"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_polkitd_5",
-      "reason": "Auto-generated suppress rule (count: 138)",
-      "subject": {
-        "user": "polkitd",
-        "origin_program": "/usr/lib/polkit-1/polkitd",
-        "origin_applet": "polkitd"
-      },
-      "object": {
-        "path": "/run/systemd/sessions/c2"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_polkitd_23",
-      "reason": "Auto-generated suppress rule (count: 117)",
-      "subject": {
-        "user": "polkitd",
-        "origin_program": "/usr/lib/polkit-1/polkitd",
-        "origin_applet": "polkitd"
-      },
-      "object": {
-        "path": "/run/systemd/users/1000"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_polkitd_28",
-      "reason": "Auto-generated suppress rule (count: 250)",
+      "rule_type": "standard",
       "subject": {
         "user": "polkitd",
         "origin_program": "/usr/lib/polkit-1/polkitd",
@@ -494,15 +469,68 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 250)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_suppress_polkitd_31",
+      "rule_type": "standard",
+      "subject": {
+        "user": "polkitd",
+        "origin_program": "/usr/lib/polkit-1/polkitd",
+        "origin_applet": "polkitd"
+      },
+      "object": {
+        "path": "prefix:/run/systemd/sessions"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "silent",
+      "max_uses": 10000,
+      "reason": "Auto-generated suppress rule (count: 115)",
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_suppress_polkitd_23",
+      "rule_type": "standard",
+      "subject": {
+        "user": "polkitd",
+        "origin_program": "/usr/lib/polkit-1/polkitd",
+        "origin_applet": "polkitd"
+      },
+      "object": {
+        "path": "prefix:/run/systemd/users"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "silent",
+      "max_uses": 10000,
+      "reason": "Auto-generated suppress rule (count: 117)",
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_25",
-      "reason": "Auto-generated suppress rule (count: 339)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd",
@@ -519,21 +547,22 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 339)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_4",
-      "reason": "Auto-generated suppress rule (count: 339)",
+      "rule_type": "standard",
       "subject": {
         "origin_program": "/usr/lib/systemd/systemd",
         "origin_applet": "(sd-power)"
       },
       "object": {
-        "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/session.slice/org.gnome.SettingsDaemon.Power.service/cgroup.procs"
+        "path": "prefix:/sys/fs/cgroup/user.slice"
       },
       "action": {
         "ops": [
@@ -543,15 +572,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 339)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_7",
-      "reason": "Auto-generated suppress rule (count: 1115)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd",
@@ -568,39 +598,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 1115)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_systemd_26",
-      "reason": "Auto-generated suppress rule (count: 186)",
-      "subject": {
-        "origin_program": "/usr/lib/systemd/systemd",
-        "origin_applet": "systemd"
-      },
-      "object": {
-        "path": "/run/udev/data/b7:0"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_41",
-      "reason": "Auto-generated suppress rule (count: 186)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd",
@@ -617,190 +624,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 186)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_systemd_36",
-      "reason": "Auto-generated suppress rule (count: 1344)",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/lib/systemd/systemd",
-        "origin_applet": "systemd"
-      },
-      "object": {
-        "path": "/sys/fs/cgroup/system.slice/systemd-hostnamed.service"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_systemd_0",
-      "reason": "Auto-generated suppress rule (count: 353)",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/lib/systemd/systemd",
-        "origin_applet": "systemd"
-      },
-      "object": {
-        "path": "/sys/fs/cgroup/system.slice/systemd-hostnamed.service/cgroup.events"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_systemd_22",
-      "reason": "Auto-generated suppress rule (count: 341)",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/lib/systemd/systemd",
-        "origin_applet": "systemd"
-      },
-      "object": {
-        "path": "/sys/fs/cgroup/system.slice/systemd-hostnamed.service/cgroup.procs"
-      },
-      "action": {
-        "ops": [
-          "WRITE"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_systemd_5",
-      "reason": "Auto-generated suppress rule (count: 341)",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/lib/systemd/systemd",
-        "origin_applet": "systemd"
-      },
-      "object": {
-        "path": "/sys/fs/cgroup/system.slice/systemd-hostnamed.service/cgroup.subtree_control"
-      },
-      "action": {
-        "ops": [
-          "WRITE"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_systemd_34",
-      "reason": "Auto-generated suppress rule (count: 336)",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/lib/systemd/systemd",
-        "origin_applet": "systemd"
-      },
-      "object": {
-        "path": "/sys/fs/cgroup/system.slice/systemd-hostnamed.service/cgroup.threads"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_systemd_19",
-      "reason": "Auto-generated suppress rule (count: 347)",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/lib/systemd/systemd",
-        "origin_applet": "systemd"
-      },
-      "object": {
-        "path": "/sys/fs/cgroup/system.slice/systemd-hostnamed.service/cpu.stat"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_systemd_40",
-      "reason": "Auto-generated suppress rule (count: 341)",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/lib/systemd/systemd",
-        "origin_applet": "systemd"
-      },
-      "object": {
-        "path": "/sys/fs/cgroup/system.slice/systemd-hostnamed.service/pids.max"
-      },
-      "action": {
-        "ops": [
-          "WRITE"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_20",
-      "reason": "Auto-generated suppress rule (count: 20303)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd",
@@ -817,15 +650,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 20303)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_17",
-      "reason": "Auto-generated suppress rule (count: 4892)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd",
@@ -842,15 +676,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 4892)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_13",
-      "reason": "Auto-generated suppress rule (count: 3391)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd",
@@ -867,15 +702,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 3391)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_24",
-      "reason": "Auto-generated suppress rule (count: 3743)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd",
@@ -892,15 +728,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 3743)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_32",
-      "reason": "Auto-generated suppress rule (count: 3390)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd",
@@ -917,15 +754,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 3390)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_8",
-      "reason": "Auto-generated suppress rule (count: 6776)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd",
@@ -942,15 +780,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 6776)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_6",
-      "reason": "Auto-generated suppress rule (count: 4228)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd",
@@ -967,15 +806,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 4228)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_11",
-      "reason": "Auto-generated suppress rule (count: 3390)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd",
@@ -992,63 +832,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 3390)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_systemd_3",
-      "reason": "Auto-generated suppress rule (count: 2048)",
-      "subject": {
-        "origin_program": "/usr/lib/systemd/systemd",
-        "origin_applet": "systemd"
-      },
-      "object": {
-        "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/session.slice/org.gnome.SettingsDaemon.Power.service"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_systemd_30",
-      "reason": "Auto-generated suppress rule (count: 400)",
-      "subject": {
-        "origin_program": "/usr/lib/systemd/systemd",
-        "origin_applet": "systemd"
-      },
-      "object": {
-        "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/session.slice/org.gnome.SettingsDaemon.Power.service/cgroup.events"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_9",
-      "reason": "Auto-generated suppress rule (count: 352)",
+      "rule_type": "standard",
       "subject": {
         "origin_program": "/usr/lib/systemd/systemd",
         "origin_applet": "systemd"
@@ -1064,15 +857,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 352)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_38",
-      "reason": "Auto-generated suppress rule (count: 341)",
+      "rule_type": "standard",
       "subject": {
         "origin_program": "/usr/lib/systemd/systemd",
         "origin_applet": "systemd"
@@ -1088,63 +882,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 341)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_systemd_14",
-      "reason": "Auto-generated suppress rule (count: 680)",
-      "subject": {
-        "origin_program": "/usr/lib/systemd/systemd",
-        "origin_applet": "systemd"
-      },
-      "object": {
-        "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/session.slice/org.gnome.SettingsDaemon.Power.service/cgroup.threads"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
-      }
-    },
-    {
-      "id": "auto_suppress_systemd_21",
-      "reason": "Auto-generated suppress rule (count: 353)",
-      "subject": {
-        "origin_program": "/usr/lib/systemd/systemd",
-        "origin_applet": "systemd"
-      },
-      "object": {
-        "path": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/session.slice/org.gnome.SettingsDaemon.Power.service/cpu.stat"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "ttl_sec": 86400,
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_12",
-      "reason": "Auto-generated suppress rule (count: 342)",
+      "rule_type": "standard",
       "subject": {
         "origin_program": "/usr/lib/systemd/systemd",
         "origin_applet": "systemd"
@@ -1160,15 +907,16 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 342)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_29",
-      "reason": "Auto-generated suppress rule (count: 103)",
+      "rule_type": "standard",
       "subject": {
         "origin_program": "/usr/lib/systemd/systemd",
         "origin_applet": "systemd"
@@ -1184,15 +932,93 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 103)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_suppress_systemd_26",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd"
+      },
+      "object": {
+        "path": "prefix:/run/udev/data"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "silent",
+      "max_uses": 10000,
+      "reason": "Auto-generated suppress rule (count: 186)",
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_suppress_systemd_0",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd"
+      },
+      "object": {
+        "path": "prefix:/sys/fs/cgroup/system.slice/systemd-hostnamed.service"
+      },
+      "action": {
+        "ops": [
+          "READ",
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "silent",
+      "max_uses": 10000,
+      "reason": "Auto-generated suppress rule (count: 353)",
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_suppress_systemd_3",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "systemd"
+      },
+      "object": {
+        "path": "prefix:/sys/fs/cgroup/user.slice"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "silent",
+      "max_uses": 10000,
+      "reason": "Auto-generated suppress rule (count: 2048)",
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     },
     {
       "id": "auto_suppress_systemd_27",
-      "reason": "Auto-generated suppress rule (count: 335)",
+      "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd",
@@ -1209,10 +1035,11 @@
       "effect": "allow",
       "audit_level": "silent",
       "max_uses": 10000,
-      "ttl_sec": 86400,
+      "reason": "Auto-generated suppress rule (count: 335)",
       "ticket_profile": {
         "silent_io": true,
-        "inherit": true
+        "inherit": true,
+        "allow_nameless_ipc": false
       }
     }
   ]
