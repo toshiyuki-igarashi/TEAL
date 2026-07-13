@@ -1423,8 +1423,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
+name = "pam-sys"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd4858311a097f01a0006ef7d0cd50bca81ec430c949d7bf95cbefd202282434"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "pam_teal"
 version = "0.1.0"
+dependencies = [
+ "pam-sys",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "parking_lot"

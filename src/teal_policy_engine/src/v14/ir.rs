@@ -610,13 +610,17 @@ pub struct AccessContext {
     pub object_path: PathBuf,               // Source Path
     pub object_new_path: Option<PathBuf>,   // Destination Path (RENAME時のみ使用)
     pub object_kind: Option<ObjectKind>,
+    pub session_tty: String,                // カーネルから来た生のTTY文字列 (例: "pts/0")
+    pub registered_session: Option<RegisteredSession>,
+}
 
-    // カーネルから来た生のTTY文字列 (例: "pts/0", "" など)
-    pub session_tty: String,
-
-    // この(UID, TTY)の組み合わせが、PAMの正規ログインとして
-    // 現在 AppState に登録されているかどうかのフラグ
-    pub is_registered_session: bool, 
+/// tealdのAppState内でユーザーセッションのファクト（事実）を保持する構造体
+#[derive(Debug, Clone)]
+pub struct RegisteredSession {
+    pub user: String,
+    pub source_ip: Option<String>,
+    pub auth_method: Option<String>,
+    // 将来的に login_time: chrono::DateTime<Utc> などを生やす拡張も容易です
 }
 
 /// v1.2の evaluate() は「一致したルール」を返せば最も楽（互換が簡単）

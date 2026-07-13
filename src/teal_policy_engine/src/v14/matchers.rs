@@ -7,7 +7,9 @@
 use std::path::Path;
 
 use crate::types::{Action, SystemType};
-use crate::ir::{CompiledRule, AccessContext, SubjectMatcher, ObjectMatcher, ActionMatcher, PathMatcher, ObjectKind};
+use crate::ir::{ CompiledRule, AccessContext, SubjectMatcher, LoginContextMatcher,
+    ObjectMatcher, ActionMatcher, PathMatcher, ObjectKind
+};
 
 pub fn rule_matches(rule: &CompiledRule, ctx: &AccessContext, system_type: SystemType) -> bool {
     // .as_deref() を使うことで、Option<PathBuf> を Option<&Path> に変換できます
@@ -37,13 +39,12 @@ pub fn match_subject(
 
     // 2) roles match (OR)
     if !m.required_roles.is_empty() {
-        let ok = m.required_roles.iter().any(|r| ctx.subject_roles.contains(r));
-        if !ok {
+        if !m.required_roles.iter().any(|r| ctx.subject_roles.contains(r)) {
             return false;
         }
     }
 
-    // 3) origin_program match (exec path / interpreter)
+    // 3) origin_program match
     if let Some(rule_pm) = m.origin_program.as_ref() {
         let ctx_prog = match ctx.origin_program.as_ref() {
             Some(p) => p,
@@ -54,7 +55,7 @@ pub fn match_subject(
         }
     }
 
-    // 4) origin_script match (shebang script)
+    // 4) origin_script match
     if let Some(rule_pm) = m.origin_script.as_ref() {
         let ctx_script = match ctx.origin_script.as_ref() {
             Some(p) => p,
@@ -65,7 +66,7 @@ pub fn match_subject(
         }
     }
 
-    // 5) origin_applet match (argv[0] / task comm 相当)
+    // 5) origin_applet match
     if let Some(rule_applet) = m.origin_applet.as_ref() {
         let ctx_applet = match ctx.origin_applet.as_ref() {
             Some(a) => a,
@@ -76,42 +77,87 @@ pub fn match_subject(
         }
     }
 
-    // 6) ログインコンテキストのチェック
+    // 6) ログインコンテキストのチェック (別関数に委譲)
     if let Some(login_ctx) = &m.login_context {
-
-        // 1. 対話型TTYが要求されている場合
-        if login_ctx.require_interactive_tty {
-            // CUIの標準的な仮想端末（pts/X や ttyX）であるか
-            let is_cui_terminal = ctx.session_tty.starts_with("pts") || ctx.session_tty.starts_with("tty");
-            
-            // system_type に応じて判定を切り替える
-            let is_allowed_terminal = match system_type {
-                SystemType::Server => {
-                    // Server は厳格モード: GUI由来（:0 等）は一律で拒否し、純粋なCUI端末のみ許可
-                    is_cui_terminal
-                }
-                SystemType::Workstation => {
-                    // Workstation は柔軟モード: CUIに加え、X11やWayland等のローカルGUIセッション（例: ":0", ":1"）も対話型とみなす
-                    is_cui_terminal || ctx.session_tty.starts_with(':')
-                }
-            };
-            
-            if !is_allowed_terminal {
-                // 必要に応じてログ出力を挟むとデバッグが容易になります
-                // error!("Interactive TTY required ({:?}), but got: '{}'", system_type, ctx.session_tty);
-                return false;   // マッチ失敗（拒否）
-            }
+        if !match_login_context(login_ctx, ctx, system_type) {
+            return false;
         }
+    }
 
-        // 2. 正規のPAMログインセッションとの紐づけが要求されている場合
-        if login_ctx.bind_registered_session {
-            // AppState側で未登録と判定されていればDeny
-            if !ctx.is_registered_session {
-                return false; // マッチ失敗（不正なバックドアセッションとして拒否）
+    true
+}
+
+/// PAMセッションと実行時TTYに基づく高度な環境コンテキスト評価を行う
+fn match_login_context(
+    login_ctx: &LoginContextMatcher, 
+    ctx: &AccessContext, 
+    system_type: SystemType
+) -> bool {
+    // --- 1. 対話型TTY要求の評価 ---
+    if login_ctx.require_interactive_tty {
+        let is_cui_terminal = ctx.session_tty.starts_with("pts") || ctx.session_tty.starts_with("tty");
+        
+        let is_allowed_terminal = match system_type {
+            SystemType::Server => is_cui_terminal,
+            SystemType::Workstation => is_cui_terminal || ctx.session_tty.starts_with(':'),
+        };
+        
+        if !is_allowed_terminal {
+            return false;
+        }
+    }
+
+    // --- 2. PAMセッション紐付け（ファクト検証）の評価 ---
+    if login_ctx.bind_registered_session {
+        match &ctx.registered_session {
+            // 【A】PAM台帳に完全一致するセッションが存在する場合
+            Some(session) => {
+                // a) 認証方式の厳格照合
+                if let Some(required_auth) = &login_ctx.auth_method {
+                    if session.auth_method.as_ref() != Some(required_auth) {
+                        return false; 
+                    }
+                }
+
+                // b) 接続元IPのCIDR範囲チェック
+                if let Some(network) = &login_ctx.source_ip_network {
+                    let ip_str = match &session.source_ip {
+                        Some(ip) => ip,
+                        None => return false, // ポリシーはIP制限を求めているが、セッションがローカル(None)のため拒否
+                    };
+
+                    // IPパースとCIDR包含判定
+                    if let Ok(ip_addr) = ip_str.parse::<std::net::IpAddr>() {
+                        if !network.contains(ip_addr) {
+                            return false; // 範囲外
+                        }
+                    } else {
+                        return false; // IPパースエラー
+                    }
+                }
+            }
+            
+            // 【B】PAM台帳に直接の一致が見つからなかった場合
+            None => {
+                match system_type {
+                    SystemType::Server => {
+                        // サーバー環境では言い訳無用で即座に拒否 (Fail-Safe)
+                        return false;
+                    }
+                    SystemType::Workstation => {
+                        // ワークステーション環境におけるGUI由来プロセスの遅延救済
+                        // IPや認証方式のファクト要求がある場合は、データがないため安全側に倒して拒否する
+                        if login_ctx.auth_method.is_some() || login_ctx.source_ip_network.is_some() {
+                            return false; 
+                        }
+                        // 要求が単なる bind_registered_session だけであれば、GUIセッションとして救済（trueを返す）
+                    }
+                }
             }
         }
     }
 
+    // すべてのチェックを通過した
     true
 }
 

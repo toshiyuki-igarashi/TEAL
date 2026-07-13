@@ -15,9 +15,9 @@ use uuid::Uuid;
 use hex;
 use blst::min_pk::{Signature, AggregateSignature};
 
-use teal_policy_engine::ir::CompiledRule;
+use teal_policy_engine::ir::{CompiledRule, RegisteredSession};
 use teal_policy_engine::util::{uid_to_name, normalize_tty_name, ktime_prefix};
-use teal_policy_engine::types::{Effect, SystemType, RuleType};
+use teal_policy_engine::types::{Effect, RuleType};
 
 use crate::evidence;
 use crate::state::app_state;
@@ -86,56 +86,32 @@ impl AppState {
         next
     }
 
-    /// 指定されたTTYとUIDが、PAMで認証済みの正規セッションか厳密に検証する
-    pub fn check_registered_session(&self, tty: &str, uid: u32, system_type: SystemType) -> bool {
+    /// 指定されたTTYとUIDが、PAMで認証済みの正規セッションか厳密に検証し、成功すればセッション情報を返す
+    pub fn check_registered_session(&self, tty: &str, uid: u32) -> Option<RegisteredSession> {
         // TTYが空、またはプレースホルダーの場合は未登録とみなす（バックグラウンドプロセス等）
-        if tty.is_empty() || tty == "-" {
-            return false; 
+        if tty.is_empty() || tty == "-" { 
+            return None; 
         }
-
-        // 1. TTY名の正規化（例: "/dev/pts/1" -> "pts1", ":0" -> ":0"）
+        
+        // 1. TTY名の正規化（例: "/dev/pts/1" -> "pts1"）
         let normalized_key = normalize_tty_name(tty);
 
         // 2. システム関数 (getpwuid) を使って、カーネルから来た UID をユーザー名に変換
-        let request_user = match uid_to_name(uid) {
-            Ok(name) => name,
-            Err(e) => {
-                eprintln!("[WARN] teald-Auth: Failed to resolve UID {}: {}", uid, e);
-                return false; 
-            }
-        };
+        let request_user = uid_to_name(uid).ok()?;
 
-        // 3. PAMがセッション開始時に登録したユーザー名と突き合わせる
-        if let Some(registered_user) = self.slow.active_tty_sessions.get(&normalized_key) {
-            // 台帳に完全に一致する端末名（ptsX や :0 等）が見つかった場合は、UID（ユーザー名）を厳格に比較
-            let is_valid = request_user == *registered_user;
-            
-            if !is_valid {
+        // 3. 登録されたセッション情報を取得して厳密に突き合わせる（ハイジャック防止）
+        if let Some(session) = self.slow.active_tty_sessions.get(&normalized_key) {
+            if request_user == session.user {
+                // 検証成功！セッション情報を丸ごと呼び出し元へ返却
+                return Some(session.clone());
+            } else {
                 eprintln!(
                     "[SECURITY ALERT] TTY Hijack detected! Process (UID={}, User='{}') tried to use TTY {} which belongs to Registered User '{}'",
-                    uid, request_user, normalized_key, registered_user
+                    uid, request_user, normalized_key, session.user
                 );
             }
-            
-            is_valid
-        } else {
-            // 台帳に直接端末名が見つからなかった場合の処理を環境（SystemType）で分岐
-            match system_type {
-                SystemType::Server => {
-                    // サーバー環境では、すべての対話型操作が物理端末(tty)かSSH(pts)経由で必ずPAMを通るため、
-                    // 台帳に存在しない端末からの要求は一律で「バックドアや不正セッション」とみなして弾く (Fail-Safe)
-                    false
-                }
-                SystemType::Workstation => {
-                    // ワークステーション環境（GUI）の場合、PAMには ":0" が登録されるが、
-                    // 実行プロセスからは裏の仮想端末 "pts1" 等が降ってくるため、台帳の直接一致をすり抜ける。
-                    // そのため、ここでは一律拒否とせず暫定的に true (セッション自体は既知と仮定) を返し、
-                    // 最終的な適格性判定（starts_with(':')によるGUIの救済チェックなど）は
-                    // `match_subject` 側の `SystemType::Workstation` 評価層に委ねる
-                    true
-                }
-            }
         }
+        None
     }
 }
 
@@ -163,11 +139,12 @@ pub struct SlowState {
     pub pending_start: Option<MgmtPendingStart>,
     pub pending_stop: Option<MgmtPendingStop>,
 
-    // PAMから通知されたアクティブなログインセッション
-    // キー: TTY名 (例: "pts/1")
-    // 値: ログインしたユーザー名 (例: "alice")
-    pub active_tty_sessions: HashMap<String, String>, 
+    // PAMから通知されたアクティブなログインセッション（拡充版）
+    // キー: 正規化されたTTY名 (例: "pts1")
+    // 値: セッションの詳細情報（ユーザー名、IP、認証方式など）
+    pub active_tty_sessions: HashMap<String, RegisteredSession>,
 }
+
 
 #[derive(Debug)]
 pub struct TealDeviceState {
