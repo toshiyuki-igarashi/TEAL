@@ -22,8 +22,9 @@ TEAL is implemented as an experimental Linux Security Module (LSM) integrated in
 * Kernel source: Linux 6.8.12
 * Rust: version required by `scripts/min-tool-version.sh rustc` for the selected kernel
 * LLVM/Clang: LLVM 17 / Clang 17
+* SSH Server: OpenSSH Server (strongly recommended for remote administration, testing, and system recovery)
 * Required packages:
-  `build-essential`, `bc`, `bison`, `flex`, `libssl-dev`, `libelf-dev`, `dwarves`, `clang-17`, `llvm-17`, `lld-17`, `rustup`, `curl`, `wget`, `git`
+  `build-essential`, `bc`, `bison`, `flex`, `libssl-dev`, `libelf-dev`, `dwarves`, `clang-17`, `llvm-17`, `lld-17`, `rustup`, `curl`, `wget`, `git`, `openssh-server`
 
 ### 2 Installation
 
@@ -305,11 +306,22 @@ EOF
 # 5. Enable TEAL PAM Module for System-Wide Session Tracking
 # This hooks TEAL into sshd, login, and sudo
 # Ensure we don't append it multiple times
+
+# --- A. common-session (セッション管理) の設定 ---
 if ! grep -q "pam_teal.so" /etc/pam.d/common-session; then
   echo "session optional pam_teal.so" | sudo tee -a /etc/pam.d/common-session >/dev/null
   echo "TEAL PAM module enabled in /etc/pam.d/common-session"
 else
   echo "TEAL PAM module already configured in /etc/pam.d/common-session"
+fi
+
+# --- B. common-auth (認証管理) の設定 ---
+# 独立した if 文に分けることで、common-session だけが設定済みの既存環境でも確実に追記されます
+if ! grep -q "pam_teal.so" /etc/pam.d/common-auth; then
+  echo "auth optional pam_teal.so" | sudo tee -a /etc/pam.d/common-auth >/dev/null
+  echo "TEAL PAM module enabled in /etc/pam.d/common-auth"
+else
+  echo "TEAL PAM module already configured in /etc/pam.d/common-auth"
 fi
 ```
 

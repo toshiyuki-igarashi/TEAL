@@ -179,6 +179,14 @@ sudo teal-cli stop
 
 TEAL uses a declarative JSON format inside `/etc/teal.d/policies/` to map out runtime access governance rules.
 
+### Core Policy Parameters and System Types
+
+| Parameter | Type | Allowed Values | Description |
+| --- | --- | --- | --- |
+| `version` | String | `"1.4"` (or compatible) | The policy format schema version. |
+| `system_type` | String | `"server"`, `"workstation"` | Classifies the environment to enforce context-aware login route boundaries. See details below. |
+| `default_effect` | String | `"allow"`, `"deny"`, `"need_approval"`, `"audit_only"` | Fallback enforcement action if no rule matches. |
+
 ### Key JSON Rule Attributes and Pragmatic Optimizations
 
 | Parameter | Type | Allowed Values | Description |
@@ -187,6 +195,33 @@ TEAL uses a declarative JSON format inside `/etc/teal.d/policies/` to map out ru
 | `effect` | String | `"allow"`, `"deny"`, `"need_approval"`, `"audit_only"` | Action enforcement effect. |
 | `ticket_profile.inherit` | Boolean | `true`, `false` | When set to `true`, authorization context propagates to child processes. Crucial for heavy workflows (e.g., `make -j`). |
 | `ticket_profile.silent_io` | Boolean | `true`, `false` | When `true`, suppresses redundant I/O logging for temporary/nameless files to maximize performance. |
+
+---
+
+### Deep Dive: Login Context Enforcement by `system_type`
+
+To prevent privilege escalation and block stealthy lateral movement, TEAL strictly inspects the structural origin of each login session (the `login_context` block inside the subject profile). 
+
+This behavioral gating is dynamically controlled at the schema level by two critical boolean constraints inside the policy rules:
+* `require_interactive_tty: true` — Ensures the process is strictly attached to an active, interactive terminal plane, entirely neutralizing legacy detached or headless execution vectors (e.g., hidden backdoors, unauthorized web-consoles).
+* `bind_registered_session: true` — Binds process execution authorization directly to a verified, cryptographically registered session token authenticated during the primary entry point handshake.
+
+When a controlled administrative or critical operation is triggered, the engine evaluates these criteria based on the active `system_type`:
+
+1. **`server` Mode**
+   Restricts administrative operations strictly to head-end or secured command-line environments. Authorized sessions must satisfy:
+   * **Physical Console**: Direct physical tty access on the machine.
+   * **OpenSSH Session**: Remote connections via OpenSSH Server where `auth_method` evaluates to trusted paths (`publickey`, `fido2`, etc.), enforcing `require_interactive_tty` and `bind_registered_session` to drop background injection attempts.
+
+2. **`workstation` Mode**
+   Enables a flexible local workstation layout designed for administrators managing systems with a graphical interface. Authorized sessions include:
+   * **Physical Console** & **OpenSSH Session** (Evaluated under the same strict terminal/session binding as server mode).
+   * **X11 / Wayland Virtual Terminals**: Interactive GUI terminal emulators spawning within a legitimately authorized desktop environment session.
+
+> ⚠️ **Security Warning (Strict Rejection)**
+> Any operation triggered from unmapped or unauthorized login channels (e.g., telnet sessions, automated legacy background tasks, or nested unverified pseudo-terminals) will be **strictly rejected** by default, as they fail to fulfill the mandatory `require_interactive_tty` or session-binding checks.
+> 
+> *Future Roadmaps:* This sub-attributes layout within the `login_context` schema is explicitly designed for high extensibility. Upcoming releases will natively expand the `auth_method` enum and integrate deeper validation pathways.
 
 ---
 
