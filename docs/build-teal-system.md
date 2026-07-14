@@ -180,7 +180,7 @@ sudo install -o root -g root -m 0755 target/release/teal-bench /usr/local/bin/
 
 Before starting the daemon, the required configuration paths and fixed skeleton files must exist to prevent the core parser from failing on startup.
 
-> **NOTICE:** The following configuration files deploy a pragmatic reference scenario where the root user (`admin`) can control execution states, but engine termination (`stop`) mandates Multi-Party Authorization (MPA) from a Security Officer. **Please adjust these logic structure values according to your specific target deployment system environment and organizational controls.** All generated skeletons strictly conform to TEAL v1.0 and v1.3 strict validation schemas.
+> **NOTICE:** The following configuration files deploy a pragmatic reference scenario where the root user (`admin`) can control execution states, but engine termination (`stop`) mandates Multi-Party Authorization (MPA) from a Security Officer. **Please adjust these logic structure values according to your specific target deployment system environment and organizational controls.** All generated skeletons strictly conform to TEAL v1.0 and v1.4 strict validation schemas.
 
 ```bash
 # Create the structural hierarchy
@@ -269,12 +269,16 @@ EOF
 # 4. Deploy Base Policy Rule Example (Conforms to policy_v1_3.schema.json)
 sudo tee /etc/teal.d/policies/00-base.json >/dev/null <<'EOF'
 {
-  "version": "1.3",
+  "version": "1.4",
+  "system_type": "workstation",
   "default_effect": "allow",
   "default_reason": "No matching rule; default allow.",
   "ttl_minutes": 10,
   "sweep_minutes": 5,
-  "pre_approval_defaults": { "ttl_sec_default": 600, "ttl_sec_max": 900 },
+  "pre_approval_defaults": { 
+    "ttl_sec_default": 600, 
+    "ttl_sec_max": 900 
+  },
   "rules": [
     {
       "id": "protect-etc-shadow",
@@ -285,11 +289,13 @@ sudo tee /etc/teal.d/policies/00-base.json >/dev/null <<'EOF'
         "path": "/etc/shadow"
       },
       "action": {
-        "ops": ["read"]
+        "ops": ["READ"]
       },
       "effect": "need_approval",
-      "required_roles": ["security_officer"],
-      "threshold": 1,
+      "mpa": {
+        "threshold": 1,
+        "approver_roles": ["security_officer"]
+      },
       "reason": "Reading /etc/shadow requires explicit approval."
     }
   ]
@@ -316,7 +322,7 @@ TEAL processes rules using a structured, multi-layered directory design. Except 
 ├── bundle.json          # FIXED: Top-level entrypoint mapping active policy targets [schema v1.0]
 ├── management.json      # FIXED: Management Governance Policy (Governs teal-cli start/stop & MPA)
 ├── policies/            # FIXED: Target storage directory for granular policy rules
-│   └── 00-base.json     # DYNAMIC: Arbitrary policy file specified inside bundle.json array [schema v1.3]
+│   └── 00-base.json     # DYNAMIC: Arbitrary policy file specified inside bundle.json array [schema v1.4]
 └── roles/               # FIXED: Target storage directory for system user roles mapping
     └── roles.json       # FIXED: Standard role assignments registry file [schema v1.0]
 ```
