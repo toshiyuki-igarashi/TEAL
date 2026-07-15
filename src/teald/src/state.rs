@@ -10,7 +10,7 @@ use std::sync::{Arc, OnceLock}; // ArcとOnceLockはstdでOK
 use std::collections::HashMap;
 use crate::types::{AppState, FastState, SlowState, TealDeviceState}; // types.rsを参照
 
-static APP_STATE: OnceLock<Arc<Mutex<AppState>>> = OnceLock::new();
+pub static APP_STATE: OnceLock<Arc<Mutex<AppState>>> = OnceLock::new();
 
 pub fn set_app_state(state: Arc<Mutex<AppState>>) {
     APP_STATE.set(state).expect("APP_STATE already initialized");
@@ -35,6 +35,7 @@ pub async fn init_state() {
                 registered_keys: HashMap::new(),
                 pending_start: None,
                 pending_stop: None,
+                active_tty_sessions: HashMap::new(),
             },
             dev: TealDeviceState {
                 dev_teal_path: String::from("netlink:teal_ctrl"),

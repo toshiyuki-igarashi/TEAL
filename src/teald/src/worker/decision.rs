@@ -77,6 +77,7 @@ pub async fn decision_worker_loop(
             args_head: normalize_opt_field(&nl_req.args_head),
             flag: nl_req.flags,
             is_audit: false, // ルーティング時点で ENFORCE であることが確定している
+            session_tty: nl_req.session_tty.clone(),
         };
 
         let mut state = app_state().lock().await;
@@ -109,7 +110,9 @@ pub async fn decision_worker_loop(
 
 pub fn evaluate_policy(req: &Request, state: &mut AppState) -> PolicyResult {
     let compiled = bundle();
-    let ctx = request_to_ctx(&req, &compiled.roles);
+    // PAMのデータと突き合わせる
+    let session_info = state.check_registered_session(&req.session_tty, req.uid);
+    let ctx = request_to_ctx(&req, &compiled.roles, session_info);
 
     match evaluate(&compiled.policy, &ctx) {
         // ---------------------------------------------------------
@@ -170,7 +173,7 @@ pub fn evaluate_policy(req: &Request, state: &mut AppState) -> PolicyResult {
 
             let mut ticket_payload = None;
 
-            if decision_kind == PolicyDecision::Allow && r.ttl_sec > 0 {
+            if decision_kind == PolicyDecision::Allow && r.pre_approval.ttl_sec > 0 {
                 // 仕様書 5.1.2 準拠: T-XXXXXX 形式のID生成
                 let ticket_seq = state.generate_next_ticket_seq(); // (内部カウンターで生成)
                 let formatted_id = format!("T-{:09}", ticket_seq);
@@ -188,7 +191,7 @@ pub fn evaluate_policy(req: &Request, state: &mut AppState) -> PolicyResult {
                     target_ino: req.target_ino,
                     new_target_dev: req.new_target_dev,
                     new_target_ino: req.new_target_ino,
-                    expires_in_sec: r.ttl_sec,
+                    expires_in_sec: r.pre_approval.ttl_sec,
                     flags: r.ticket_profile.flags,
                     uses_left: r.max_uses,
                     epoch: state.current_epoch,

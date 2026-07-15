@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use crate::types::Request;
 
 use teal_policy_engine::types::Action;
-use teal_policy_engine::ir::{CompiledRolesCore, AccessContext};
+use teal_policy_engine::ir::{CompiledRolesCore, AccessContext, RegisteredSession};
 
 fn origin_program_from_req(req: &Request) -> Option<PathBuf> {
     let s = req.raw_program.trim();
@@ -35,7 +35,11 @@ fn origin_applet_from_req(req: &Request) -> Option<String> {
     Some(s.to_string())
 }
 
-pub fn request_to_ctx(req: &Request, roles: &CompiledRolesCore) -> AccessContext {
+pub fn request_to_ctx(
+    req: &Request, 
+    roles: &CompiledRolesCore,
+    registered_session: Option<RegisteredSession>
+) -> AccessContext {
     let subject_roles = roles.assignments.uid_roles.get(&req.uid).cloned().unwrap_or_default();
     AccessContext {
         uid: req.uid,                   // ★ kernel truth
@@ -56,6 +60,9 @@ pub fn request_to_ctx(req: &Request, roles: &CompiledRolesCore) -> AccessContext
         object_path: PathBuf::from(&req.raw_target),
         object_new_path: req.raw_new_target.as_ref().map(PathBuf::from),
         object_kind: None,
+
+        session_tty: req.session_tty.clone(),
+        registered_session,
     }
 }
 

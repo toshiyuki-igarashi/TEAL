@@ -20,5 +20,5 @@ pub mod evidence;
 
 // Netlink通信用モジュール
 pub mod netlink; 
-
-
+// pam_server
+pub mod pam_server;

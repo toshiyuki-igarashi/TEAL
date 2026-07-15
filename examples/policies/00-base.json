@@ -1,27 +1,88 @@
 {
-  "version": "1.3",
+  "version": "1.4",
+  "system_type": "workstation",
   "default_effect": "allow",
   "default_reason": "No matching rule; default allow.",
   "ttl_minutes": 10,
   "sweep_minutes": 5,
-  "pre_approval_defaults": { "ttl_sec_default": 600, "ttl_sec_max": 900 },
+  "pre_approval_defaults": {
+    "ttl_sec_default": 600,
+    "ttl_sec_max": 900
+  },
   "rules": [
     {
       "id": "protect-etc-shadow",
+      "rule_type": "standard",
       "subject": {
-        "roles": ["admin"]
+        "roles": [
+          "admin"
+        ],
+        "login_context": {
+          "require_interactive_tty": true,
+          "bind_registered_session": true
+        }
       },
       "object": {
         "path": "/etc/shadow"
       },
       "action": {
-        "ops": ["read"]
+        "ops": [
+          "READ",
+          "WRITE"
+        ]
       },
       "effect": "need_approval",
-      "required_roles": ["security_officer"],
-      "threshold": 1,
-      "reason": "Reading /etc/shadow requires explicit approval."
+      "mpa": {
+        "threshold": 1,
+        "approver_roles": [
+          "security_officer"
+        ]
+      },
+      "audit_level": "standard",
+      "max_uses": 1,
+      "reason": "Reading /etc/shadow requires explicit approval.",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_useradd_rename_1",
+      "rule_type": "standard",
+      "subject": {
+        "roles": [
+          "admin"
+        ],
+        "origin_program": "/usr/sbin/useradd",
+        "origin_applet": "useradd",
+        "login_context": {
+          "require_interactive_tty": true,
+          "bind_registered_session": true
+        }
+      },
+      "object": {
+        "path": "/etc/shadow+",
+        "new_path": "/etc/shadow"
+      },
+      "action": {
+        "ops": [
+          "FILE_RENAME"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
     }
   ]
 }
-

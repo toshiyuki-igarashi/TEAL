@@ -7,17 +7,21 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use globset::Glob;
+use chrono::Weekday;
+use anyhow::{anyhow, Result};
 
 use crate::types::{Effect, Action};
 use crate::raw::{
-    RawRolesV1, RawPolicyV13, RawRule, RawSubject, RawObject, RawAction, RawRoleDef,
-    RawDefaults, RawAssignment, RawGroupAssignment, RawPreApprovalDefaults, RawPreApproval
+    RawRolesV1, RawPolicyV14, RawRule, RawSubject, RawObject, RawAction, RawRoleDef,
+    RawDefaults, RawAssignment, RawGroupAssignment, RawPreApprovalDefaults, RawPreApproval,
+    RawTimeConstraint
 };
 use crate::ir::{
     CompiledRolesCore, RoleMeta, RoleCatalog, CompiledDefaults, CompiledPreApprovalDefaults,
     SubjectRoleIndex, GroupRoleIndex, CompiledRoles, CompiledPolicy, ManagedScopeIndex,
     PolicyVersion, CompiledRule, SubjectMatcher, ObjectMatcher, ActionMatcher,
-    ApprovalMatcher, AuditCfg, PathMatcher, CompiledPreApproval, RuleType, TicketProfile
+    MpaMatcher, AuditCfg, PathMatcher, CompiledPreApproval, TicketProfile, LoginContextMatcher,
+    TimeConstraintMatcher
 };
 use crate::errors::{CompileWarnings, CompileError};
 use crate::util::name_to_uid;
@@ -484,8 +488,8 @@ fn validate_pre_approval_defaults(p: &RawPreApprovalDefaults) -> Result<(), Comp
     Ok(())
 }
 
-pub fn compile_policy_v13(
-    raw: RawPolicyV13,
+pub fn compile_policy_v14(
+    raw: RawPolicyV14,
     roles: &CompiledRoles,
 ) -> Result<(CompiledPolicy, CompileWarnings), CompileError> {
     let mut warnings = CompileWarnings::default();
@@ -495,7 +499,7 @@ pub fn compile_policy_v13(
     validate_pre_approval_defaults(&raw.pre_approval_defaults)?;
 
     // --- 1. version check ---
-    if raw.version != "1.3" {
+    if raw.version != "1.4" {
         return Err(CompileError::UnsupportedVersion(raw.version));
     }
 
@@ -514,14 +518,16 @@ pub fn compile_policy_v13(
     let mut compiled_rules = Vec::with_capacity(raw.rules.len());
 
     for rr in raw.rules {
-        let rule = compile_rule_v13(&rr, roles, &mut warnings)?;
+        // ※ルールのコンパイル関数も v14 用を呼ぶ想定
+        let rule = compile_rule_v14(&rr, pre_approval_defaults.ttl_sec_default, roles, &mut warnings)?;
         compiled_rules.push(rule);
     }
+
     // ソート: 優先度が高い順（降順）、同じなら元の順序（安定ソート）
     compiled_rules.sort_by(|a, b| {
         let spec_a = a.calculate_specificity();
         let spec_b = b.calculate_specificity();
-        
+
         // Ordの実装により Low < Medium < High となるため、
         // b.cmp(a) で降順（Highが先頭）になる
         spec_b.cmp(&spec_a)
@@ -531,14 +537,19 @@ pub fn compile_policy_v13(
     let scope = ManagedScopeIndex::from_rules(&compiled_rules);
 
     let policy = CompiledPolicy {
-        version: PolicyVersion::V1_3,
+        version: PolicyVersion::V1_4,
+        system_type: raw.system_type, 
         rules: compiled_rules,
         scope,
         pre_approval_defaults,
 
-        // default (互換 or 保険)
-        default_action: raw.default_effect.unwrap_or_else(|| Effect::Deny).as_str().to_string(),
+        // default_effect は Effect Enum のまま unwrap (文字列変換不要)
+        default_effect: raw.default_effect.unwrap_or(Effect::Deny),
         default_reason: raw.default_reason.unwrap_or_else(|| "no matching rule".to_string()),
+
+        // TTLとSweepの設定をコピー
+        ttl_minutes: raw.ttl_minutes,
+        sweep_minutes: raw.sweep_minutes,
     };
 
     Ok((policy, warnings))
@@ -569,15 +580,16 @@ fn validate_pre_approval_for_rule(
     Ok(())
 }
 
-/// RawRule(v1.3) -> CompiledRule 1件
+/// RawRule(v1.4) -> CompiledRule 1件
 ///
 /// - roles: roles.json からコンパイル済みロール定義（未知ロール検出などに使う）
 /// - warnings: lint 的な警告（推奨フィールド不足等）を積む
 ///
 /// NOTE:
 /// - この関数は "panic しない" を優先し、足りない情報は安全側のデフォルトで埋める想定。
-pub fn compile_rule_v13(
+pub fn compile_rule_v14(
     rule: &RawRule,
+    default_ttl_sec: u64,
     roles: &CompiledRoles,
     warnings: &mut CompileWarnings,
 ) -> Result<CompiledRule, CompileError> {
@@ -587,25 +599,26 @@ pub fn compile_rule_v13(
     }
 
     // --- matchers ---
-    let subject: SubjectMatcher = compile_subject_v13(&rule.subject, roles, warnings);
-    let object: Option<ObjectMatcher> = compile_object_v13(&rule.object)?; 
-    let action_match: ActionMatcher = compile_action_v13(&rule.action, warnings)?;
+    let subject: SubjectMatcher = compile_subject_v14(&rule.subject, roles, warnings);
+    let time_constraints = compile_time_constraints_v14(&rule.time_constraints, warnings)?;
+    let object: Option<ObjectMatcher> = compile_object_v14(&rule.object)?; 
+    let action_match: ActionMatcher = compile_action_v14(&rule.action, warnings)?;
 
     // --- approval / audit ---
     
     // 1. RawRule から値を取り出し、デフォルト値を適用
     //    スキーマで "need_approval" 時は必須だが、Rust上は Option なので unwrap_or で安全策をとる
-    let raw_threshold = rule.threshold.unwrap_or(0);
-    let raw_roles = rule.required_roles.clone().unwrap_or_default();
+    let raw_threshold = rule.mpa.as_ref().map(|m| m.threshold).unwrap_or(0);
+    let raw_roles = rule.mpa.as_ref().map(|m| m.approver_roles.clone()).unwrap_or_default();
 
-    // 2. ApprovalMatcher の構築
-    //    threshold が 1以上、または required_roles が指定されている場合に ApprovalMatcher を作成する
+    // 2. MpaMatcher の構築
+    //    threshold が 1以上、または required_roles が指定されている場合に MpaMatcher を作成する
     //    (effect=Deny でも値が書いてあれば構造体には詰める方針)
-    let approval: Option<ApprovalMatcher> = if raw_threshold > 0 || !raw_roles.is_empty() {
-        Some(ApprovalMatcher {
+    let mpa: Option<MpaMatcher> = if raw_threshold > 0 || !raw_roles.is_empty() {
+        Some(MpaMatcher {
             threshold: raw_threshold,
             // Vec<String> -> HashSet<String> へ変換
-            required_roles: raw_roles.into_iter().collect(),
+            approver_roles: raw_roles.into_iter().collect(),
         })
     } else {
         None
@@ -631,31 +644,28 @@ pub fn compile_rule_v13(
     let pre_approval = match &rule.pre_approval {
         Some(p) => CompiledPreApproval {
             enabled: p.enabled,
+            ttl_sec: p.ttl_sec.unwrap_or(default_ttl_sec),
         },
         None => CompiledPreApproval {
             enabled: false,
+            ttl_sec: default_ttl_sec,
         },
-    };
-
-    // --- rule_type のパース ---
-    let rule_type = match rule.rule_type.as_str() {
-        "subject_only" => RuleType::SubjectOnly,
-        _ => RuleType::Standard,
     };
 
     Ok(CompiledRule {
         id: rule.id.clone(),
-        rule_type,
-        effect: rule.effect.clone(),
+        description: rule.description.clone(),
+        rule_type: rule.rule_type,
+        effect: rule.effect,
         audit_level: rule.audit_level.clone(),
-        ttl_sec: rule.ttl_sec,
         max_uses: rule.max_uses,
 
         subject,
+        time_constraints,
         object,
         action_match,
 
-        approval,
+        mpa,
         audit,
         pre_approval,
 
@@ -749,7 +759,7 @@ fn compile_required_roles(
     required_roles
 }
 
-pub fn compile_subject_v13(
+pub fn compile_subject_v14(
     subject: &RawSubject,
     roles: &CompiledRoles,
     warnings: &mut CompileWarnings,
@@ -779,16 +789,127 @@ pub fn compile_subject_v13(
     let origin_applet =
         opt_trimmed_nonempty("subject.origin_applet", &subject.origin_applet, warnings);
 
+    let login_context = if let Some(raw_ctx) = &subject.login_context {
+        // IPアドレス/CIDRのパース
+        let source_ip_network = if let Some(ip_str) = opt_trimmed_nonempty("subject.login_context.source_ip", &raw_ctx.source_ip, warnings) {
+            match ip_str.parse::<ipnetwork::IpNetwork>() {
+                Ok(net) => Some(net),
+                Err(e) => {
+                    // IPアドレスのフォーマット不正は警告を出し、Noneとして扱う（または運用に応じてエラーにする）
+                    warnings.warn(format!("invalid source_ip format '{}': {}", ip_str, e));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let auth_method = opt_trimmed_nonempty("subject.login_context.auth_method", &raw_ctx.auth_method, warnings);
+        let require_interactive_tty = raw_ctx.require_interactive_tty.unwrap_or(false);
+        let bind_registered_session = raw_ctx.bind_registered_session.unwrap_or(false);
+
+        Some(LoginContextMatcher {
+            source_ip_network,
+            auth_method,
+            require_interactive_tty,
+            bind_registered_session,
+        })
+    } else {
+        None
+    };
+
     SubjectMatcher {
         uid,
         required_roles,
         origin_program,
         origin_script,
         origin_applet,
+        login_context,
     }
 }
 
-fn compile_path_matcher_v13(
+/// 時間指定 (HH:MM) を深夜0時からの分数に変換するヘルパー関数
+fn parse_time_to_minutes(time_str: &str) -> Result<u32> {
+    let parts: Vec<&str> = time_str.split(':').collect();
+    if parts.len() != 2 {
+        return Err(anyhow!("invalid time format (expected HH:MM): {}", time_str));
+    }
+
+    let hours: u32 = parts[0].parse().map_err(|_| anyhow!("invalid hour format: {}", time_str))?;
+    let minutes: u32 = parts[1].parse().map_err(|_| anyhow!("invalid minute format: {}", time_str))?;
+
+    if hours > 23 || minutes > 59 {
+        return Err(anyhow!("time out of range (HH 0-23, MM 0-59): {}", time_str));
+    }
+
+    Ok(hours * 60 + minutes)
+}
+
+fn compile_time_constraint(
+    raw: &RawTimeConstraint,
+    warnings: &mut CompileWarnings,
+) -> Result<TimeConstraintMatcher> {
+    let mut allowed_days = HashSet::new();
+
+    // 1. 曜日の変換
+    for day_str in &raw.days {
+        let weekday = match day_str.as_str() {
+            "Mon" => Weekday::Mon,
+            "Tue" => Weekday::Tue,
+            "Wed" => Weekday::Wed,
+            "Thu" => Weekday::Thu,
+            "Fri" => Weekday::Fri,
+            "Sat" => Weekday::Sat,
+            "Sun" => Weekday::Sun,
+            _ => {
+                return Err(anyhow!(
+                    "invalid weekday specified (bypassed schema validation?): {}",
+                    day_str
+                ));
+            }
+        };
+        allowed_days.insert(weekday);
+    }
+
+    // もし空リストなら警告を出す（運用上のミス防止）
+    if allowed_days.is_empty() {
+        warnings.warn("time_constraints.days is empty (this rule might never match)".to_string());
+    }
+
+    // 2. 時間 (window) の変換
+    let start_minutes_from_midnight = parse_time_to_minutes(&raw.window.start)?;
+    let end_minutes_from_midnight = parse_time_to_minutes(&raw.window.end)?;
+
+    if start_minutes_from_midnight >= end_minutes_from_midnight {
+        warnings.warn(format!(
+            "time window start ({}) is >= end ({}). Ensure this is intended (e.g. crossing midnight).",
+            raw.window.start, raw.window.end
+        ));
+    }
+
+    Ok(TimeConstraintMatcher {
+        allowed_days,
+        start_minutes_from_midnight,
+        end_minutes_from_midnight,
+    })
+}
+
+/// RawTimeConstraint をコンパイル（パース）する関数
+pub fn compile_time_constraints_v14(
+    raw_list: &[RawTimeConstraint],
+    warnings: &mut CompileWarnings,
+) -> Result<Vec<TimeConstraintMatcher>> {
+    let mut matchers = Vec::with_capacity(raw_list.len());
+    
+    for raw in raw_list {
+        let matcher = compile_time_constraint(raw, warnings)?;
+        matchers.push(matcher);
+    }
+    
+    Ok(matchers)
+}
+
+fn compile_path_matcher_v14(
     raw: &str
 ) -> Result<PathMatcher, CompileError> {
     // 1. 前後の空白除去
@@ -847,7 +968,7 @@ fn compile_path_matcher_v13(
     }
 }
 
-pub fn compile_object_v13(
+pub fn compile_object_v14(
     raw_object: &Option<RawObject>,
 ) -> Result<Option<ObjectMatcher>, CompileError> {
     // 1. rule.object が None (subject_only) の場合は、即座に Ok(None) を返す
@@ -857,11 +978,11 @@ pub fn compile_object_v13(
     };
 
     // 2. object が存在する場合は、path をコンパイルする
-    let path_matcher = compile_path_matcher_v13(&raw_obj.path)?;
+    let path_matcher = compile_path_matcher_v14(&raw_obj.path)?;
 
     // 3. new_path が存在する場合のみ、同様にコンパイルする
     let new_path_matcher = if let Some(ref np) = raw_obj.new_path {
-        Some(compile_path_matcher_v13(np)?)
+        Some(compile_path_matcher_v14(np)?)
     } else {
         None
     };
@@ -874,7 +995,7 @@ pub fn compile_object_v13(
     }))
 }
 
-pub fn compile_action_v13(
+pub fn compile_action_v14(
     action: &RawAction,
     warnings: &mut CompileWarnings,
 ) -> Result<ActionMatcher, CompileError> {

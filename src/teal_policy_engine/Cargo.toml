@@ -9,6 +9,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
 globset = "0.4"
+chrono = { version = "0.4", features = ["serde"] }      # 時刻操作 (ISO 8601 / Utc対応)
+ipnetwork = "0.21.1"
 
 # JSON Schema validator（どちらか選択）
 jsonschema = "0.17"   # 例

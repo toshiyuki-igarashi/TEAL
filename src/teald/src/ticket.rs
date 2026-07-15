@@ -24,7 +24,8 @@ use uuid::Uuid;
 use crate::state::app_state;
 use crate::types::{PreApprovalDraft, PendingEntry, EntityId, ApprovedTicket, MpaState};
 
-use teal_policy_engine::ir::{CompiledRule, ActionMatcher, RuleType};
+use teal_policy_engine::types::RuleType;
+use teal_policy_engine::ir::{CompiledRule, ActionMatcher};
 
 // ==================================
 //  Ticketable 判定と Draft 生成
@@ -32,7 +33,7 @@ use teal_policy_engine::ir::{CompiledRule, ActionMatcher, RuleType};
 
 pub fn is_ticketable(rule: &CompiledRule) -> Result<(), String> {
     // 1. TTLチェック (最優先)
-    if rule.ttl_sec == 0 {
+    if rule.pre_approval.ttl_sec == 0 {
         return Err("ttl_sec > 0 is required for TICKET".to_string());
     }
 
@@ -116,17 +117,18 @@ pub async fn draft_from_rule(rule: &CompiledRule, uid: u32) -> Result<PreApprova
 
             mpa_state: MpaState {
                 threshold: rule.threshold(),
-                approver_roles: rule.required_roles().clone(),
-                required_roles: rule.required_roles().clone(),
+                approver_roles: rule.approver_roles(),
+                required_roles: rule.approver_roles(),
                 approvals: HashMap::new(),
                 aggregated_signature: None,
             },
 
-            ttl_sec: rule.ttl_sec,
+            ttl_sec: rule.pre_approval.ttl_sec,
             max_uses: rule.max_uses,
         }
     )
 }
+
 
 /// PendingEntry を起点に Draft を作る。
 pub async fn ticket_from_entry(rule: &CompiledRule, entry: &PendingEntry) -> ApprovedTicket {
@@ -171,7 +173,7 @@ pub async fn ticket_from_entry(rule: &CompiledRule, entry: &PendingEntry) -> App
         new_object_id,
         op_mask,
 
-        ttl_sec: rule.ttl_sec,
+        ttl_sec: rule.pre_approval.ttl_sec,
         max_uses: rule.max_uses,
     }
 }

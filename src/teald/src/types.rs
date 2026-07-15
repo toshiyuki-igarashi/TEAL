@@ -15,9 +15,9 @@ use uuid::Uuid;
 use hex;
 use blst::min_pk::{Signature, AggregateSignature};
 
-use teal_policy_engine::ir::{CompiledRule, RuleType};
-use teal_policy_engine::util::{uid_to_name, ktime_prefix};
-use teal_policy_engine::types::Effect;
+use teal_policy_engine::ir::{CompiledRule, RegisteredSession};
+use teal_policy_engine::util::{uid_to_name, normalize_tty_name, ktime_prefix};
+use teal_policy_engine::types::{Effect, RuleType};
 
 use crate::evidence;
 use crate::state::app_state;
@@ -59,6 +59,7 @@ pub struct Request {
     pub flag: u32,                 // リクエスト属性フラグ
 
     pub is_audit: bool,
+    pub session_tty: String,
 }
 
 #[derive(Debug)]
@@ -83,6 +84,34 @@ impl AppState {
         
         self.fast.next_draft_seq = next;
         next
+    }
+
+    /// 指定されたTTYとUIDが、PAMで認証済みの正規セッションか厳密に検証し、成功すればセッション情報を返す
+    pub fn check_registered_session(&self, tty: &str, uid: u32) -> Option<RegisteredSession> {
+        // TTYが空、またはプレースホルダーの場合は未登録とみなす（バックグラウンドプロセス等）
+        if tty.is_empty() || tty == "-" { 
+            return None; 
+        }
+        
+        // 1. TTY名の正規化（例: "/dev/pts/1" -> "pts1"）
+        let normalized_key = normalize_tty_name(tty);
+
+        // 2. システム関数 (getpwuid) を使って、カーネルから来た UID をユーザー名に変換
+        let request_user = uid_to_name(uid).ok()?;
+
+        // 3. 登録されたセッション情報を取得して厳密に突き合わせる（ハイジャック防止）
+        if let Some(session) = self.slow.active_tty_sessions.get(&normalized_key) {
+            if request_user == session.user {
+                // 検証成功！セッション情報を丸ごと呼び出し元へ返却
+                return Some(session.clone());
+            } else {
+                eprintln!(
+                    "[SECURITY ALERT] TTY Hijack detected! Process (UID={}, User='{}') tried to use TTY {} which belongs to Registered User '{}'",
+                    uid, request_user, normalized_key, session.user
+                );
+            }
+        }
+        None
     }
 }
 
@@ -109,7 +138,13 @@ pub struct SlowState {
 
     pub pending_start: Option<MgmtPendingStart>,
     pub pending_stop: Option<MgmtPendingStop>,
+
+    // PAMから通知されたアクティブなログインセッション（拡充版）
+    // キー: 正規化されたTTY名 (例: "pts1")
+    // 値: セッションの詳細情報（ユーザー名、IP、認証方式など）
+    pub active_tty_sessions: HashMap<String, RegisteredSession>,
 }
+
 
 #[derive(Debug)]
 pub struct TealDeviceState {
@@ -233,7 +268,7 @@ impl ApprovedTicket {
             new_object_id,
             op_mask: ticket.op,
 
-            ttl_sec: rule.ttl_sec,
+            ttl_sec: rule.pre_approval.ttl_sec,
             max_uses: rule.max_uses,
         })
     }
@@ -275,7 +310,7 @@ impl ApprovedTicket {
                 new_object_id: draft.new_object_id,
                 op_mask: draft.op_mask,
 
-                ttl_sec: rule.ttl_sec,
+                ttl_sec: rule.pre_approval.ttl_sec,
                 max_uses: rule.max_uses,
             })
         } else {
@@ -438,6 +473,7 @@ impl PendingEntry {
                 lsm_label: decoded_lsm,
                 client_ip: None,
                 auth_method: None,
+                session_tty: req.session_tty.clone(),
                 cmd_args: req.args_head.clone(),
             },
             object: ObjectContext {
@@ -470,12 +506,12 @@ impl PendingEntry {
         entry.op = rule.action_match.to_u32();
         entry.rule_id = Some(rule.id.clone());
         entry.reason = rule.out_reason.clone();
-        entry.ttl_seconds = rule.ttl_sec;
+        entry.ttl_seconds = rule.pre_approval.ttl_sec;
         entry.max_uses = rule.max_uses;
         entry.mpa_state = MpaState {
             threshold: rule.threshold(),
-            approver_roles: rule.required_roles().clone(),
-            required_roles: rule.required_roles().clone(),
+            approver_roles: rule.approver_roles(),
+            required_roles: rule.approver_roles(),
             approvals: HashMap::new(),
             aggregated_signature: None,
         };
@@ -491,7 +527,7 @@ impl PendingEntry {
         if let Some(ref id) = entry.rule_id {
             if let Ok(rule) = find_rule(&id) {
                 entry.op = rule.action_match.to_u32();
-                entry.ttl_seconds = rule.ttl_sec;
+                entry.ttl_seconds = rule.pre_approval.ttl_sec;
                 entry.max_uses = rule.max_uses;
             }
         }
@@ -546,6 +582,7 @@ impl PendingEntry {
                 lsm_label: decoded_lsm,
                 client_ip: None,   // 後続のエンリッチ処理 (SSHコンテキスト解決) で埋める
                 auth_method: None, // 後続のエンリッチ処理で埋める
+                session_tty: req.session_tty.clone(),
                 cmd_args: req.args_head.clone(),
             },
             object: ObjectContext {
@@ -564,12 +601,12 @@ impl PendingEntry {
             rule_id: Some(rule.id.clone()),
             reason: rule.out_reason.clone(),
             policy_epoch: 0,
-            ttl_seconds: rule.ttl_sec,
+            ttl_seconds: rule.pre_approval.ttl_sec,
             max_uses: rule.max_uses,
             mpa_state: MpaState {
                 threshold: rule.threshold(),
-                approver_roles: rule.required_roles().clone(),
-                required_roles: rule.required_roles().clone(),
+                approver_roles: rule.approver_roles(),
+                required_roles: rule.approver_roles(),
                 approvals: HashMap::new(),
                 aggregated_signature: None,
             },
@@ -578,7 +615,7 @@ impl PendingEntry {
 
     /// is_cacheable は Rule を受け取り、draft, ticketを作成、TicketPayloadを返す (Lazy Binding)
     pub async fn is_cacheable(&self, rule: &CompiledRule) -> Result<(bool, Option<TicketPayload>, String), String> {
-        if rule.ttl_sec > 0 {
+        if rule.pre_approval.ttl_sec > 0 {
             match is_ticketable(rule) {
                 Ok(_) => (),
                 Err(err) => {
@@ -630,7 +667,7 @@ impl PendingEntry {
                 target_ino,
                 new_target_dev,
                 new_target_ino,
-                expires_in_sec: rule.ttl_sec,
+                expires_in_sec: rule.pre_approval.ttl_sec,
                 flags: rule.ticket_profile.flags,
                 uses_left: rule.max_uses,
                 ticket_id: ticket.ticket_id.clone(),
@@ -673,6 +710,9 @@ pub struct SubjectContext {
     pub client_ip: Option<String>,
     /// ログイン認証方式 (publickey/password)
     pub auth_method: Option<String>,
+
+    /// カーネルから取得したTTY情報
+    pub session_tty: String,
 
     // Selective Arguments (Section 6.8)
     /// 重要コマンドのみ記録される引数 (Truncated)

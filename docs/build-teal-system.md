@@ -22,8 +22,9 @@ TEAL is implemented as an experimental Linux Security Module (LSM) integrated in
 * Kernel source: Linux 6.8.12
 * Rust: version required by `scripts/min-tool-version.sh rustc` for the selected kernel
 * LLVM/Clang: LLVM 17 / Clang 17
+* SSH Server: OpenSSH Server (strongly recommended for remote administration, testing, and system recovery)
 * Required packages:
-  `build-essential`, `bc`, `bison`, `flex`, `libssl-dev`, `libelf-dev`, `dwarves`, `clang-17`, `llvm-17`, `lld-17`, `rustup`, `curl`, `wget`, `git`
+  `build-essential`, `bc`, `bison`, `flex`, `libssl-dev`, `libelf-dev`, `dwarves`, `clang-17`, `llvm-17`, `lld-17`, `rustup`, `curl`, `wget`, `git`, `openssh-server`
 
 ### 2 Installation
 
@@ -35,6 +36,7 @@ sudo apt install -y \
   build-essential bc bison flex libssl-dev libelf-dev dwarves \
   clang-17 llvm-17 lld-17 curl wget git
 ```
+
 Next, install rustup via the official installer to manage the Rust toolchain. When prompted, choose "1) Proceed with installation (default)".
 
 ```bash
@@ -50,7 +52,6 @@ Clone the repository:
 ```bash
 cd ~
 git clone https://github.com/toshiyuki-igarashi/TEAL.git
-
 ```
 
 Download the Linux kernel source and copy the TEAL LSM components into the tree:
@@ -71,9 +72,9 @@ cd ~/linux-6.8.12/
 Register TEAL with the kernel build system (Kbuild):
 
 * Edit and append to **`security/Kconfig`**:
-`source "security/teal/Kconfig"`
+  `source "security/teal/Kconfig"`
 * Edit and append to the LSM list in **`security/Makefile`**:
-`obj-$(CONFIG_SECURITY_TEAL) += teal/`
+  `obj-$(CONFIG_SECURITY_TEAL) += teal/`
 
 Force the Rust version to `1.74.1` for **both the source and external build directories**. The C compiler will use **LLVM 17** to match the Rust backend.
 
@@ -87,7 +88,6 @@ rustup component add rust-src
 mkdir ../kernel_build_v6.8
 cd ../kernel_build_v6.8
 rustup override set 1.74.1
-
 ```
 
 Enable Rust and TEAL support via the configuration script:
@@ -125,7 +125,6 @@ Launch the menu configuration tool from the source directory to configure additi
 ```bash
 cd ~/linux-6.8.12
 make LLVM=-17 O=../kernel_build_v6.8 menuconfig
-
 ```
 
 #### Enabling Required Security Options
@@ -138,11 +137,9 @@ Within the `menuconfig` interface (you can press the `/` key to search for speci
 
 Save your changes and exit the interface. When executing the build, ensure that you accept the default values for any unconfigured option prompts.
 
-
 ```bash
 # Final build using LLVM 17
 make LLVM=-17 O=../kernel_build_v6.8 -j$(nproc)
-
 ```
 
 #### Install Kernel and Modules
@@ -167,24 +164,24 @@ sudo update-grub
 cd ~/TEAL/src
 
 sudo apt update
-sudo apt install pkg-config libtss2-dev
+sudo apt install pkg-config libtss2-dev  libpam0g-dev
 
 rustup update
 cargo build --release
 
 # Deploy binaries with correct ownership (root) and permissions (755)
+sudo install -o root -g root -m 0755 target/release/libpam_teal.so /lib/x86_64-linux-gnu/security/pam_teal.so
 sudo install -o root -g root -m 0755 target/release/teald /usr/local/sbin/
 sudo install -o root -g root -m 0755 target/release/teal-cli /usr/local/bin/
 sudo install -o root -g root -m 0755 target/release/teal-logview /usr/local/bin/
 sudo install -o root -g root -m 0755 target/release/teal-bench /usr/local/bin/
-
 ```
 
 #### Initialize Configuration Directory & Skeleton Files
 
 Before starting the daemon, the required configuration paths and fixed skeleton files must exist to prevent the core parser from failing on startup.
 
-> **NOTICE:** The following configuration files deploy a pragmatic reference scenario where the root user (`admin`) can control execution states, but engine termination (`stop`) mandates Multi-Party Authorization (MPA) from a Security Officer. **Please adjust these logic structure values according to your specific target deployment system environment and organizational controls.** All generated skeletons strictly conform to TEAL v1.0 and v1.3 strict validation schemas.
+> **NOTICE:** The following configuration files deploy a pragmatic reference scenario where the root user (`admin`) can control execution states, but engine termination (`stop`) mandates Multi-Party Authorization (MPA) from a Security Officer. **Please adjust these logic structure values according to your specific target deployment system environment and organizational controls.** All generated skeletons strictly conform to TEAL v1.0 and v1.4 strict validation schemas.
 
 ```bash
 # Create the structural hierarchy
@@ -273,12 +270,16 @@ EOF
 # 4. Deploy Base Policy Rule Example (Conforms to policy_v1_3.schema.json)
 sudo tee /etc/teal.d/policies/00-base.json >/dev/null <<'EOF'
 {
-  "version": "1.3",
+  "version": "1.4",
+  "system_type": "workstation",
   "default_effect": "allow",
   "default_reason": "No matching rule; default allow.",
   "ttl_minutes": 10,
   "sweep_minutes": 5,
-  "pre_approval_defaults": { "ttl_sec_default": 600, "ttl_sec_max": 900 },
+  "pre_approval_defaults": { 
+    "ttl_sec_default": 600, 
+    "ttl_sec_max": 900 
+  },
   "rules": [
     {
       "id": "protect-etc-shadow",
@@ -289,17 +290,39 @@ sudo tee /etc/teal.d/policies/00-base.json >/dev/null <<'EOF'
         "path": "/etc/shadow"
       },
       "action": {
-        "ops": ["read"]
+        "ops": ["READ"]
       },
       "effect": "need_approval",
-      "required_roles": ["security_officer"],
-      "threshold": 1,
+      "mpa": {
+        "threshold": 1,
+        "approver_roles": ["security_officer"]
+      },
       "reason": "Reading /etc/shadow requires explicit approval."
     }
   ]
 }
 EOF
 
+# 5. Enable TEAL PAM Module for System-Wide Session Tracking
+# This hooks TEAL into sshd, login, and sudo
+# Ensure we don't append it multiple times
+
+# --- A. common-session (セッション管理) の設定 ---
+if ! grep -q "pam_teal.so" /etc/pam.d/common-session; then
+  echo "session optional pam_teal.so" | sudo tee -a /etc/pam.d/common-session >/dev/null
+  echo "TEAL PAM module enabled in /etc/pam.d/common-session"
+else
+  echo "TEAL PAM module already configured in /etc/pam.d/common-session"
+fi
+
+# --- B. common-auth (認証管理) の設定 ---
+# 独立した if 文に分けることで、common-session だけが設定済みの既存環境でも確実に追記されます
+if ! grep -q "pam_teal.so" /etc/pam.d/common-auth; then
+  echo "auth optional pam_teal.so" | sudo tee -a /etc/pam.d/common-auth >/dev/null
+  echo "TEAL PAM module enabled in /etc/pam.d/common-auth"
+else
+  echo "TEAL PAM module already configured in /etc/pam.d/common-auth"
+fi
 ```
 
 ##### Configuration & Policy Directory Structure
@@ -311,10 +334,9 @@ TEAL processes rules using a structured, multi-layered directory design. Except 
 ├── bundle.json          # FIXED: Top-level entrypoint mapping active policy targets [schema v1.0]
 ├── management.json      # FIXED: Management Governance Policy (Governs teal-cli start/stop & MPA)
 ├── policies/            # FIXED: Target storage directory for granular policy rules
-│   └── 00-base.json     # DYNAMIC: Arbitrary policy file specified inside bundle.json array [schema v1.3]
+│   └── 00-base.json     # DYNAMIC: Arbitrary policy file specified inside bundle.json array [schema v1.4]
 └── roles/               # FIXED: Target storage directory for system user roles mapping
     └── roles.json       # FIXED: Standard role assignments registry file [schema v1.0]
-
 ```
 
 ##### Configuration Component Definitions
@@ -348,9 +370,7 @@ EOF
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now teald
-
 ```
-
 
 #### Kernel Switch & Boot Preparation
 
@@ -371,14 +391,12 @@ GRUB_TIMEOUT=5
 
 # Isolate TEAL as the only active LSM
 GRUB_CMDLINE_LINUX_DEFAULT="quiet splash lsm=teal"
-
 ```
 
 After editing, apply the changes:
 
 ```bash
 sudo update-grub
-
 ```
 
 **3. Advanced Example Policies (Log Storm Prevention)**
@@ -389,7 +407,6 @@ Reboot and select the newly compiled TEAL kernel from the GRUB menu.
 
 ```bash
 sudo reboot
-
 ```
 
 ### 3 Starting the Daemon
@@ -418,7 +435,6 @@ Verify TEAL operation via logs:
 teal-logview tail
 ```
 
-
 #### Optional: Build Alloy-based Policy Verifier
 
 ```bash
@@ -440,9 +456,7 @@ if ! grep -q "TEAL_ALLOY_JAR" ~/.bashrc; then
   echo 'export TEAL_ALLOY_JAR="$HOME/.local/lib/teal/alloy-cli.jar"' >> ~/.bashrc
   source ~/.bashrc
 fi
-
 ```
-
 
 ---
 
@@ -456,7 +470,6 @@ To prevent the OS package manager (`apt`) from automatically overriding your def
 # In /etc/default/grub
 GRUB_DEFAULT=saved
 GRUB_SAVEDEFAULT=true
-
 ```
 
 *(Run `sudo update-grub` after modifying).*
@@ -476,7 +489,6 @@ Create a file at `/etc/logrotate.d/teal`:
     notifempty
     create 0640 root root
 }
-
 ```
 
 #### C. Kernel Signing with Machine Owner Key (MOK)
@@ -497,21 +509,21 @@ sudo sbsign --key MOK.priv --cert MOK.pem /boot/vmlinuz-6.8.12 --output /boot/vm
 
 # 4. Schedule the key for enrollment in UEFI (using DER)
 sudo mokutil --import MOK.der
-
 ```
 
 When executing `mokutil`, you will be prompted for passwords in two distinct stages.
 
 * **Stage 1: `[sudo] password for <user>:**`
+
 * **What to enter:** Your standard Ubuntu (Xubuntu) **login password**.
+
 * **Reason:** Required to execute the command with administrator (root) privileges.
 
-
 * **Stage 2: `input password:` and `Confirm password:**`
+
 * **What to enter:** A **new, temporary password** of your choosing.
+
 * **Reason:** This one-time password is used to verify your identity on the "MOK manager" (blue screen) that appears right after rebooting, before the OS boots. You must enter it twice.
-
-
 
 > **Crucial Warning for the MOK Password (Stage 2)**
 > The UEFI screen (blue screen) after reboot frequently defaults to a "US (English) layout". If you use symbols like `@` or `_` assuming a JIS (Japanese) layout, you may be unable to type them correctly, resulting in authentication failure.
@@ -525,7 +537,7 @@ Upon restarting the PC, before the OS (GRUB) boots, a blue screen titled **"Perf
 2. Select **`View key 0`** to inspect the key details if desired, then select **`Continue`** to proceed.
 3. When prompted with **`Enroll the key(s)?`**, select **`Yes`**.
 4. When **`Password:`** appears, enter the **temporary password** you created in Stage 2, and press Enter.
-*(Note: As you type, the screen will remain completely blank without `*` characters, but your keystrokes are being registered).*
+   *(Note: As you type, the screen will remain completely blank without `*` characters, but your keystrokes are being registered).*
 5. Finally, select **`Reboot`**.
 
 #### D. Troubleshooting
@@ -533,9 +545,8 @@ Upon restarting the PC, before the OS (GRUB) boots, a blue screen titled **"Perf
 If TEAL fails to start or the system becomes unstable, follow these steps:
 
 1. **Daemon Initialization Failure:**
-Check the `teald` logs using `sudo journalctl -u teald -f`. TEAL enforces strict JSON schema validation. A single syntax error or missing bracket in `/etc/teal.d/` will cause the daemon to refuse startup for safety reasons.
+   Check the `teald` logs using `sudo journalctl -u teald -f`. TEAL enforces strict JSON schema validation. A single syntax error or missing bracket in `/etc/teal.d/` will cause the daemon to refuse startup for safety reasons.
 2. **Boot Loops or Kernel Panics:**
-Hard reboot the machine, hold `Shift` or `Esc` to access the GRUB menu, and select your original stock Ubuntu kernel (e.g., 6.8.0-xx-generic) to recover the system.
+   Hard reboot the machine, hold `Shift` or `Esc` to access the GRUB menu, and select your original stock Ubuntu kernel (e.g., 6.8.0-xx-generic) to recover the system.
 3. **Module Loading Issues:**
-Run `dmesg | grep -i teal` to check for kernel-level initialization errors, LSM registration failures, or Fast Path cache allocation issues.
-
+   Run `dmesg | grep -i teal` to check for kernel-level initialization errors, LSM registration failures, or Fast Path cache allocation issues.

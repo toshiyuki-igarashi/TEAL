@@ -6,8 +6,8 @@
  */
 use serde::Serialize;
 use std::collections::HashSet;
-use teal_policy_engine::types::Effect;
-use teal_policy_engine::raw::{RawPolicyV13, RawRule};
+use teal_policy_engine::types::{Effect, RuleType};
+use teal_policy_engine::raw::{RawPolicyV14, RawRule};
 use crate::verify::VerifyGoal;
 
 
@@ -251,8 +251,8 @@ impl TealIrModel {
         Ok(IrExpr::And(and_conditions))
     }
 
-    /// RawPolicyV13 と ゴール定義から論理モデル(IR)を構築する
-    pub fn from_raw(raw: &RawPolicyV13, goals: &[VerifyGoal], policy_name: &str) -> anyhow::Result<Self> {
+    /// RawPolicyV14 と ゴール定義から論理モデル(IR)を構築する
+    pub fn from_raw(raw: &RawPolicyV14, goals: &[VerifyGoal], policy_name: &str) -> anyhow::Result<Self> {
         let mut entities_set = HashSet::new();
         let mut ir_rules = Vec::new();
         let mut managed_paths_set = HashSet::new(); // 管理対象パスの集合
@@ -262,7 +262,7 @@ impl TealIrModel {
             // 形式検証の対象外ルールをスキップ
             // 1. AuditOnly はアクセス可否(状態)に影響しないため除外
             // 2. subject_only (Tier2 FastPath) は特定の客体を持たず、静的検証のノイズになるため除外
-            if raw_rule.effect == Effect::AuditOnly || raw_rule.rule_type == "subject_only" {
+            if raw_rule.effect == Effect::AuditOnly || raw_rule.rule_type == RuleType::SubjectOnly {
                 continue; 
             }
 

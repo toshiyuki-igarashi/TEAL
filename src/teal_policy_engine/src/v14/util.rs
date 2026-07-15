@@ -17,12 +17,12 @@ pub fn u32_to_str(op: u32) -> String {
     if Action::Read.to_mask() & op != 0 { s.push("READ"); };
     if Action::Write.to_mask() & op != 0 { s.push("WRITE"); };
     if Action::Execute.to_mask() & op != 0 { s.push("EXECUTE"); };
-    if Action::Delete.to_mask() & op != 0 { s.push("DELETE"); };
-    if Action::Unlink.to_mask() & op != 0 { s.push("UNLINK"); };
-    if Action::Rename.to_mask() & op != 0 { s.push("RENAME"); };
-    if Action::Chmod.to_mask() & op != 0 { s.push("CHMOD"); };
-    if Action::Chown.to_mask() & op != 0 { s.push("CHOWN"); };
-    if Action::Connect.to_mask() & op != 0 { s.push("CONNECT"); };
+    if Action::FileDelete.to_mask() & op != 0 { s.push("DELETE"); };
+    if Action::FileUnlink.to_mask() & op != 0 { s.push("UNLINK"); };
+    if Action::FileRename.to_mask() & op != 0 { s.push("RENAME"); };
+    if Action::FileChmod.to_mask() & op != 0 { s.push("CHMOD"); };
+    if Action::FileChown.to_mask() & op != 0 { s.push("CHOWN"); };
+    if Action::NetConnect.to_mask() & op != 0 { s.push("CONNECT"); };
     if Action::Unknown.to_mask() & op != 0 { s.push("UNKNOWN"); };
 
     s.join(",")
@@ -48,6 +48,14 @@ pub fn uid_to_name(uid: u32) -> Result<String> {
         .with_context(|| format!("Failed to call getpwuid for UID {}", uid))?
         .map(|u| u.name)
         .ok_or_else(|| anyhow::anyhow!("UID not found: {}", uid))
+}
+
+/// "/dev/pts/1" や "pts/1" などの様々なTTY表記を "pts1" のような共通の短い形式に正規化する
+pub fn normalize_tty_name(tty: &str) -> String {
+    tty.replace("/dev/", "")   // "/dev/" プレフィックスを削除
+       .replace("/", "")       // スラッシュをすべて削除 ("pts/1" -> "pts1")
+       .trim()
+       .to_string()
 }
 
 /// カーネルの起動後の時間を文字列に変換

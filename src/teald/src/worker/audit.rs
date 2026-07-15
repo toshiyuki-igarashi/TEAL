@@ -16,8 +16,8 @@ use crate::evidence::EvidenceManager;
 use crate::evidence::schema::LogType;
 use crate::netlink::{self, TealNetlinkMessage, TealReq, TealInfo};
 
-use teal_policy_engine::types::Effect;
-use teal_policy_engine::ir::{Decision, RuleType};
+use teal_policy_engine::types::{Effect, RuleType};
+use teal_policy_engine::ir::Decision;
 use teal_policy_engine::util::{ktime_prefix, normalize_opt_field};
 use teal_policy_engine::eval::evaluate;
 use teal_policy_engine::raw::{TEAL_TICKET_FLG_SILENT_IO, TEAL_TICKET_FLG_INHERIT};
@@ -137,6 +137,7 @@ pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
         args_head: normalize_opt_field(&nl_req.args_head),
         flag: nl_req.flags,
         is_audit: true, // AUDITレーンに流れてきたので true 確定
+        session_tty: nl_req.session_tty,
     };
 
     // 2. ポリシー評価とチケット生成の準備
@@ -146,7 +147,12 @@ pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
 
     let (effect, rule_id) = {
         let compiled = bundle();
-        let ctx = request_to_ctx(&req, &compiled.roles);
+
+        let state = app_state().lock().await;
+        // PAMのデータと突き合わせる
+        let session_info = state.check_registered_session(&req.session_tty, req.uid);
+        let ctx = request_to_ctx(&req, &compiled.roles, session_info);
+        drop(state); 
 
         match evaluate(&compiled.policy, &ctx) {
             Decision::Pass => {
@@ -172,7 +178,7 @@ pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
                 // Allow または AuditOnly の場合「のみ」チケットを発行する
                 // =========================================================================
                 if eff == Effect::Allow || eff == Effect::AuditOnly {
-                    if (r.ticket_profile.flags != 0) && r.ttl_sec > 0 {
+                    if (r.ticket_profile.flags != 0) && r.pre_approval.ttl_sec > 0 {
                         let ticket_id = generate_audit_ticket_id().await;   // ログ追跡用のID生成
                         issued_ticket_id = ticket_id.clone();
 
@@ -212,7 +218,7 @@ pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
                             target_ino,
                             new_target_dev,
                             new_target_ino,
-                            expires_in_sec: r.ttl_sec,
+                            expires_in_sec: r.pre_approval.ttl_sec,
                             flags: safe_flags,    // 補完済みの安全なフラグをセット
                             uses_left: r.max_uses,
                             epoch: 0,             // AUDIT時は0固定など
@@ -244,7 +250,7 @@ pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
                                 None
                             },
                             op_mask: r.action_match.to_u32(),
-                            ttl_sec: r.ttl_sec,
+                            ttl_sec: r.pre_approval.ttl_sec,
                             max_uses: r.max_uses,
                         };
 

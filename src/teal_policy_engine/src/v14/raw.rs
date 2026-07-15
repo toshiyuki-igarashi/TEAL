@@ -4,10 +4,10 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::util::deserialize_ops_uppercase;
-use crate::types::{Effect, AuditLevel, Action};
+use crate::types::{SystemType, RuleType, Effect, AuditLevel, Action};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,93 +18,75 @@ pub struct RawBundleV1 {
     pub policy_files: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RawPolicyV13 {
-    /// const "1.3"
+pub struct RawPolicyV14 {
+    /// const "1.4"
     pub version: String,
 
+    // デフォルトで Server が適用されるよう設定
     #[serde(default)]
+    pub system_type: SystemType,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_effect: Option<Effect>,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_reason: Option<String>,
 
-    /// TTL (time to live) for pending approvals, in minutes.
-    /// expires_at = created_at + ttl_minutes
-    /// In ENFORCE mode, expiration results in DENY.
     pub ttl_minutes: u64,
-
-    /// Expire sweep period, in minutes.
-    /// Periodically sweeps pending approvals and expires them.
     pub sweep_minutes: u64,
-
-    /// Defaults and hard limits for Pre-Approval / JIT_ALLOW TTL handling.
-    /// Corresponds to schema object: pre_approval_defaults
     pub pre_approval_defaults: RawPreApprovalDefaults,
-
     pub rules: Vec<RawRule>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawPreApprovalDefaults {
-    /// Default TTL (seconds) for JIT_ALLOW when rule.pre_approval.ttl_sec is not specified.
-    /// Schema: minimum = 1
     pub ttl_sec_default: u64,
 
-    /// Hard upper bound (seconds) for any JIT TTL.
-    /// If a rule's chosen TTL exceeds this value, policy compilation MUST fail.
-    /// Schema: minimum = 1
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_sec_max: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawRule {
     pub id: String,
+    
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 
-    #[serde(default = "default_rule_type")]
-    pub rule_type: String, 
+    #[serde(default)]
+    pub rule_type: RuleType,
 
     pub subject: RawSubject,
 
-    pub object: Option<RawObject>, 
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub time_constraints: Vec<RawTimeConstraint>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object: Option<RawObject>,
     pub action: RawAction,
-
     pub effect: Effect,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mpa: Option<RawMpa>,
 
     #[serde(default = "default_audit_level")]
     pub audit_level: AuditLevel,
 
-    #[serde(default)]
-    pub ttl_sec: u64,
-
     #[serde(default = "default_max_uses")]
     pub max_uses: u32,
 
-    #[serde(default)]
-    pub required_roles: Option<Vec<String>>,
-
-    #[serde(default)]
-    pub threshold: Option<u32>,
-
-    /// Pre-approval (JIT_ALLOW) configuration for this rule.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pre_approval: Option<RawPreApproval>,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 
     #[serde(default)]
     pub ticket_profile: RawTicketProfile,
-}
-
-
-fn default_rule_type() -> String {
-    "standard".to_string()
 }
 
 /// Serde 用のデフォルト値返却関数
@@ -116,46 +98,83 @@ fn default_max_uses() -> u32 {
     1
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawSubject {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uid: Option<u32>,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<String>,
     
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_program: Option<String>,
     
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_script: Option<String>,
 
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_applet: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login_context: Option<RawLoginContext>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+pub struct RawLoginContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_ip: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_method: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_interactive_tty: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind_registered_session: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawTimeConstraint {
+    pub days: Vec<String>,
+    pub window: RawTimeWindow,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawTimeWindow {
+    pub start: String,
+    pub end: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawObject {
     pub path: String,
-    
-    // RENAME 操作の移動先パス。RENAME 以外では None になる。
-    #[serde(default)]
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_path: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawAction {
-    #[serde(default, deserialize_with = "deserialize_ops_uppercase")]
+    #[serde(default, deserialize_with = "deserialize_ops_uppercase", skip_serializing_if = "Vec::is_empty")]
     pub ops: Vec<Action>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawMpa {
+    pub threshold: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approver_roles: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawPreApproval {
     /// Whether pre-approval (JIT_ALLOW) is enabled for this rule.
@@ -167,7 +186,7 @@ pub struct RawPreApproval {
     pub ttl_sec: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct RawTicketProfile {
     #[serde(default)] pub silent_io: bool,

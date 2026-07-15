@@ -75,6 +75,9 @@ pub enum TealAttr {
     NewTargetDev = 29,
     NewTargetIno = 30,
     NewTarget    = 31,
+
+    // --- ログインコンテキスト（TTY）用 ---
+    SessionTty   = 32,
 }
 impl NlAttrType for TealAttr {}
 
@@ -116,6 +119,10 @@ pub struct TealReq {
     pub lsm_label: String,
     pub args_head: String,
     pub flags: u32,
+
+    // ログインコンテキスト（TTY情報）
+    // カーネルから送られてこない（非対話型プロセス）場合はデフォルトで空文字列 "" になる
+    pub session_tty: String,
 }
 
 #[derive(Debug, Default)]
@@ -325,6 +332,9 @@ fn parse_req_msg(genl_msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<TealReq> {
             TealAttr::NewTargetIno => req.new_target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
             TealAttr::NewTarget    => req.new_target    = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
 
+            // SessionTty の文字列パース
+            TealAttr::SessionTty   => req.session_tty    = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
+
             _ => {} 
         }
     }
@@ -346,7 +356,7 @@ fn parse_info_msg(genl_msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<TealInfo> 
             TealAttr::TargetIno   => info.target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
             TealAttr::NewTargetDev => info.new_target_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
             TealAttr::NewTargetIno => info.new_target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            
+
             _ => {}
         }
     }

@@ -18,6 +18,7 @@ use teald::bundle::{load_from_bundle, bundle};
 use teald::management::load_from_management;
 use teald::evidence::EvidenceManager;
 use teald::netlink::{NlWriter, TealNetlinkMessage, init_socket};
+use teald::pam_server::start_pam_listener;
 
 use teal_policy_engine::util::ktime_prefix;
 
@@ -110,6 +111,11 @@ async fn main() -> Result<()> {
     // ==============================================================
 
     let listener = init_admin_socket("/tmp/teald.sock").await?;
+
+    // PAMリスナーをバックグラウンドタスクとして起動
+    tokio::spawn(async {
+        start_pam_listener().await;
+    });
 
     // ワーカー起動へ
     run_workers(nl_tx, rx_decision, rx_audit, listener).await

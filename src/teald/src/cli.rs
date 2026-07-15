@@ -15,7 +15,7 @@ use rand::{RngCore, thread_rng};
 use colored::Colorize;
 
 use teal_policy_engine::load::load_json_file;
-use teal_policy_engine::raw::RawPolicyV13;
+use teal_policy_engine::raw::RawPolicyV14;
 use crate::common::DecisionKind;
 use crate::verify::ast::TealIrModel;
 
@@ -146,7 +146,7 @@ fn main() -> Result<()> {
             // 1. ポリシーJSONのパース
             let v = load_json_file(path)
                 .with_context(|| format!("Failed to load policy json: {}", input_path_str))?;
-            let policy: RawPolicyV13 = serde_json::from_value(v)
+            let policy: RawPolicyV14 = serde_json::from_value(v)
                 .with_context(|| format!("Failed to deserialize policy raw struct: {}", input_path_str))?;
 
             // 2. 中間論理モデル (TealIrModel) の構築

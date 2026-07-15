@@ -87,6 +87,11 @@ pub struct SubjectInfo {
     // 実際のコマンドライン引数 (例: "-u root --force")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub args: Option<String>, 
+
+    // ログインコンテキスト (TTY情報)
+    // チケット一覧取得APIなど、TTYが存在しないコンテキストではJSONから省略される
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_tty: Option<String>, 
 }
 
 /// 操作対象オブジェクト情報 (Object Information)

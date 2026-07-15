@@ -10,12 +10,11 @@
 
 システムは以下の3つの機能モジュールで構成される。
 
-| コンポーネント | 動作領域 | 役割 |
-| --- | --- | --- |
-| **teal_lsm** | Kernel | **【センサー】** LSM (Linux Security Module) フックを使用し、システムコールやファイルアクセスを捕捉する。 |
+| コンポーネント         | 動作領域   | 役割                                                                                                |
+| --------------- | ------ | ------------------------------------------------------------------------------------------------- |
+| **teal_lsm**    | Kernel | **【センサー】** LSM (Linux Security Module) フックを使用し、システムコールやファイルアクセスを捕捉する。                             |
 | **teal_module** | Kernel | **【通信・制御】** ユーザー空間との通信管理、プロセスの一時停止・再開制御、および**プロセスのクレデンシャル（`cred`）に基づく高速キャッシュ判定（Fast Path）**を担当する。 |
-| **teald** | User | **【頭脳・判定】** ポリシー管理、外部認証システムとの連携、承認者への通知、最終的な許可/拒否の判定を行うデーモン。 |
-
+| **teald**       | User   | **【頭脳・判定】** ポリシー管理、外部認証システムとの連携、承認者への通知、最終的な許可/拒否の判定を行うデーモン。                                      |
 
 ### 1.1 真のDefault-Deny（プロセスベース実行制御）
 
@@ -29,14 +28,15 @@
 システムは以下の2つのモードを有し、動的に切り替え可能とする。
 
 1. **AUDITモード（学習・監視フェーズ）**
-    * すべての動作を許可する。
-    * ポリシー違反や監視対象の動作はログとして出力する。
-    * **特徴:** システムのパフォーマンスに影響を与えないよう、ノンブロッキング（非同期）で動作する。
-
+   
+   * すべての動作を許可する。
+   * ポリシー違反や監視対象の動作はログとして出力する。
+   * **特徴:** システムのパフォーマンスに影響を与えないよう、ノンブロッキング（非同期）で動作する。
 
 2. **ENFORCEモード（防御フェーズ）**
-    * ポリシーに基づき、動作を厳格に制御する。
-    * **特徴:** 承認済み動作は「高速パス」で処理し、未承認の重要動作のみを「承認待ち（ブロッキング）」にするハイブリッド構造。
+   
+   * ポリシーに基づき、動作を厳格に制御する。
+   * **特徴:** 承認済み動作は「高速パス」で処理し、未承認の重要動作のみを「承認待ち（ブロッキング）」にするハイブリッド構造。
 
 ### 2.1 AUDITモードにおけるログストーム対策（動的Fast Path）
 
@@ -44,7 +44,6 @@ AUDITモードはすべての操作を許可するが、大量のI/Oを行うプ
 
 * `teald` は、AUDITモードであっても既知の高負荷プロセス（例：`make`, `gcc`）からの初回 `REQ` に対して、明示的に `SILENT_IO` および `INHERIT` フラグを付与したチケットを発行する。
 * これにより、当該プロセスおよびその子プロセスが生成する無数のテンポラリファイルへのI/Oログはカーネル内でスキップ（Fast Path）され、通信量を劇的に削減しつつ、大枠のプロファイリングに必要なプロセス起動ログのみを安全に収集する。
-
 
 ### 補足： AUDIT→ENFORCE 移行時の一時状態の取り扱い
 
@@ -63,65 +62,67 @@ AUDITモードはすべての操作を許可するが、大量のI/Oを行うプ
 **目的:** 既知の許可済み動作は遅延なく通し、未知・重要操作のみ人間承認（MPA）を強制する。
 
 1. **HOOK (teal_lsm)**
-    * 対象のシステム動作をフックする。
-
+   
+   * 対象のシステム動作をフックする。
 
 2. **FAST PATH CHECK (teal_check_ticket_match)**
-    * カーネル内のチケットキャッシュを確認する。
-    * **【Hit】有効なチケットがある場合:**
-        * uses_left を減算する。
-    * **消費完了判定 (`uses_left == 0`):**
-        * 当該チケットを「無効（Invalid）」状態にマークし、再利用を即座に防ぐ。
-        * ユーザー空間へ **`INFO:CONSUMED` メッセージ** を発行（キューイング）する。
-        * *※メモリ解放はメッセージ送信完了後、またはRCUにより安全に行う。*
-
-
-        * 即座に `return 0` (許可) を返す。
-
-
-    * **【Miss】チケットがない場合:**
-        * ステップ3 (Slow Path) へ進む。
-
-
-
+   
+   * カーネル内のチケットキャッシュを確認する。
+   
+   * **【Hit】有効なチケットがある場合:**
+     
+     * uses_left を減算する。
+   
+   * **消費完了判定 (`uses_left == 0`):**
+     
+     * 当該チケットを「無効（Invalid）」状態にマークし、再利用を即座に防ぐ。
+     
+     * ユーザー空間へ **`INFO:CONSUMED` メッセージ** を発行（キューイング）する。
+     
+     * *※メモリ解放はメッセージ送信完了後、またはRCUにより安全に行う。*
+       
+       * 即座に `return 0` (許可) を返す。
+     
+     * **【Miss】チケットがない場合:**
+       
+       * ステップ3 (Slow Path) へ進む。
 
 3. **REQUEST QUEUING (teal_module)**
-    * 動作リクエスト（プロセスID, 操作内容, 対象ファイル等）を作成し、リストに登録する。
-    * 該当プロセスを `wait_event_interruptible` 状態にし、CPUを解放してスリープさせる。
-
+   
+   * 動作リクエスト（プロセスID, 操作内容, 対象ファイル等）を作成し、リストに登録する。
+   * 該当プロセスを `wait_event_interruptible` 状態にし、CPUを解放してスリープさせる。
 
 4. **JUDGEMENT (teald)**
-    * カーネルからのイベントを検知し、リクエストを読み出す。
-    * ポリシー判定を行う（Need Approval / Deny / Auto Allow）。
-
+   
+   * カーネルからのイベントを検知し、リクエストを読み出す。
+   * ポリシー判定を行う（Need Approval / Deny / Auto Allow）。
 
 5. **RESPONSE (teald → teal_module)**
-    * 判定結果をカーネルへ書き込む。
-    * *※承認(Allow)の場合は、今後のためにカーネル内の「AllowList」にチケットを登録する。*
-
+   
+   * 判定結果をカーネルへ書き込む。
+   * *※承認(Allow)の場合は、今後のためにカーネル内の「AllowList」にチケットを登録する。*
 
 6. **UNBLOCK (teal_module → teal_lsm)**
-    * スリープしていたプロセスを起床（Wake up）させる。
-    * 判定結果に基づきリターンコードを返す（0 または -EACCES）。
-
-
+   
+   * スリープしていたプロセスを起床（Wake up）させる。
+   * 判定結果に基づきリターンコードを返す（0 または -EACCES）。
 
 ### 3.2 AUDITモード（監視時）
 
 **目的:** システムを止めずにログを収集する。
 
 1. **HOOK (teal_lsm)**
-    * システム動作をフックする。
-
+   
+   * システム動作をフックする。
 
 2. **ASYNC LOGGING (teal_module)**
-    * 動作情報をリングバッファまたはNetlinkソケット等の非同期キューに投入する。
-    * teald の応答を**待たずに**、即座に `return 0` (許可) を返す。
-
+   
+   * 動作情報をリングバッファまたはNetlinkソケット等の非同期キューに投入する。
+   * teald の応答を**待たずに**、即座に `return 0` (許可) を返す。
 
 3. **COLLECT (teald)**
-    * ユーザー空間の都合の良いタイミングでキューからログを回収し、記録する。
-
+   
+   * ユーザー空間の都合の良いタイミングでキューからログを回収し、記録する。
 
 ### 3.3 Fail-Safe モード（teald 停止・応答不能時）
 
@@ -130,28 +131,27 @@ AUDITモードはすべての操作を許可するが、大量のI/Oを行うプ
 カーネルモジュール（teal_module）は、`teald` との通信途絶（UDS切断または応答タイムアウト）を検知した瞬間、システムを自動的に **Fail-Safe モード** へ移行させる。本モード下の挙動は以下の通り定義する。
 
 1. **Slow Path (新規承認要求) の即時遮断 (Default Deny)**
-    * 承認待ちキュー（Pending Queue）に入っているリクエストは全て破棄し、呼び出し元プロセスへ `EACCES` (Permission Denied) を返す。
-    * 新規に発生した承認が必要な操作（`open`, `execve` 等）に対しても、`teald` への問い合わせを行わず、即座に `EACCES` を返す。
-    * これにより、攻撃者が「承認サーバをダウンさせてセキュリティを回避する」攻撃を無効化する。
-
+   
+   * 承認待ちキュー（Pending Queue）に入っているリクエストは全て破棄し、呼び出し元プロセスへ `EACCES` (Permission Denied) を返す。
+   * 新規に発生した承認が必要な操作（`open`, `execve` 等）に対しても、`teald` への問い合わせを行わず、即座に `EACCES` を返す。
+   * これにより、攻撃者が「承認サーバをダウンさせてセキュリティを回避する」攻撃を無効化する。
 
 2. **Fast Path (キャッシュ) の取り扱い**
-    * **有効期限内のチケット:** カーネルメモリ内に残存する有効なチケットによる操作は許可する（業務継続性のため）。ただし、セキュリティレベル設定（Strict Mode）によっては、これらも一括無効化するオプションを用意する。
-    * **期限切れ:** 更新（Refresh）ができないため、期限が切れた時点で即座に Deny となる。
-
+   
+   * **有効期限内のチケット:** カーネルメモリ内に残存する有効なチケットによる操作は許可する（業務継続性のため）。ただし、セキュリティレベル設定（Strict Mode）によっては、これらも一括無効化するオプションを用意する。
+   * **期限切れ:** 更新（Refresh）ができないため、期限が切れた時点で即座に Deny となる。
 
 3. **ネットワーク封鎖 (Network Lockdown)**
-    * TEAL-NET 機能により、ホワイトリスト（静的許可リスト）に定義された「管理用通信（例: 監視サーバへのHeartbeat、緊急用コンソール接続）」以外の **全ての Outbound 通信を遮断** する。
-    * これにより、データ搾取（Exfiltration）および C2 通信を物理的に近い状態で阻止する。
-
+   
+   * TEAL-NET 機能により、ホワイトリスト（静的許可リスト）に定義された「管理用通信（例: 監視サーバへのHeartbeat、緊急用コンソール接続）」以外の **全ての Outbound 通信を遮断** する。
+   * これにより、データ搾取（Exfiltration）および C2 通信を物理的に近い状態で阻止する。
 
 4. **警告と復旧 (Alert & Recovery)**
-    * **ログ出力:** カーネルリングバッファ (`dmesg`) に `[TEAL] CRITICAL: Daemon lost. Entering Fail-Safe Mode.` を出力する。
-    * **復旧手順:** 管理者が物理コンソール（またはBMC/iDRAC）経由でログインし、原因調査後に `teald` を再起動する。
-    * カーネルは `teald` の再接続を検知した時点で、自動的に **ENFORCE モード** へ復帰する。
-    * **Deadman Switch (Optional):** ハードウェアウォッチドッグ連携が有効な場合、`teald` からの Heartbeat 途絶が指定秒数（例: 10秒）継続した時点で、カーネルパニックまたはハードウェアリセットを誘発し、物理的にシステムを停止させる。
-
-
+   
+   * **ログ出力:** カーネルリングバッファ (`dmesg`) に `[TEAL] CRITICAL: Daemon lost. Entering Fail-Safe Mode.` を出力する。
+   * **復旧手順:** 管理者が物理コンソール（またはBMC/iDRAC）経由でログインし、原因調査後に `teald` を再起動する。
+   * カーネルは `teald` の再接続を検知した時点で、自動的に **ENFORCE モード** へ復帰する。
+   * **Deadman Switch (Optional):** ハードウェアウォッチドッグ連携が有効な場合、`teald` からの Heartbeat 途絶が指定秒数（例: 10秒）継続した時点で、カーネルパニックまたはハードウェアリセットを誘発し、物理的にシステムを停止させる。
 
 ---
 
@@ -165,13 +165,13 @@ TEAL は性能と可用性のため、カーネル内に **「承認済みトー
 本バージョンより、チケットは対象の性質に応じて以下の2種類を定義し、カーネル内で使い分ける。
 
 1. **客体バインディング型**
-    * **用途:** 特定の既存ファイルやディレクトリに対するアクセス許可。
-    * **必須識別子:** `object_id` (Device ID + Inode number)
-    * **挙動:** 対象となる特定のInodeに対するアクセス時のみFast Pathが適用される。
+   * **用途:** 特定の既存ファイルやディレクトリに対するアクセス許可。
+   * **必須識別子:** `object_id` (Device ID + Inode number)
+   * **挙動:** 対象となる特定のInodeに対するアクセス時のみFast Pathが適用される。
 2. **主体（プロセス）コンテキスト型**
-    * **用途:** コンパイラやバッチ処理など、大量のテンポラリファイルや無名ファイルを生成する信頼されたプロセスのI/O許可。
-    * **必須識別子:** `subject_id` (PID または Credential ID) ※`object_id` は不要（`0:0` などのAny扱いとする）。
-    * **挙動:** このチケットを保持するプロセス（主体）が行う操作は、対象ファイル（客体）が何であれFast Pathが適用される。
+   * **用途:** コンパイラやバッチ処理など、大量のテンポラリファイルや無名ファイルを生成する信頼されたプロセスのI/O許可。
+   * **必須識別子:** `subject_id` (PID または Credential ID) ※`object_id` は不要（`0:0` などのAny扱いとする）。
+   * **挙動:** このチケットを保持するプロセス（主体）が行う操作は、対象ファイル（客体）が何であれFast Pathが適用される。
 
 ### 4.2 プロセス・コンテキストによる判定と継承メカニズム
 
@@ -238,14 +238,17 @@ Tier 1 に含めてよい特殊デバイスは、以下の条件を全て満た�
 ### 4.4. 名無しオブジェクト（IPC/パイプ等）に対する超高速バイパスアーキテクチャ
 
 #### 4.4.1 背景と目的
+
 デスクトップ環境の入力メソッド（Mozc等）やコンパイラなど、システム上必須かつ無害なプロセスは、UNIXドメインソケットやパイプなどの「名無しオブジェクト」に対して、1秒間に数百回以上のプロセス間通信（IPC）やI/Oを発生させる。
 これらのアクセスに対し、都度カーネル内でパス文字列の構築（`d_path`）およびマッチング評価を行うことは、深刻なパフォーマンス低下（ボトルネック）と監査ログの爆発（ログストーム）を引き起こす。
 本アーキテクチャは、文字列評価を完全に排除し、**O(1)の処理量で安全なアクセス制御を実現するフェーズ分離型アルゴリズム**を定義する。
 
 #### 4.4.2 フェーズ分離型アルゴリズムの設計
+
 毎回のI/O時に重いポリシー評価を行うのではなく、評価を「プロセス起動時」と「I/O実行時」の2フェーズに完全に分離する。
 
 ##### フェーズ1: 起動時の重い評価と権限付与（Control Plane / Slow Path）
+
 対象のプロセスが起動（`execve`）した最初の1回のみ、`teald` が主体（Subject）を評価する。
 
 1. teald は起動したプロセスの実行ファイルパス（`origin_program`）を取得する。
@@ -253,6 +256,7 @@ Tier 1 に含めてよい特殊デバイスは、以下の条件を全て満た�
 3. teal_module（カーネル）は、このチケットを受信し、プロセス自身の権限構造体（`cred` 等のセキュリティコンテキスト領域）にフラグとしてキャッシュする。
 
 ##### フェーズ2: I/O時の超高速判定（Data Plane / Tier 2 Fast Path）
+
 プロセスが実際に大量の通信やI/O（`connect`, `open` 等）を開始した際の処理。
 
 1. teal_lsm（カーネルフック）は、パス文字列の取得を行う**前**に、対象オブジェクトの `inode->i_mode` を確認する。
@@ -261,6 +265,7 @@ Tier 1 に含めてよい特殊デバイスは、以下の条件を全て満た�
 4. 通常のファイル（`S_ISREG` 等）であった場合のみ、パス文字列を取得し、通常のルールベース評価（Slow Path）へフォールバックする。
 
 #### 4.4.3 ポリシースキーマの拡張（v1.3以降）
+
 上記のアーキテクチャをユーザー空間から制御するため、ポリシースキーマ（`policy_v1_2.schema.json`）を以下のように拡張する。
 
 1. **`rule_type` の新設:**
@@ -333,13 +338,14 @@ Tier 1 に含めてよい特殊デバイスは、以下の条件を全て満た�
 1. **Slow Path:** カーネルは `applet_name` (例: "ls") を `teald` へ送る。
 2. **Teald 判定:** ポリシーに基づき `applet_name` を検証し、ハッシュ化 (u64) して Ticket に含める。
 3. **Fast Path:** カーネルは実行時の `argv[0]` 等から簡易ハッシュを計算し、キャッシュ内の `origin_applet_hash` と照合する。
-    * *※Alphaフェーズではハッシュ計算を省略し、0固定とする（9章参照）。*
+   * *※Alphaフェーズではハッシュ計算を省略し、0固定とする（9章参照）。*
 
 ### 4.6 事前承認チケットの遅延バインディング (Strict Context Lazy Binding)
 
 オペレーターの事前申請による人間承認（MPA）ルートにおいて、`teald` は承認完了時点でファイルシステムにアクセスして `inode` を取得してはならない。TOCTOU（Time-of-Check to Time-of-Use）攻撃の排除、I/Oブロッキングの回避、および監査ログの完全性保証のため、以下の遅延バインディングおよびJIT Hydration方式を必須とする。
 
 #### (1) データ構造と格納先 (State Management)
+
 状態管理の不整合を防ぐため、ライフサイクルに応じて明確に格納先マップを分離する。
 
 * **`PreApprovalDraft`**: 承認待ちの下書きデータ。ファイルパスやデバイス・inode情報はプレースホルダー（`"-"` や `0:0`）を保持。`state.fast.drafts` に格納される。
@@ -351,30 +357,35 @@ Tier 1 に含めてよい特殊デバイスは、以下の条件を全て満た�
 **フェーズ1: チケット作成と承認（ユーザーランド単独処理）**
 
 1. **[作成]** `teal-cli ticket <rule-id>` コマンド受信時：
-    * 必要な情報と `rule_id`, `mpa_state` を含む `PreApprovalDraft` を生成。
-    * inode情報等は `0:0` とし、`state.fast.drafts` に保存する。
+   
+   * 必要な情報と `rule_id`, `mpa_state` を含む `PreApprovalDraft` を生成。
+   * inode情報等は `0:0` とし、`state.fast.drafts` に保存する。
 
 2. **[承認]** `teal-cli approve <draft-id>` コマンド受信時：
-    * MPAのしきい値（Threshold）を満たした場合、対象の `PreApprovalDraft` を `state.fast.drafts` から削除（`remove`）する。
-    * 同時に `ApprovedTicket` へ昇格させ、`state.fast.tickets` に保存（待機状態へ移行）する。
+   
+   * MPAのしきい値（Threshold）を満たした場合、対象の `PreApprovalDraft` を `state.fast.drafts` から削除（`remove`）する。
+   * 同時に `ApprovedTicket` へ昇格させ、`state.fast.tickets` に保存（待機状態へ移行）する。
 
 **フェーズ2: 実体化とキャッシュ登録（カーネル連携 / JIT Hydration）**
 
 3. **[REQ受信]** Fast Laneにてカーネルから `REQ` を受信し、ポリシー評価結果が `NeedApproval` となった場合：
-    * `state.fast.tickets` を検索し、対象の `rule_id` に合致し、かつ**未実体化（`origin_program_id.dev == 0` 等）の `ApprovedTicket`** が存在するかチェックする。
-    * 存在した場合、REQから得られた実際のコンテキスト（`dev:ino` や生パス文字列）を用いて、チケットのプレースホルダー情報を上書き（Hydration）する。
+   
+   * `state.fast.tickets` を検索し、対象の `rule_id` に合致し、かつ**未実体化（`origin_program_id.dev == 0` 等）の `ApprovedTicket`** が存在するかチェックする。
+   * 存在した場合、REQから得られた実際のコンテキスト（`dev:ino` や生パス文字列）を用いて、チケットのプレースホルダー情報を上書き（Hydration）する。
 
 4. **[応答]** 実体化した `ApprovedTicket` を用いて、以下の順序でカーネルへ応答する。
-    * ① `TICKET_ADD` 送信: カーネルのキャッシュテーブルへ登録。
-    * ② `APPROVE <req.id>` 送信: フリーズ中のプロセスを再開。
-    * *(※レースコンディション防止のため、必ず TICKET_ADD を先に送信すること)*
+   
+   * ① `TICKET_ADD` 送信: カーネルのキャッシュテーブルへ登録。
+   * ② `APPROVE <req.id>` 送信: フリーズ中のプロセスを再開。
+   * *(※レースコンディション防止のため、必ず TICKET_ADD を先に送信すること)*
 
 **フェーズ3: 監査ログ出力と破棄（ライフサイクルの終焉）**
 
 5. **[INFO受信]** Slow Laneにてカーネルから消費（`CONSUME`）または期限切れ（`EXPIRE`）の `INFO` を受信した場合：
-    * `state.fast.tickets` から該当チケットを取得（`get_mut`）。
-    * REQ受信時に書き込んでおいたリッチなコンテキスト（実行元バイナリパス等）を用いて監査ログを出力する。
-    * `CONSUME` の場合は `uses_left` を減算する。
+   
+   * `state.fast.tickets` から該当チケットを取得（`get_mut`）。
+   * REQ受信時に書き込んでおいたリッチなコンテキスト（実行元バイナリパス等）を用いて監査ログを出力する。
+   * `CONSUME` の場合は `uses_left` を減算する。
 
 6. **[破棄]** `uses_left == 0` に到達、または `EXPIRE` イベントを受信した時点で、対象チケットを `state.fast.tickets` から完全に削除（`remove`）する。
 
@@ -400,14 +411,15 @@ Slow Path で同一操作が短時間に再発するケース（I/Oリトライ�
 `policy_epoch` は、システム全体の権限状態を **O(1)** で瞬時に転換する機構である。
 
 1. **基本メカニズム:**
-    * カーネルはグローバル変数 `current_epoch` を保持。
-    * Fast Path 判定時、`ticket_epoch != current_epoch` ならば即時無効（Cache Miss）とする。
-
+   
+   * カーネルはグローバル変数 `current_epoch` を保持。
+   * Fast Path 判定時、`ticket_epoch != current_epoch` ならば即時無効（Cache Miss）とする。
 
 2. **推奨ユースケース:**
-    * **ポリシー更新時:** 設定リロード時に Epoch をインクリメントし、古いルールのチケットを一括無効化する。
-    * **緊急停止:** `tealctl flush` 等で Epoch を更新し、全ての自動許可を停止する（Global Kill Switch）。
-    * **定期再審査:** 1日1回などの定期更新で、権限の永続化（メモリリーク）を防ぐ。
+   
+   * **ポリシー更新時:** 設定リロード時に Epoch をインクリメントし、古いルールのチケットを一括無効化する。
+   * **緊急停止:** `tealctl flush` 等で Epoch を更新し、全ての自動許可を停止する（Global Kill Switch）。
+   * **定期再審査:** 1日1回などの定期更新で、権限の永続化（メモリリーク）を防ぐ。
 
 ### 4.11 スクリプト実行主体のキャッシュ最適化 (Script Identity Optimization)**
 
@@ -415,12 +427,11 @@ Slow Path で同一操作が短時間に再発するケース（I/Oリトライ�
 そのため、以下のキャッシュ機構を実装する。
 
 1. **メタデータ生成時のキャッシュ (`bprm` Hook):**
-プロセス生成時（`bprm_check_security` 等）、インタープリタ経由の実行を検知した場合、そのスクリプトファイルの `Dev:Inode` を取得し、タスク構造体（`teal_task_meta`）に保存する。
+   プロセス生成時（`bprm_check_security` 等）、インタープリタ経由の実行を検知した場合、そのスクリプトファイルの `Dev:Inode` を取得し、タスク構造体（`teal_task_meta`）に保存する。
 2. **O(1) 判定:**
-`teal_file_open` 等の Fast Path 判定時は、ファイルシステムへのアクセスを行わず、Ticket 内の `origin_script_id` と、タスク構造体にキャッシュされた `script_id` を整数比較するだけで判定を完了させる。
+   `teal_file_open` 等の Fast Path 判定時は、ファイルシステムへのアクセスを行わず、Ticket 内の `origin_script_id` と、タスク構造体にキャッシュされた `script_id` を整数比較するだけで判定を完了させる。
 
 ---
-
 
 ## 5. カーネルモジュール制御フックおよびアクション定義
 
@@ -429,14 +440,14 @@ Slow Path で同一操作が短時間に再発するケース（I/Oリトライ�
 本システムは、LinuxカーネルのLSM（Linux Security Module）フレームワークを利用し、操作が実行される直前のVFS（Virtual File System）層またはソケット層で処理をインターセプトする。
 各ポリシーアクションを強制するためにカーネルモジュール（`teal_lsm`）が登録するLSMフックAPIの定義、および判定対象となるコンテキストは以下の通りである。
 
-| ポリシー表記 (Action.ops) | LSMフック名 (Kernel API) | 引数と取得データ | 制御対象システムコール（例） | 備考 |
-| --- | --- | --- | --- | --- |
-| **`READ`** | `file_permission` | `struct file *` (パス、inode) | `read(2)`, `pread(2)` | 読み出し監査・遮断 |
-| **`WRITE`** | `file_permission` | `struct file *` (パス、inode) | `write(2)`, `pwrite(2)` | 書き込み監査・遮断 |
-| **`EXECUTE`** | `bprm_check_security` | `struct linux_binprm *` (バイナリパス) | `execve(2)`, `execveat(2)` | プロセス起動制御 |
-| **`DELETE`** | `path_unlink`<BR>`path_rmdir` | `const struct path *dir` | `unlink(2)`, `rmdir(2)`, `unlinkat(2)`<BR>`struct dentry *dentry` | **ファイル/ディレクトリ削除** |
-| **`RENAME`** | `path_rename` | `const struct path *old_dir`<BR>`struct dentry *old_dentry` 等 | `rename(2)`, `renameat(2)` | ファイル/ディレクトリ移動 |
-| **`CONNECT`** | `socket_connect` | `struct socket *`, `struct sockaddr *` | `connect(2)` | アウトバウンド通信制御 |
+| ポリシー表記 (Action.ops) | LSMフック名 (Kernel API)          | 引数と取得データ                                                      | 制御対象システムコール（例）                                                    | 備考                |
+| ------------------- | ----------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------- | ----------------- |
+| **`READ`**          | `file_permission`             | `struct file *` (パス、inode)                                    | `read(2)`, `pread(2)`                                             | 読み出し監査・遮断         |
+| **`WRITE`**         | `file_permission`             | `struct file *` (パス、inode)                                    | `write(2)`, `pwrite(2)`                                           | 書き込み監査・遮断         |
+| **`EXECUTE`**       | `bprm_check_security`         | `struct linux_binprm *` (バイナリパス)                              | `execve(2)`, `execveat(2)`                                        | プロセス起動制御          |
+| **`DELETE`**        | `path_unlink`<BR>`path_rmdir` | `const struct path *dir`                                      | `unlink(2)`, `rmdir(2)`, `unlinkat(2)`<BR>`struct dentry *dentry` | **ファイル/ディレクトリ削除** |
+| **`RENAME`**        | `path_rename`                 | `const struct path *old_dir`<BR>`struct dentry *old_dentry` 等 | `rename(2)`, `renameat(2)`                                        | ファイル/ディレクトリ移動     |
+| **`CONNECT`**       | `socket_connect`              | `struct socket *`, `struct sockaddr *`                        | `connect(2)`                                                      | アウトバウンド通信制御       |
 
 #### 5.1.1 削除操作（DELETE）における `path_` フック採用の技術的根拠
 
@@ -467,16 +478,14 @@ pub const O_WRITE: u32   = 1 << 2; // 0x0004
 pub const O_DELETE: u32  = 1 << 3; // 0x0008
 pub const O_RENAME: u32  = 1 << 4; // 0x0010
 pub const O_CONNECT: u32 = 1 << 5; // 0x0020
-
 ```
 
 #### 5.2.2 相互変換マッピングルール
 
 * **カーネル空間（LSM -> Rustバインディング）**:
-`path_unlink` または `path_rmdir` フックにより捕捉された操作は、コンテキスト抽出後、一括して内部イベント `EVENT_UNLINK` として `teal_decision_logic` へ集約される。
+  `path_unlink` または `path_rmdir` フックにより捕捉された操作は、コンテキスト抽出後、一括して内部イベント `EVENT_UNLINK` として `teal_decision_logic` へ集約される。
 * **ユーザー空間への伝播とポリシーパース**:
-Netlink メッセージ生成時、`EVENT_UNLINK` は操作マスク `O_DELETE (0x0008)` に変換され、`TEAL_ATTR_OP` 属性に格納される。`teald` 内のポリシーエンジン（`teal_policy_engine`）は、このマスク値をパースし、ポリシーファイル上の `"DELETE"` アクション文字列と完全一致で照合を行う。
-
+  Netlink メッセージ生成時、`EVENT_UNLINK` は操作マスク `O_DELETE (0x0008)` に変換され、`TEAL_ATTR_OP` 属性に格納される。`teald` 内のポリシーエンジン（`teal_policy_engine`）は、このマスク値をパースし、ポリシーファイル上の `"DELETE"` アクション文字列と完全一致で照合を行う。
 
 ---
 
@@ -491,7 +500,7 @@ Netlink メッセージ生成時、`EVENT_UNLINK` は操作マスク `O_DELETE (
 
 **Generic Netlink Socket (必須)**
 
-  * Family Name: `teal_ctrl`
+* Family Name: `teal_ctrl`
 
 -----
 
@@ -499,13 +508,13 @@ Netlink メッセージ生成時、`EVENT_UNLINK` は操作マスク `O_DELETE (
 
 カーネル・ユーザー空間間でやり取りされるメッセージ種別（Command）を以下の通り定義する。
 
-| コマンド名 | 方向 | 役割 | 従来の文字列コマンド |
-| :--- | :--- | :--- | :--- |
-| `TEAL_CMD_REQ` | Kernel → User | Slow Path における承認要求 | `REQ:...` |
-| `TEAL_CMD_INFO` | Kernel → User | Fast Path の状態通知（消費/失効） | `INFO:...` |
-| `TEAL_CMD_APPROVE` | User → Kernel | 判定結果（許可）とWake up | `APPROVE <id>` |
-| `TEAL_CMD_DENY` | User → Kernel | 判定結果（拒否）とWake up | `DENY <id>` |
-| `TEAL_CMD_TICKET_ADD` | User → Kernel | Fast Path キャッシュの登録 | `TICKET_ADD ...` |
+| コマンド名                 | 方向            | 役割                     | 従来の文字列コマンド       |
+|:--------------------- |:------------- |:---------------------- |:---------------- |
+| `TEAL_CMD_REQ`        | Kernel → User | Slow Path における承認要求     | `REQ:...`        |
+| `TEAL_CMD_INFO`       | Kernel → User | Fast Path の状態通知（消費/失効） | `INFO:...`       |
+| `TEAL_CMD_APPROVE`    | User → Kernel | 判定結果（許可）とWake up       | `APPROVE <id>`   |
+| `TEAL_CMD_DENY`       | User → Kernel | 判定結果（拒否）とWake up       | `DENY <id>`      |
+| `TEAL_CMD_TICKET_ADD` | User → Kernel | Fast Path キャッシュの登録     | `TICKET_ADD ...` |
 
 -----
 
@@ -515,37 +524,37 @@ Netlink メッセージ生成時、`EVENT_UNLINK` は操作マスク `O_DELETE (
 これにより、**可変長文字列にコロンやNUL文字以外の任意のバイナリが含まれても安全に伝送可能**となる。
 （※本一覧の並び順は、カーネルモジュール内の Enum 定義 `teal_nl_attrs` およびバリデーションポリシー `teal_nl_policy` の定義順に完全準拠する）
 
-| 属性 (Attribute) | データ型 | 格納されるデータ・用途 |
-| --- | --- | --- |
-| `TEAL_ATTR_UNSPEC` | - | 未使用 (0) |
-| `TEAL_ATTR_TRANS_ID` | `u64` | Transport ID (カーネル・User間の一意な通信ID) |
-| `TEAL_ATTR_PID` | `u32` | プロセスID (`current->tgid`) |
-| `TEAL_ATTR_PPID` | `u32` | 親プロセスID |
-| `TEAL_ATTR_SESSIONID` | `u32` | セッションID |
-| `TEAL_ATTR_UID` | `u32` | 実効ユーザーID (`euid`) |
-| `TEAL_ATTR_GID` | `u32` | 実効グループID (`egid`) |
-| `TEAL_ATTR_PROG_DEV` | `u32` | 実行バイナリのデバイス番号 (Major:Minor結合値) |
-| `TEAL_ATTR_PROG_INO` | `u64` | 実行バイナリのInode番号 |
-| `TEAL_ATTR_PROGRAM` | `String` | 実行バイナリの絶対パス (NUL終端) |
-| `TEAL_ATTR_ACTION` | `String` | 操作種別 (`file_open`, `task_exec` 等) |
-| `TEAL_ATTR_TARGET_DEV` | `u32` | 操作対象オブジェクトのデバイス番号（`dev_t`） |
-| `TEAL_ATTR_TARGET_INO` | `u64` | 操作対象オブジェクトのInode番号（`ino_t`） |
-| `TEAL_ATTR_TARGET` | `String` | 操作対象オブジェクトの絶対パス |
-| **`TEAL_ATTR_OP`** | `u32` | **操作フラグのビットマスク（ポリシー評価用、新設）** |
-| **`TEAL_ATTR_EXPIRES_AT`** | `u64` | **キャッシュチケット等の有効期限タイムスタンプ（新設）** |
-| `TEAL_ATTR_SCRIPT_DEV` | `u32` | スクリプトのデバイス番号 (未使用時0) |
-| `TEAL_ATTR_SCRIPT_INO` | `u64` | スクリプトのInode番号 (未使用時0) |
-| `TEAL_ATTR_SCRIPT` | `String` | スクリプトの絶対パス |
-| `TEAL_ATTR_APPLET` | `String` | マルチコールバイナリ用識別名 (`current->comm`) ※区切り文字衝突問題はTLV化により解消 |
-| `TEAL_ATTR_LSM_LABEL` | `String` | SELinux等のラベル ※バイナリ化に伴い16進数エンコードは不要とし、生文字列を送信 |
-| `TEAL_ATTR_ARGS_HEAD` | `String` | 引数の先頭部分 （最大128 bytes, Optional） ※正規化文字列の先頭のみを格納する軽量要約フィールド |
-| `TEAL_ATTR_FLAGS` | `u32` | リクエスト属性ビットマスク |
-| `TEAL_ATTR_INFO_EVT` | `u8` | INFOイベント種別 (`0`: CONSUMED, `1`: EXPIRED) |
-| `TEAL_ATTR_USES_LEFT` | `u32` | 残り使用回数 |
-| `TEAL_ATTR_TICKET_ID` | `u64` | 監査・失効指定用のユニークID |
-| `TEAL_ATTR_EPOCH` | `u32` | ポリシー世代番号 |
-| `TEAL_ATTR_AUDIT_FLG` | `u32` | 監査挙動フラグ (`0x0`: Std, `0x1`: Silent, `0x2`: Strict) |
-| `TEAL_ATTR_APPLET_HASH` | `u64` | Multi-call Binary用識別ハッシュ |
+| 属性 (Attribute)             | データ型     | 格納されるデータ・用途                                                |
+| -------------------------- | -------- | ---------------------------------------------------------- |
+| `TEAL_ATTR_UNSPEC`         | -        | 未使用 (0)                                                    |
+| `TEAL_ATTR_TRANS_ID`       | `u64`    | Transport ID (カーネル・User間の一意な通信ID)                          |
+| `TEAL_ATTR_PID`            | `u32`    | プロセスID (`current->tgid`)                                   |
+| `TEAL_ATTR_PPID`           | `u32`    | 親プロセスID                                                    |
+| `TEAL_ATTR_SESSIONID`      | `u32`    | セッションID                                                    |
+| `TEAL_ATTR_UID`            | `u32`    | 実効ユーザーID (`euid`)                                          |
+| `TEAL_ATTR_GID`            | `u32`    | 実効グループID (`egid`)                                          |
+| `TEAL_ATTR_PROG_DEV`       | `u32`    | 実行バイナリのデバイス番号 (Major:Minor結合値)                             |
+| `TEAL_ATTR_PROG_INO`       | `u64`    | 実行バイナリのInode番号                                             |
+| `TEAL_ATTR_PROGRAM`        | `String` | 実行バイナリの絶対パス (NUL終端)                                        |
+| `TEAL_ATTR_ACTION`         | `String` | 操作種別 (`file_open`, `task_exec` 等)                          |
+| `TEAL_ATTR_TARGET_DEV`     | `u32`    | 操作対象オブジェクトのデバイス番号（`dev_t`）                                 |
+| `TEAL_ATTR_TARGET_INO`     | `u64`    | 操作対象オブジェクトのInode番号（`ino_t`）                                |
+| `TEAL_ATTR_TARGET`         | `String` | 操作対象オブジェクトの絶対パス                                            |
+| **`TEAL_ATTR_OP`**         | `u32`    | **操作フラグのビットマスク（ポリシー評価用、新設）**                               |
+| **`TEAL_ATTR_EXPIRES_AT`** | `u64`    | **キャッシュチケット等の有効期限タイムスタンプ（新設）**                             |
+| `TEAL_ATTR_SCRIPT_DEV`     | `u32`    | スクリプトのデバイス番号 (未使用時0)                                       |
+| `TEAL_ATTR_SCRIPT_INO`     | `u64`    | スクリプトのInode番号 (未使用時0)                                      |
+| `TEAL_ATTR_SCRIPT`         | `String` | スクリプトの絶対パス                                                 |
+| `TEAL_ATTR_APPLET`         | `String` | マルチコールバイナリ用識別名 (`current->comm`) ※区切り文字衝突問題はTLV化により解消      |
+| `TEAL_ATTR_LSM_LABEL`      | `String` | SELinux等のラベル ※バイナリ化に伴い16進数エンコードは不要とし、生文字列を送信               |
+| `TEAL_ATTR_ARGS_HEAD`      | `String` | 引数の先頭部分 （最大128 bytes, Optional） ※正規化文字列の先頭のみを格納する軽量要約フィールド |
+| `TEAL_ATTR_FLAGS`          | `u32`    | リクエスト属性ビットマスク                                              |
+| `TEAL_ATTR_INFO_EVT`       | `u8`     | INFOイベント種別 (`0`: CONSUMED, `1`: EXPIRED)                   |
+| `TEAL_ATTR_USES_LEFT`      | `u32`    | 残り使用回数                                                     |
+| `TEAL_ATTR_TICKET_ID`      | `u64`    | 監査・失効指定用のユニークID                                            |
+| `TEAL_ATTR_EPOCH`          | `u32`    | ポリシー世代番号                                                   |
+| `TEAL_ATTR_AUDIT_FLG`      | `u32`    | 監査挙動フラグ (`0x0`: Std, `0x1`: Silent, `0x2`: Strict)         |
+| `TEAL_ATTR_APPLET_HASH`    | `u64`    | Multi-call Binary用識別ハッシュ                                   |
 
 #### 6.2.1 破壊的変更（DELETEアクション）時における客体コンテキスト抽出仕様
 
@@ -564,24 +573,24 @@ Netlink メッセージ生成時、`EVENT_UNLINK` は操作マスク `O_DELETE (
 
 カーネルがSlow Path時に送信する。従来文字列として結合していた25フィールドの情報を、個別のAttributeとしてNetlinkメッセージにパッキング（`nla_put`）して送信する。
 
-  * **必須属性:** `TRANS_ID`, `PID`, `UID`, `PROG_DEV`, `PROG_INO`, `PROGRAM`, `ACTION`, `APPLET` 等、対象特定に必要な全てのメタデータ。
+* **必須属性:** `TRANS_ID`, `PID`, `UID`, `PROG_DEV`, `PROG_INO`, `PROGRAM`, `ACTION`, `APPLET` 等、対象特定に必要な全てのメタデータ。
 
 #### 6.3.2. INFO（状態通知: `TEAL_CMD_INFO`）
 
 Fast Pathでの消費を通知する。パス文字列は含めず、識別子のみをパッキングする。
 
-  * **必須属性:** `INFO_EVT`, `TICKET_ID`, `UID`, `USES_LEFT`, `PROG_DEV`, `PROG_INO`, `TARGET_DEV`, `TARGET_INO`.
+* **必須属性:** `INFO_EVT`, `TICKET_ID`, `UID`, `USES_LEFT`, `PROG_DEV`, `PROG_INO`, `TARGET_DEV`, `TARGET_INO`.
 
 #### 6.3.3. TICKET_ISSUE (許可応答とキャッシュ発行: `TEAL_CMD_TICKET_ADD`）
 
 `teald` からカーネルへ、操作の許可とFast Path用キャッシュ（チケット）の発行を指示する。
 
 * **属性の必須要件:**
-    * **客体バインディング型**チケットを発行する場合: `TARGET_DEV`, `TARGET_INO` を必須とする。
-    * **主体コンテキスト型**チケットを発行する場合: `TARGET_PID` または `TARGET_CRED_ID` を必須とする。この場合、特定の実体ファイルに依存しないため、`TARGET_DEV`, `TARGET_INO` は**省略可（またはゼロ埋め）**として扱う。
+  * **客体バインディング型**チケットを発行する場合: `TARGET_DEV`, `TARGET_INO` を必須とする。
+  * **主体コンテキスト型**チケットを発行する場合: `TARGET_PID` または `TARGET_CRED_ID` を必須とする。この場合、特定の実体ファイルに依存しないため、`TARGET_DEV`, `TARGET_INO` は**省略可（またはゼロ埋め）**として扱う。
 * **フラグ定義 (Ticket Flags):**
-    * `0x01 (SILENT_IO)`: このプロセスが行うテンポラリファイルや無名ファイルへのI/Oについて、`teald` への `REQ` 送信と監査ログ生成を抑制し、カーネル内で自動許可する。
-    * `0x02 (INHERIT)`: `fork` および `exec` 時に、このチケットの権限（有効期限および `SILENT_IO` 等のフラグ）を子プロセスへ自動的に継承させる。
+  * `0x01 (SILENT_IO)`: このプロセスが行うテンポラリファイルや無名ファイルへのI/Oについて、`teald` への `REQ` 送信と監査ログ生成を抑制し、カーネル内で自動許可する。
+  * `0x02 (INHERIT)`: `fork` および `exec` 時に、このチケットの権限（有効期限および `SILENT_IO` 等のフラグ）を子プロセスへ自動的に継承させる。
 
 -----
 
@@ -597,16 +606,16 @@ Fast Pathでの消費を通知する。パス文字列は含めず、識別子�
 
 競合状態（TOCTOU）の回避とシステムパフォーマンスの最適化のため、各情報の取得責務を以下のように規定する。
 
-| データ項目 | 取得場所 | 理由・実装方針 |
-| --- | --- | --- |
-| **PID, UID, GID** | **Kernel** | プロセス属性の基本情報であり、後から変更される可能性があるため。 |
-| **PPID, SessionID** | **Kernel** | 親プロセスの消失やセッション離脱による追跡不能リスクを回避するため。 |
-| **Target Inode (および関連デバイス番号)** | **Kernel** | **【必須】** パス解決時のTOCTOU攻撃（シンボリックリンク差し替え）を完全に防ぐため。**`teald` (ユーザー空間) は、いかなる場合（事前承認時を含む）もファイルシステムにアクセスして `inode` の自己解決を行わない。**必ずカーネルがフックした瞬間の絶対不変の識別子（REQ経由で受信したもの）を使用する。 |
-| **LSM Label** | **Kernel** | プロセスの `exec` 等によるドメイン遷移前の状態を正確に記録するため。 |
-| **Applet Name** | **Kernel** | BusyBox等のマルチコールバイナリにおいて、実行された瞬間の機能名 (`comm`) を特定するため。 |
-| **Arguments (head)** | **Kernel** | 重要コマンドに限り、実行時の引数をカーネル内でキャプチャする（戦略的選別）。 |
-| **File Hash** | **User (teald)** | カーネル内でのハッシュ計算負荷を回避するため、通知受信後に `teald` が計算する（リスク受容）。 |
-| **SSH/Env Context** | **User (teald)** | 環境変数のパース負荷をカーネルから排除するため、`SessionID` をキーに `teald` が解決する。 |
+| データ項目                          | 取得場所             | 理由・実装方針                                                                                                                                                               |
+| ------------------------------ | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **PID, UID, GID**              | **Kernel**       | プロセス属性の基本情報であり、後から変更される可能性があるため。                                                                                                                                      |
+| **PPID, SessionID**            | **Kernel**       | 親プロセスの消失やセッション離脱による追跡不能リスクを回避するため。                                                                                                                                    |
+| **Target Inode (および関連デバイス番号)** | **Kernel**       | **【必須】** パス解決時のTOCTOU攻撃（シンボリックリンク差し替え）を完全に防ぐため。**`teald` (ユーザー空間) は、いかなる場合（事前承認時を含む）もファイルシステムにアクセスして `inode` の自己解決を行わない。**必ずカーネルがフックした瞬間の絶対不変の識別子（REQ経由で受信したもの）を使用する。 |
+| **LSM Label**                  | **Kernel**       | プロセスの `exec` 等によるドメイン遷移前の状態を正確に記録するため。                                                                                                                                |
+| **Applet Name**                | **Kernel**       | BusyBox等のマルチコールバイナリにおいて、実行された瞬間の機能名 (`comm`) を特定するため。                                                                                                                 |
+| **Arguments (head)**           | **Kernel**       | 重要コマンドに限り、実行時の引数をカーネル内でキャプチャする（戦略的選別）。                                                                                                                                |
+| **File Hash**                  | **User (teald)** | カーネル内でのハッシュ計算負荷を回避するため、通知受信後に `teald` が計算する（リスク受容）。                                                                                                                   |
+| **SSH/Env Context**            | **User (teald)** | 環境変数のパース負荷をカーネルから排除するため、`SessionID` をキーに `teald` が解決する。                                                                                                               |
 
 ---
 
@@ -616,37 +625,37 @@ Fast Pathでの消費を通知する。パス文字列は含めず、識別子�
 
 TEALシステムでは、カーネル通信の効率性と監査ログの追跡性を両立するため、以下の2種類のIDを使い分ける。
 
-1.  **Transport ID (Kernel Space: `u64`)**
-    * **定義:** REQ メッセージ（`TEAL_CMD_REQ`）に含まれる **`TEAL_ATTR_TRANS_ID` 属性**。
-    * **生成:** デバイスドライバー（teal_module）が内部カウンタ (`atomic64_inc`) を用いて生成する連番。
-    * **役割:** カーネルと `teald` 間での通信ハンドシェイク用。ホストの稼働期間（ドライバーロード中）のみ一意性が保証される。
-    * **ログ:** 原則として監査ログには記録しない（デバッグ用トレースを除く）。
+1. **Transport ID (Kernel Space: `u64`)**
+   
+   * **定義:** REQ メッセージ（`TEAL_CMD_REQ`）に含まれる **`TEAL_ATTR_TRANS_ID` 属性**。
+   * **生成:** デバイスドライバー（teal_module）が内部カウンタ (`atomic64_inc`) を用いて生成する連番。
+   * **役割:** カーネルと `teald` 間での通信ハンドシェイク用。ホストの稼働期間（ドライバーロード中）のみ一意性が保証される。
+   * **ログ:** 原則として監査ログには記録しない（デバッグ用トレースを除く）。
 
-2.  **Audit ID (User Space: `UUID`)**
-    * **定義:** 監査ログ（JSON）の `id` フィールド。
-    * **生成:** `teald` が `REQ` を受信し、内部でリクエスト構造体を生成した瞬間に発行する。
-    * **形式:** **UUID v7 (Time-ordered)** または v4。
-    * **役割:** 分散環境および長期保存における一意な識別子。SIEMや外部システムでの検索キーとして使用する。
+2. **Audit ID (User Space: `UUID`)**
+   
+   * **定義:** 監査ログ（JSON）の `id` フィールド。
+   * **生成:** `teald` が `REQ` を受信し、内部でリクエスト構造体を生成した瞬間に発行する。
+   * **形式:** **UUID v7 (Time-ordered)** または v4。
+   * **役割:** 分散環境および長期保存における一意な識別子。SIEMや外部システムでの検索キーとして使用する。
 
 **実装要件:**
 `teald` は受信した `Transport ID` と生成した `Audit ID` をメモリ上で紐付けて管理し、カーネルへの応答（Allow/Deny）には必ず `Transport ID` を使用すること。
-
 
 ### 7.2 パス解決とログエンリッチメント (Path Resolution Strategy)
 
 カーネルから受信する `INFO` メッセージにはファイルパスが含まれないため、`teald` はログ保存時に以下のロジックでパス情報を復元（Enrichment）する。
 
 1. **Intent Binding (推奨・高速):**
-    * 受信した `ticket_id` (u64) を **システム標準ID形式 (`T-<seq>`) に変換** し、これをキーとして、`teald` がメモリ内に保持している「発行済みチケット台帳（Intent Ledger）」を検索する。
-    * チケット発行時に使用したパス（例: `/etc/shadow`）をログの `path` フィールドに転記する。
-    * **メリット:** 高速であり、チケット発行時の「意図（Intent）」と実際の「結果（Reality）」を正確に紐付けられる。
-
+   
+   * 受信した `ticket_id` (u64) を **システム標準ID形式 (`T-<seq>`) に変換** し、これをキーとして、`teald` がメモリ内に保持している「発行済みチケット台帳（Intent Ledger）」を検索する。
+   * チケット発行時に使用したパス（例: `/etc/shadow`）をログの `path` フィールドに転記する。
+   * **メリット:** 高速であり、チケット発行時の「意図（Intent）」と実際の「結果（Reality）」を正確に紐付けられる。
 
 2. **Inode Reverse Lookup (補完・低速):**
-    * チケット情報が見つからない場合（再起動後など）、または監査専用モードの場合、`find` やファイルシステム走査を用いて `inode` からパスの逆引きを試みる。
-    * ※負荷が高いため、必要最小限の利用に留める。
-
-
+   
+   * チケット情報が見つからない場合（再起動後など）、または監査専用モードの場合、`find` やファイルシステム走査を用いて `inode` からパスの逆引きを試みる。
+   * ※負荷が高いため、必要最小限の利用に留める。
 
 ### 7.3 データ構造 (A) Fast Path Log Schema (Ticket Consumed)
 
@@ -670,12 +679,12 @@ Fast Path ログは、カーネルキャッシュ（チケット）に基づい�
     "uid": 1000,
     "pid": 4530,
     "action": "exec", // または open, unlink 等
-    
+
     // Subject (実行主体)
     "subject": {
       "path": "/usr/bin/cat",   // inodeから解決
       "hash": "sha256:e3b0c44...", // tealdがバイナリから事後計算（改変検知用）
-      
+
       // 【注意】Fast Pathではパフォーマンス優先のため、
       // 実行時の生引数（Raw Args）は記録しない。
       // 具体的な引数制限は Ticket ID に紐付く Slow Path ログを参照する。
@@ -703,20 +712,21 @@ Fast Path ログは、カーネルキャッシュ（チケット）に基づい�
 システム全体の追跡性（Traceability）とカーネル通信の効率性を両立するため、内部処理用IDと監査用IDを明確に分離して実装する。
 
 1. **Transport ID (Kernel Space: `u64`)**
-    * 定義: struct teal_request 内の `id` メンバ。
-    * 生成: カーネルモジュール内で `atomic64_inc_return` 等を用いて生成される単調増加整数。
-    * 役割: カーネルと `teald` 間での一時的なリクエスト/レスポンスの紐付け（ハンドシェイク）にのみ使用する。
-    * スコープ: ホストの稼働期間中のみ一意（再起動によりリセットされる）。
+   
+   * 定義: struct teal_request 内の `id` メンバ。
+   * 生成: カーネルモジュール内で `atomic64_inc_return` 等を用いて生成される単調増加整数。
+   * 役割: カーネルと `teald` 間での一時的なリクエスト/レスポンスの紐付け（ハンドシェイク）にのみ使用する。
+   * スコープ: ホストの稼働期間中のみ一意（再起動によりリセットされる）。
 
 2. **Audit ID (User Space: `UUID`)**
-    * 定義: 監査ログ（JSON）内の `id` フィールド。
-    * 生成: teald が `REQ` メッセージを受信し、内部でイベントオブジェクトを生成した瞬間に発行する。
-    * 形式: **UUID v7 (Time-ordered)** の採用を推奨する。これにより、分散環境での一意性と時系列ソート性能を両立させる。
-    * 役割: ログ解析、SIEM連携、および長期的な監査証跡の識別子。
+   
+   * 定義: 監査ログ（JSON）内の `id` フィールド。
+   * 生成: teald が `REQ` メッセージを受信し、内部でイベントオブジェクトを生成した瞬間に発行する。
+   * 形式: **UUID v7 (Time-ordered)** の採用を推奨する。これにより、分散環境での一意性と時系列ソート性能を両立させる。
+   * 役割: ログ解析、SIEM連携、および長期的な監査証跡の識別子。
 
 **実装要件:**
 `teald` はメモリ上で `Transport ID` と `Audit ID` のマッピングを管理し、カーネルへの応答（`APPROVE/DENY`）には `Transport ID` を使用し、外部へのログ出力には `Audit ID` を使用すること。
-
 
 ### 7.5 データ構造 (B) Slow Path Log Schema (Interactive Decision)
 
@@ -724,22 +734,21 @@ Slow Path（同期承認時）のログは、`teald` が下した判定結果お
 特に **`ACCESS_DENIED` は攻撃検知における最重要イベント** として扱われる。
 
 1. **`TICKET_ISSUED` (許可・キャッシュ登録):**
-    * 承認を行い、かつカーネル内にチケット（キャッシュ）を生成した状態。
-    * 後続の `TICKET_CONSUMED` (Fast Path) ログの親となる。
-    * ticket_context フィールドが**必須**となる。
-
+   
+   * 承認を行い、かつカーネル内にチケット（キャッシュ）を生成した状態。
+   * 後続の `TICKET_CONSUMED` (Fast Path) ログの親となる。
+   * ticket_context フィールドが**必須**となる。
 
 2. **`ACCESS_ALLOWED` (許可・キャッシュなし):**
-    * 今回の要求のみを許可（One-time Allow）した状態。
-    * 監査モード（Audit Mode）や、キャッシュ不可（No-Cache）ルールに該当する場合がこれにあたる。
-    * チケットは生成されないため、同一操作があっても次回も再度 Slow Path となる。
-
+   
+   * 今回の要求のみを許可（One-time Allow）した状態。
+   * 監査モード（Audit Mode）や、キャッシュ不可（No-Cache）ルールに該当する場合がこれにあたる。
+   * チケットは生成されないため、同一操作があっても次回も再度 Slow Path となる。
 
 3. **`ACCESS_DENIED` (拒否):**
-    * ポリシー違反または承認者による否決が発生した状態。
-    * **対象操作の実行およびチケットの発行が共にブロックされる。**
-
-
+   
+   * ポリシー違反または承認者による否決が発生した状態。
+   * **対象操作の実行およびチケットの発行が共にブロックされる。**
 
 **JSONスキーマ例 (ACCESS_DENIED の場合):**
 
@@ -785,7 +794,6 @@ Slow Path（同期承認時）のログは、`teald` が下した判定結果お
     "message": "Outbound connection to unauthorized IP is blocked."
   }
 }
-
 ```
 
 **JSONスキーマ例 (teal-cli start許可 の場合):**
@@ -828,76 +836,78 @@ Slow Path（同期承認時）のログは、`teald` が下した判定結果お
 
 監査ログのトップレベルフィールド `type` には、イベントの発生要因と処理経路（Path）を識別するため、以下の列挙値（SCREAMING_SNAKE_CASE）を使用する。
 
-| ログ種別 (type) | 分類 | 説明・発生タイミング |
-| --- | --- | --- |
-| **`INTERACTIVE_DECISION`** | Slow Path | **承認判定** |
-|     |     | 承認フローを経て許可されたログ。**チケットが発行された場合、そのIDとTTL情報を含む。** |
-| **`ACCESS_ALLOWED`** | Slow Path | **自動許可** |
-|     |     | ポリシーにより即時許可されたログ。**`ttl_sec > 0` の設定によりチケットが発行された場合、その情報を含む。** |
-| **`ACCESS_DENIED`** | Slow Path | **アクセス拒否** |
-|     |     | ポリシー評価の結果、拒否（`deny`）された場合、または不正なリクエストとして破棄された時点で記録される。 |
-| **`TICKET_CONSUMED`** | Fast Path | **チケット使用** |
-|     |     | 発行済みチケットがカーネル内の Fast Path キャッシュでヒットし、ユーザ空間 (`teald`) を介さずに高速処理されたイベント。 |
-|     |     | ※ カーネルからの `INFO` 通知に基づき非同期で記録される。 |
-| **`TICKET_EXPIRED`** | Internal | **チケット期限切れ** |
-|     |     | 発行されたチケットが一度も使用されないまま TTL (Time To Live) を経過し、ガベージコレクション（Sweeper）によって破棄された時点で記録される。 |
-
-
+| ログ種別 (type)                | 分類        | 説明・発生タイミング                                                                          |
+| -------------------------- | --------- | ----------------------------------------------------------------------------------- |
+| **`INTERACTIVE_DECISION`** | Slow Path | **承認判定**                                                                            |
+|                            |           | 承認フローを経て許可されたログ。**チケットが発行された場合、そのIDとTTL情報を含む。**                                     |
+| **`ACCESS_ALLOWED`**       | Slow Path | **自動許可**                                                                            |
+|                            |           | ポリシーにより即時許可されたログ。**`ttl_sec > 0` の設定によりチケットが発行された場合、その情報を含む。**                      |
+| **`ACCESS_DENIED`**        | Slow Path | **アクセス拒否**                                                                          |
+|                            |           | ポリシー評価の結果、拒否（`deny`）された場合、または不正なリクエストとして破棄された時点で記録される。                              |
+| **`TICKET_CONSUMED`**      | Fast Path | **チケット使用**                                                                          |
+|                            |           | 発行済みチケットがカーネル内の Fast Path キャッシュでヒットし、ユーザ空間 (`teald`) を介さずに高速処理されたイベント。              |
+|                            |           | ※ カーネルからの `INFO` 通知に基づき非同期で記録される。                                                   |
+| **`TICKET_EXPIRED`**       | Internal  | **チケット期限切れ**                                                                        |
+|                            |           | 発行されたチケットが一度も使用されないまま TTL (Time To Live) を経過し、ガベージコレクション（Sweeper）によって破棄された時点で記録される。 |
 
 ### 7.6 監査チェーン (Audit Chain) と正規化モデル
 
 TEALシステムの監査ログは、ストレージ効率と検証可能性を両立するため、リレーショナルな「監査チェーン」モデルを採用する。
 
 1. **正規化 (Normalization):**
-    * 重厚な承認情報（BLS署名、承認者のMFAコンテキストなど）は、**Slow Path ログ（チケット発行時）** にのみ記録する。
-    * その後の繰り返し実行（Fast Path）は、`ticket_id` を介してこの親ログを参照する。
-
+   
+   * 重厚な承認情報（BLS署名、承認者のMFAコンテキストなど）は、**Slow Path ログ（チケット発行時）** にのみ記録する。
+   * その後の繰り返し実行（Fast Path）は、`ticket_id` を介してこの親ログを参照する。
 
 2. **検証プロセス (Verification):**
-    * 監査ツールは、Fast Path ログの `ticket_context.ticket_id` をキーとして、対応する Slow Path ログを検索しなければならない。
-    * **完全な証跡 = Fast Path ログ (実行事実) + Slow Path ログ (承認の正当性)**
-    * これにより、数千回のバッチ処理実行（Fast Path）に対し、署名データ（Slow Path）を1つだけ保持すれば良いため、ログ容量を大幅に削減できる。
-
+   
+   * 監査ツールは、Fast Path ログの `ticket_context.ticket_id` をキーとして、対応する Slow Path ログを検索しなければならない。
+   * **完全な証跡 = Fast Path ログ (実行事実) + Slow Path ログ (承認の正当性)**
+   * これにより、数千回のバッチ処理実行（Fast Path）に対し、署名データ（Slow Path）を1つだけ保持すれば良いため、ログ容量を大幅に削減できる。
 
 3. **ToCToU (Time-of-Check to Time-of-Use) 対策:**
-    * Fast Path ログにも `syscall_context.subject.hash` を記録することで、承認時点（Slow Path）と実行時点（Fast Path）でバイナリが改変されていないことを事後検証可能にする。
-
-
+   
+   * Fast Path ログにも `syscall_context.subject.hash` を記録することで、承認時点（Slow Path）と実行時点（Fast Path）でバイナリが改変されていないことを事後検証可能にする。
 
 ### 7.7 コンテキスト解決とハッシュ検証 (Context Resolution)
 
 `teald` は、カーネルからの `REQ` を受信した際、判定前に以下のロジックを用いて情報を補完（Enrichment）しなければならない。
 
 1. **SSH / Login コンテキストの解決:**
-    * pid から `/proc/<pid>/environ` を読み取り、`SSH_CLIENT`, `SSH_CONNECTION` 環境変数を抽出する。
-    * または、`utmp`/`wtmp` データベースを参照し、`session_id` に紐付くログイン元 IP を特定する。
-    * この処理は `Decision Worker` スレッド内で行い、承認者の UI に「誰がどこから接続しているか」を表示するために使用する。
+   
+   * pid から `/proc/<pid>/environ` を読み取り、`SSH_CLIENT`, `SSH_CONNECTION` 環境変数を抽出する。
+   * または、`utmp`/`wtmp` データベースを参照し、`session_id` に紐付くログイン元 IP を特定する。
+   * この処理は `Decision Worker` スレッド内で行い、承認者の UI に「誰がどこから接続しているか」を表示するために使用する。
 
 2. **LSMラベルのデコード:**
-    * `REQ` メッセージ内の `LSM_LABEL_HEX` フィールドを16進デコードし、元の文字列（例: `system_u:system_r:sshd_t:s0`）に復元する。
-    * これにより、プロトコル上の区切り文字競合を回避しつつ、正確なコンテキストを記録する。
+   
+   * `REQ` メッセージ内の `LSM_LABEL_HEX` フィールドを16進デコードし、元の文字列（例: `system_u:system_r:sshd_t:s0`）に復元する。
+   * これにより、プロトコル上の区切り文字競合を回避しつつ、正確なコンテキストを記録する。
 
 3. **実行バイナリのハッシュ計算:**
-    * syscall_context.subject.hash は、`teald` が対象の `program` パスを `open()` し、SHA-256 を計算して付与する。
-    * **TOCTOU対策:** カーネル側でバイナリがロックされているわけではないため、厳密には実行時点と乖離する可能性があるが、監査情報としては `teald` 視点でのハッシュを正とする。
+   
+   * syscall_context.subject.hash は、`teald` が対象の `program` パスを `open()` し、SHA-256 を計算して付与する。
+   * **TOCTOU対策:** カーネル側でバイナリがロックされているわけではないため、厳密には実行時点と乖離する可能性があるが、監査情報としては `teald` 視点でのハッシュを正とする。
 
 4. **BLS 署名の集約:**
-    * mpa_proof 内の `approvers` から個別の署名を集め、MPA Engine が BLS 署名集約（Signature Aggregation）を行う。
-    * 集約された `aggregated_signature` のみが、最終的に発行される Ticket に含まれる署名と数学的に等価となる。
+   
+   * mpa_proof 内の `approvers` から個別の署名を集め、MPA Engine が BLS 署名集約（Signature Aggregation）を行う。
+   * 集約された `aggregated_signature` のみが、最終的に発行される Ticket に含まれる署名と数学的に等価となる。
 
 5. **TTY の特定:**
-    * `/proc/<pid>/fd/0`, `1`, `2` のいずれかのシンボリックリンク先が `/dev/pts/` または `/dev/tty` で始まる場合、それを TTY とする。
-    * デーモン等で TTY がない場合は `?` または `none` とする。
+   
+   * `/proc/<pid>/fd/0`, `1`, `2` のいずれかのシンボリックリンク先が `/dev/pts/` または `/dev/tty` で始まる場合、それを TTY とする。
+   * デーモン等で TTY がない場合は `?` または `none` とする。
 
 6. **SSH 接続情報の特定 (Ancestry Walk):**
-    * 対象プロセスが `sudo` 等で環境変数を保持していない場合を考慮し、プロセスツリーを親 (`PPID`) 方向へ遡る。
-    * 各プロセスの `/proc/<n>/environ` を解析し、最初に発見された `SSH_CLIENT` または `SSH_CONNECTION` 環境変数の値を採用する。
-
+   
+   * 対象プロセスが `sudo` 等で環境変数を保持していない場合を考慮し、プロセスツリーを親 (`PPID`) 方向へ遡る。
+   * 各プロセスの `/proc/<n>/environ` を解析し、最初に発見された `SSH_CLIENT` または `SSH_CONNECTION` 環境変数の値を採用する。
 
 7. **認証方式 (Login Method) の特定:**
-    * 環境変数 `SSH_USER_AUTH` が存在する場合、指定されたファイルを読み取り、認証方式（`publickey`, `password` 等）を記録する。
-    * 取得できない場合（`sshd` 設定未対応時など）は、`unknown` を記録する。
-
+   
+   * 環境変数 `SSH_USER_AUTH` が存在する場合、指定されたファイルを読み取り、認証方式（`publickey`, `password` 等）を記録する。
+   * 取得できない場合（`sshd` 設定未対応時など）は、`unknown` を記録する。
 
 ### 7.8 コマンドライン引数の記録戦略 (Selective Argument Audit)
 
@@ -909,33 +919,34 @@ TEALシステムの監査ログは、ストレージ効率と検証可能性を�
 代わりに軽量な要約情報である `TEAL_ATTR_ARGS_HEAD` を用いる。
 
 1. **デフォルト動作 (Applet Only):**
-    * 一般的なコマンド（`ls`, `cat`, 自作アプリ等）については、
-      **`<APPLET>` (プロセス名) のみを記録し、引数情報は送信しない。**
-    * **理由:**
-        ファイルアクセス制御においては Subject（誰が）と Object（何に）の情報で
-        十分なケースが大半であり、不定長データを送るコストを回避するため。
-
+   
+   * 一般的なコマンド（`ls`, `cat`, 自作アプリ等）については、
+     **`<APPLET>` (プロセス名) のみを記録し、引数情報は送信しない。**
+   * **理由:**
+       ファイルアクセス制御においては Subject（誰が）と Object（何に）の情報で
+       十分なケースが大半であり、不定長データを送るコストを回避するため。
 
 2. **重要コマンドの選別記録 (Target List):**
-    * 以下のカテゴリに属する「セキュリティ上重要なコマンド」に限り、
-      **引数の先頭部分 (`ARGS_HEAD`)** をカーネルから抽出し、記録する。
-    * `ARGS_HEAD` は完全な引数列ではなく、引数の要約情報である。
-
-    * **対象例:**
-        * **特権昇格・ID変更:** `sudo`, `su`, `doas`
-        * **インタプリタ・シェル:** `python`, `perl`, `bash`, `sh`
-        * **コンテナ・構成管理:** `docker`, `kubectl`, `systemctl`
-
-    * **理由:**
-        これらのコマンドは、引数によって挙動が大きく変化するため、
-        先頭部分のみでも監査および異常検知に有効な情報となる。
-
-
-    * **実装方式:**
-        * **Phase 1:** カーネルモジュール内の静的配列（Allowlist）で対象を定義。
-        * **Phase 2/3:** ユーザー空間 (`teald`) からの設定注入により、
-          対象リストを動的に更新可能とする。
-
+   
+   * 以下のカテゴリに属する「セキュリティ上重要なコマンド」に限り、
+     **引数の先頭部分 (`ARGS_HEAD`)** をカーネルから抽出し、記録する。
+   
+   * `ARGS_HEAD` は完全な引数列ではなく、引数の要約情報である。
+   
+   * **対象例:**
+     
+     * **特権昇格・ID変更:** `sudo`, `su`, `doas`
+     * **インタプリタ・シェル:** `python`, `perl`, `bash`, `sh`
+     * **コンテナ・構成管理:** `docker`, `kubectl`, `systemctl`
+   
+   * **理由:**
+       これらのコマンドは、引数によって挙動が大きく変化するため、
+       先頭部分のみでも監査および異常検知に有効な情報となる。
+     
+     * **実装方式:**
+       * **Phase 1:** カーネルモジュール内の静的配列（Allowlist）で対象を定義。
+       * **Phase 2/3:** ユーザー空間 (`teald`) からの設定注入により、
+         対象リストを動的に更新可能とする。
 
 ### 7.9 管理操作の監査 (Auditing Administrative Operations)
 
@@ -943,29 +954,30 @@ TEALシステムの監査ログは、ストレージ効率と検証可能性を�
 
 #### 7.9.1. 監査対象コマンドとログ種別
 
-| 操作コマンド | 動作内容 | 必須ログ種別 | 備考 |
-| --- | --- | --- | --- |
-| **`teal-cli start`** | Enforceモードへの移行 | `INTERACTIVE_DECISION` | **【重要】** 通常は管理者の承認（MPA）を経て実行されるべき操作。 |
-| **`teal-cli stop`** | Auditモードへの降格 | `INTERACTIVE_DECISION` | 防御機能の停止を意味するため、最も厳格な承認と記録が求められる。 |
-| **`teal-cli reload`** | 設定・ポリシーの再読み込み | `ACCESS_ALLOWED` | 自動化ツールによる実行が多いため、承認不要（Allow）設定となる場合が多いが、ログは必須。 |
-| **`teal-cli flush`** | キャッシュ/Epochの破棄 | `ACCESS_ALLOWED` | 緊急停止措置として記録する。 |
+| 操作コマンド                | 動作内容           | 必須ログ種別                 | 備考                                             |
+| --------------------- | -------------- | ---------------------- | ---------------------------------------------- |
+| **`teal-cli start`**  | Enforceモードへの移行 | `INTERACTIVE_DECISION` | **【重要】** 通常は管理者の承認（MPA）を経て実行されるべき操作。           |
+| **`teal-cli stop`**   | Auditモードへの降格   | `INTERACTIVE_DECISION` | 防御機能の停止を意味するため、最も厳格な承認と記録が求められる。               |
+| **`teal-cli reload`** | 設定・ポリシーの再読み込み  | `ACCESS_ALLOWED`       | 自動化ツールによる実行が多いため、承認不要（Allow）設定となる場合が多いが、ログは必須。 |
+| **`teal-cli flush`**  | キャッシュ/Epochの破棄 | `ACCESS_ALLOWED`       | 緊急停止措置として記録する。                                 |
 
 #### 7.9.2. ログ記録仕様
 
 管理操作のログは、6.5節で定義された **Slow Path Log Schema** に準拠して出力する。ただし、`syscall_context` 内のフィールドは以下のようにマッピングする。
 
 * **Subject (主体):**
-    * `uid`: コマンドを実行した管理者ユーザーのUID。
-    * `comm`: "teal-cli"
-
+  
+  * `uid`: コマンドを実行した管理者ユーザーのUID。
+  * `comm`: "teal-cli"
 
 * **Object (対象):**
-    * `path`: 実行されたサブコマンドを仮想パスとして記録する（例: `system:mode/enforce`, `system:policy/reload`）。
-    * または、操作対象の実体パス（例: `/etc/teal/policy.json`）。
-
+  
+  * `path`: 実行されたサブコマンドを仮想パスとして記録する（例: `system:mode/enforce`, `system:policy/reload`）。
+  * または、操作対象の実体パス（例: `/etc/teal/policy.json`）。
 
 * **Policy Eval:**
-    * `rule_id`: 管理操作専用のルールID（例: `admin_change_mode`）を記録する。
+  
+  * `rule_id`: 管理操作専用のルールID（例: `admin_change_mode`）を記録する。
 
 ---
 
@@ -977,10 +989,10 @@ TEALシステムの監査ログは、ストレージ効率と検証可能性を�
 
 カーネル（teal_module）とユーザー空間（teald）の間には、特性の異なる2つの通信レーンを設け、用途に応じて使い分ける。
 
-| レーン名称 | 通信方式 | 特性 | 用途 |
-| :--- | :--- | :--- | :--- |
-| **Control Lane** | 同期 (Blocking) | 高優先・低遅延 | **ENFORCEモードの判定**<br>承認依頼、ポリシー問い合わせ |
-| **Audit Lane** | 非同期 (Non-blocking) | 高スループット | **AUDITモードのログ送出**<br>統計情報、Telemetry、Bulk Log |
+| レーン名称            | 通信方式               | 特性      | 用途                                           |
+|:---------------- |:------------------ |:------- |:-------------------------------------------- |
+| **Control Lane** | 同期 (Blocking)      | 高優先・低遅延 | **ENFORCEモードの判定**<br>承認依頼、ポリシー問い合わせ          |
+| **Audit Lane**   | 非同期 (Non-blocking) | 高スループット | **AUDITモードのログ送出**<br>統計情報、Telemetry、Bulk Log |
 
 * **Control Lane:** プロセスの実行を一時停止（Wait）させ、厳密な判定結果（Allow/Deny）を受け取るための経路。
 * **Audit Lane:** リングバッファ等を使用し、プロセスの実行を阻害せずに一方的に情報を投げ込む経路。
@@ -1004,19 +1016,17 @@ TEALシステムの監査ログは、ストレージ効率と検証可能性を�
     (Log Stream)                          | ・BLS署名計算 (高負荷)
                                           | ・ディスクI/O (JSONL書き込み)
                                           | ・SIEM転送
-
 ```
 
 * **Decision Worker (Guard):**
-    * メモリ上のポリシーのみを参照し、**可能な限り最速で**カーネルへ応答を返す。
-    * ディスクI/Oや重い暗号計算（署名）は行わず、Audit Workerへタスクを委譲（Fire-and-Forget）する。
-
+  
+  * メモリ上のポリシーのみを参照し、**可能な限り最速で**カーネルへ応答を返す。
+  * ディスクI/Oや重い暗号計算（署名）は行わず、Audit Workerへタスクを委譲（Fire-and-Forget）する。
 
 * **Audit Worker (Log):**
-    * 判定結果ログやAudit Laneからのログをバッファリングし、まとめて署名・保存する。
-    * この処理が遅延しても、カーネル側のプロセス実行（Guard）には影響を与えない。
-
-
+  
+  * 判定結果ログやAudit Laneからのログをバッファリングし、まとめて署名・保存する。
+  * この処理が遅延しても、カーネル側のプロセス実行（Guard）には影響を与えない。
 
 ### 8.3 ハイブリッド運用（Selective Audit in Enforce Mode）
 
@@ -1026,20 +1036,18 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 
 * **シナリオ:** `/etc/shadow` へのアクセスは許可するが、いつ誰がアクセスしたか毎回必ず記録したい。
 * **動作:**
-    1. ポリシーで当該ファイルへのアクセスを `decision: audit` と定義。
-    2. カーネルは毎回 Slow Path (Control Lane) で問い合わせる。
-    3. teald はログを記録し、ステータス `TEAL_DECISION_AUDIT` (許可・キャッシュ不可) を返す。
-    4. **結果:** プロセスはブロックされることなく実行されるが、キャッシュが効かないため**全アクセスの完全な証跡**が残る。
-
-
+  1. ポリシーで当該ファイルへのアクセスを `decision: audit` と定義。
+  2. カーネルは毎回 Slow Path (Control Lane) で問い合わせる。
+  3. teald はログを記録し、ステータス `TEAL_DECISION_AUDIT` (許可・キャッシュ不可) を返す。
+  4. **結果:** プロセスはブロックされることなく実行されるが、キャッシュが効かないため**全アクセスの完全な証跡**が残る。
 
 #### ケースB: 新規アプリの並行導入 (Partial Audit Mode)
 
 * **シナリオ:** 既存システムは厳格に防御（ENFORCE）しつつ、新規導入するアプリXだけは動作検証のためログのみ取りたい（AUDIT）。
 * **動作:**
-    1. アプリX（`comm="new_app"`）に対するポリシーを `mode: audit` (または `allow_log`) に設定。
-    2. 当該アプリの操作は Control Lane を経由するが、`teald` は即座に `ALLOW` を返しつつ、Audit Worker にログを流す。
-    3. **結果:** システム全体のセキュリティレベル（ENFORCE）を下げずに、特定アプリの挙動学習が可能となる。
+  1. アプリX（`comm="new_app"`）に対するポリシーを `mode: audit` (または `allow_log`) に設定。
+  2. 当該アプリの操作は Control Lane を経由するが、`teald` は即座に `ALLOW` を返しつつ、Audit Worker にログを流す。
+  3. **結果:** システム全体のセキュリティレベル（ENFORCE）を下げずに、特定アプリの挙動学習が可能となる。
 
 ### 8.4 カーネル側のキャッシュ判定順序
 
@@ -1056,9 +1064,9 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 5. **通常チケットの消費処理:**
     `ticket_id > 0` の場合は、`uses_left` が残っているか確認の上で 1 減算し、消費を通知するための `INFO` メッセージを Netlink キューにエンキューした上で操作を許可する。（`uses_left` が 0 になった場合はキャッシュから削除する）
 6. **監査通知の送出判断**:
-    * **Standard (0x0)**: `uses_left` が 0 になった場合、`INFO:CONSUMED` を生成。
-    * **Silent (0x1)** または **`ticket_id == 0`**: 通知をスキップ。
-    * **Strict (0x2)**: 無条件で `INFO:CONSUMED` を生成。
+   * **Standard (0x0)**: `uses_left` が 0 になった場合、`INFO:CONSUMED` を生成。
+   * **Silent (0x1)** または **`ticket_id == 0`**: 通知をスキップ。
+   * **Strict (0x2)**: 無条件で `INFO:CONSUMED` を生成。
 
 ---
 
@@ -1073,21 +1081,19 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 ### (2) エラーメッセージ仕様（例）
 
 * **パス解決エラー:**
-    * `ERR_RESOLVE_FAILED: origin_program path '/usr/bin/custom_tool' not found`
-    * `ERR_RESOLVE_FAILED: object path '/etc/secure/config.toml' not found`
-
+  
+  * `ERR_RESOLVE_FAILED: origin_program path '/usr/bin/custom_tool' not found`
+  * `ERR_RESOLVE_FAILED: object path '/etc/secure/config.toml' not found`
 
 * **ルール制約違反:**
-    * `ERR_NOT_TICKETABLE: rule 'rule_web_01' contains glob pattern in object path, explicit path required`
-    * `ERR_AMBIGUOUS_SUBJECT: rule 'rule_admin_any' matches multiple uids`
-
-
+  
+  * `ERR_NOT_TICKETABLE: rule 'rule_web_01' contains glob pattern in object path, explicit path required`
+  * `ERR_AMBIGUOUS_SUBJECT: rule 'rule_admin_any' matches multiple uids`
 
 ### (3) 実装への反映
 
 * **CLI ツール:** 上記エラーをパースし、管理者に修正アクション（ファイル確認、ルール修正）を提示すること。
 * **teald ログ:** 失敗した `stat()` 結果（ENOENT, EACCES 等）を詳細に記録すること。
-
 
 ---
 
@@ -1100,11 +1106,11 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 
 ポリシー設定におけるパス指定は、以下の3種類のマッチングモードをサポートする。文字列のプレフィックス（スキーム）によりモードを識別する。
 
-| モード | プレフィックス | 記述例 | 動作仕様 |
-| --- | --- | --- | --- |
-| **Exact** | なし (Default) | `/usr/bin/vim` | パス文字列が完全一致する場合のみマッチする。正規化（Normalization）後のパスで比較を行う。 |
-| **Prefix** | `prefix:` | `prefix:/opt/myapp/` | 指定されたパスで始まる全てのファイルにマッチする（ディレクトリ配下すべて）。 |
-| **Glob** | `glob:` | `glob:/var/log/**/*.log` | シェルワイルドカードパターン（`*`, `?`, `**` 等）を使用してマッチングを行う。 |
+| モード        | プレフィックス      | 記述例                      | 動作仕様                                                |
+| ---------- | ------------ | ------------------------ | --------------------------------------------------- |
+| **Exact**  | なし (Default) | `/usr/bin/vim`           | パス文字列が完全一致する場合のみマッチする。正規化（Normalization）後のパスで比較を行う。 |
+| **Prefix** | `prefix:`    | `prefix:/opt/myapp/`     | 指定されたパスで始まる全てのファイルにマッチする（ディレクトリ配下すべて）。              |
+| **Glob**   | `glob:`      | `glob:/var/log/**/*.log` | シェルワイルドカードパターン（`*`, `?`, `**` 等）を使用してマッチングを行う。      |
 
 ### 10.2 判定優先順位
 
@@ -1125,11 +1131,11 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 
 各ルールには、許可判定後の「Fast Path（カーネルキャッシュ）」の有効期間を制御する `ttl_sec` パラメータを指定できる。
 
-| パラメータ名 | 型 | 必須 | 説明 |
-| --- | --- | --- | --- |
-| **`ttl_sec`** | Integer | 任意 | **Fast Path 有効期限 (秒)**
-|     |     |     | ・`0` (または省略): **キャッシュ無効**。毎回ユーザー空間 (`teald`) で監査と判定を行う。 |
-|     |     |     | ・`1` 以上: **キャッシュ有効**。指定秒数有効なチケット (`T-xxx`) を発行し、期間内はカーネル内で高速処理する。 |
+| パラメータ名        | 型       | 必須  | 説明                                                                |
+| ------------- | ------- | --- | ----------------------------------------------------------------- |
+| **`ttl_sec`** | Integer | 任意  | **Fast Path 有効期限 (秒)**                                            |
+|               |         |     | ・`0` (または省略): **キャッシュ無効**。毎回ユーザー空間 (`teald`) で監査と判定を行う。           |
+|               |         |     | ・`1` 以上: **キャッシュ有効**。指定秒数有効なチケット (`T-xxx`) を発行し、期間内はカーネル内で高速処理する。 |
 
 **設定例 (policy.json):**
 
@@ -1155,12 +1161,12 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 
 ポリシー設定における各レベルの解釈は以下の通り。
 
-| レベル | `audit_flags` | `ttl_sec` の推奨 | ユースケース |
-| --- | --- | --- | --- |
-| **`standard`** | `0x0` | 1 以上 | 一般的なユーザー操作（デフォルト）。 |
-| **`silent`** | `0x1` | 1 以上 | 大量 I/O が発生する信頼済みバッチ処理。 |
-| **`strict`** | `0x2` | 1 以上 (高速) | パフォーマンスを維持しつつ、全アクセスの証跡が必要な作業。 |
-| **`strict`** | N/A | 0 (同期) | 1回たりとも未承認実行を許さない超重要ファイルへのアクセス。 |
+| レベル            | `audit_flags` | `ttl_sec` の推奨 | ユースケース                         |
+| -------------- | ------------- | ------------- | ------------------------------ |
+| **`standard`** | `0x0`         | 1 以上          | 一般的なユーザー操作（デフォルト）。             |
+| **`silent`**   | `0x1`         | 1 以上          | 大量 I/O が発生する信頼済みバッチ処理。         |
+| **`strict`**   | `0x2`         | 1 以上 (高速)     | パフォーマンスを維持しつつ、全アクセスの証跡が必要な作業。  |
+| **`strict`**   | N/A           | 0 (同期)        | 1回たりとも未承認実行を許さない超重要ファイルへのアクセス。 |
 
 ### 10.5 キャッシュと監査戦略
 
@@ -1168,27 +1174,26 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 
 システムのパフォーマンスとセキュリティレベルのバランスを最適化するため、以下の3つの監査レベルを導入する。
 
-| レベル | 名称 | `audit_flags` | `ticket_id` の扱い | 内部挙動 |
-| --- | --- | --- | --- | --- |
-| **Level 0** | **Standard** | `0x0` | **一意のID** | 完了時のみ通知。 |
-| **Level 1** | **Silent** | `0x1` | **一意のID** | **ログ通知を抑制。** 管理・失効は可能。 |
-| **Level 2** | **Strict** | `0x2` | **一意のID** | アクセスごとに毎回通知。 |
+| レベル         | 名称           | `audit_flags` | `ticket_id` の扱い | 内部挙動                   |
+| ----------- | ------------ | ------------- | --------------- | ---------------------- |
+| **Level 0** | **Standard** | `0x0`         | **一意のID**       | 完了時のみ通知。               |
+| **Level 1** | **Silent**   | `0x1`         | **一意のID**       | **ログ通知を抑制。** 管理・失効は可能。 |
+| **Level 2** | **Strict**   | `0x2`         | **一意のID**       | アクセスごとに毎回通知。           |
 
 #### 10.5.2 設定パラメータ
 
 ポリシーファイル（`policy.json`）で以下のパラメータを使用して制御する。
 
 * **`ttl_sec`**: **Fast Path 有効期限 (秒)**
-    * `0`: キャッシュ無効。毎回ユーザー空間で判定を行う（Strict用）。
-    * `1` 以上: キャッシュ有効。
-
+  
+  * `0`: キャッシュ無効。毎回ユーザー空間で判定を行う（Strict用）。
+  * `1` 以上: キャッシュ有効。
 
 * **`audit_level`**: **ログ出力強度**
-    * `standard`: 通常の事後監査（Level 0）。
-    * `silent`: audit_flags = 0x1 によるログ抑制（管理・失効は可能）。メッセージの抑制による高速化（Level 1）。
-    * `strict`: 毎回のリアルタイム監査（Level 2）。
-
-
+  
+  * `standard`: 通常の事後監査（Level 0）。
+  * `silent`: audit_flags = 0x1 によるログ抑制（管理・失効は可能）。メッセージの抑制による高速化（Level 1）。
+  * `strict`: 毎回のリアルタイム監査（Level 2）。
 
 #### 10.5.3 設定例 (policy.json)
 
@@ -1218,62 +1223,88 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
     }
   ]
 }
-
 ```
 
 ---
 
 ## 11. ログイン環境および時間軸によるアクセス制御
 
+本章では、従来の「誰が（UID）」「何に（Object）」という静的なアクセス制御に加え、偽装不可能な実行文脈である「どこから（Login Context）」および「いつ（Temporal Context）」という多次元的なリアルタイム検証を強制する仕様を定義する。これにより、rootクレデンシャルの盗難やマルウェアによるバックグラウンド悪用（Webシェル、リバースシェル、cron等）を構造的に遮断する。
+
 ### 11.1. 概要
-本仕様は、従来の「誰が（UID）」「何に（Object）」というアクセス制御に加え、「どこから（Login Context）」「いつ（Time Window）」という多次元的な検証を導入し、クレデンシャル盗難や監視空白時間におけるリスクを最小化することを目的とする。
+
+本仕様の核心は、OSログイン時の最上流イベントを捕捉する**PAMモジュール（pam\_teal.so）**と、Linuxカーネル内のプロセス構造体から直接ファクトを抽出する**LSMフック（teal\_lsm）**の緊密な二層バインディングにある。これにより、特権昇格操作や管理ツール（teal-cli）への依頼に対し、改ざん不可能なコンテキストベースのゼロトラスト制御を適用する。
 
 ### 11.2. サブジェクト定義の拡張（Subject Enrichment）
-ポリシーエンジンの判定対象となる `subject` オブジェクトに、以下の属性を動的にバインドする。
 
-* **Login Context (環境識別子)**
-    * `source_ip`: 接続元のIPv4/v6アドレスまたはCIDR。
-    * `tty_device`: プロセスが紐付いているTTY（例: `/dev/pts/1`）。
-    * `auth_method`: ログイン時に使用された認証方式（`publickey`, `password`, `fido2` 等）。
-* **Temporal Context (時間識別子)**
-    * `request_time`: `teald` がリクエストを受信したシステム時刻。
 
-### 11.3. 環境情報の解決メカニズム（Ancestry Walk）
-`teald` は判定リクエスト受信時、以下の手順でログイン環境を特定する。
+ポリシーエンジンの判定対象となる subject オブジェクトに対し、カーネルおよびPAMから得られるコンテキスト属性をリアルタイムにバインド（Enrich）する。
 
-1.  カーネルから通知された `pid` を起点にプロセスツリーを親方向に遡行する（Ancestry Walk）。
-2.  ログインシェル（`bash`, `zsh`等）または `sshd` プロセスの `/proc/<pid>/environ` から、`SSH_CLIENT` および `SSH_CONNECTION` 環境変数を抽出する。
-3.  抽出された情報を `Login Context` として判定ロジックへ渡す。
+リアルタイム属性評価に先立ち、ポリシー最上位に定義される **`system_type`（マシンプロファイル）** に基づき、システム全体のセキュリティ制約レベル（ガードレール）を決定する。これは、環境ごとの対話型TTY検証の厳格度およびPAMセッション台帳の評価ロジックを動的に切り替える最上位のメタデータである。
+
+| モード (System Type) | 対象環境の前提 | ターミナル検証のセキュリティ制約（ガードレール） |
+| --- | --- | --- |
+| **`server`** *(既定・Fail-Safe)* |  本番サーバー WORMストレージ等 | 物理コンソール（`tty`）およびSSH（`pts`）のみを正当な対話型セッションとして認める。グラフィカルスタック経由の要求（`:0` 等）は、特権偽装やバックドア、X11ハイジャックとみなし一律でマッチ失敗（拒否）とする。 |
+| **`workstation`** GUIデスクトップ環境 | 開発者端末 | CUI仮想端末に加え、X11/Wayland等のローカルグラフィカルセッション（ディスプレイ名 `:0`, `:1` 等）を起点としたプロセスの実行についても対話型操作として安全に救済・許容する。 |
+
+カーネルおよびPAMから得られるコンテキスト属性、および属性情報の信頼境界（Trust Boundary）は下表の通り定義される。
+
+| 属性名 (Attribute)   | データソース (Source) | 説明と防御効果 (Description & Security Impact)                                    |
+| ----------------- | --------------- | -------------------------------------------------------------------------- |
+| **tty\_device**   | カーネル LSM層       | current-\>signal-\>tty から直接抽出されるTTY名（例: pts/1）。ユーザー空間からの偽装・隠蔽が不可能な不変のファクト。 |
+| **source\_ip**    | PAMセッション層       | SSH等の接続元IPv4/v6アドレス。ログイン確立時に pam\_teal.so がデーモンへ直接動的登録する。                  |
+| **auth\_method**  | PAMセッション層       | ログイン時の認証方式（publickey, password, fido2 等）。将来的な認証強度ベースの動的制御の基盤となる。           |
+| **request\_time** | teald 評価層       | teald が Generic Netlink 経由でリクエストを受信した信頼できるシステム時刻。時間窓（Time-Window）検証に使用。    |
+
+### 11.3. 環境情報の解決および偽装防止メカニズム
+
+従来の環境変数（SSH\_CLIENT等）をプロセスツリーから遡行追跡する方式（Ancestry Walk）は、root権限を有する攻撃者がメモリや環境変数を書き換えることで容易にバイパスされる深刻な脆弱性を有していた。本仕様では、この追跡方式を廃止し、以下の**「PAM動的マッピング」と「カーネルLSM直接捕捉」のリアルタイム交差検証**に置き換える。
+
+1. **ログイン時の動的キャッシュ登録:** 管理者がSSH等でログインを完了すると、/etc/pam.d/sshd に組み込まれた pam\_teal.so が起動し、対象の UID および割り当てられた擬似ターミナル（例: /dev/pts/2）、接続元IP、認証方式を検知する。モジュールはUNIXドメインソケットを介して、ユーザー空間デーモン（teald）の AppState.slow 内の動的キャッシュ（registered\_sessions）にこの情報を安全に登録する。
+2. **実行時のカーネルLSM捕捉:** プロセス（例: teal-cli）がシステムコールや管理要求を発行した際、カーネル空間の teal\_lsm が介入する。LSMフックは current-\>signal-\>tty 構造体から、要求元プロセスが直属している不変のTTYデバイス名（TEAL\_ATTR\_SESSION\_TTY）を取得し、Generic Netlink（TLVパケット）を介して teald へ直接送信する。
+3. **デーモン側での交差照合および遅延救済（Deferred Mitigation）:** 
+    teald のポリシーエンジンは、カーネルから通知された `TEAL_ATTR_SESSION_TTY`（生のTTY文字列）と、PAMモジュールが台帳に動的登録した該当 UID のアクティブセッション情報を交差照合する。この際、`system_type` の設定値に基づき以下の通り評価を分岐させる。
+    * **`server` モード時：** すべての対話操作はPAMを経由した直接の仮想端末（pts/tty）で行われるべきという前提に基づき、PAM台帳に存在しない TTY 名からのシステムコールは、root 権限の有無に関わらず即座に不正セッションと判定し **DENY（強制遮断）** とする。
+    * **`workstation` モード時：** ディスプレイマネージャがログイン時にPAMへ登録するTTY名は `:0` であるのに対し、ユーザーがデスクトップ上でターミナルエミュレータを開いて実行した際にカーネルが捕捉する TTY 名は、裏で動的生成された `pts/1` 等に乖離する（PAMのオープンセッションを再経由しないため、台帳に直接ヒットしない）。
+    最終的な適格性判定は後続の `match_subject` 内に実装された **「標準的な仮想端末（pts/ttyプレフィックス）またはGUIディスプレイ名（:プレフィックス）のいずれかに属するか」の複合識別チェック** へ評価を委ねる（遅延救済モデル）。
 
 ### 11.4. 時間軸による制御と猶予期間（Time-Window & Grace Period）
-重要ファイル操作やMPA（多人数承認）を伴うアクションに対し、時間制約を課す。
+
+重要ファイル操作（chmod/chownを含む）やMPA（多人数承認）を伴うアクションに対し、運用上の破綻を防ぎつつ厳格な時間制約を課す仕組みを導入する。
 
 * **Time-Window 判定**: ポリシーに記述された「曜日 ＋ 時間帯」の積集合で判定を行う。
-* **一律猶予期間（Uniform Grace Period）の導入**:
-    * トラブル対応および作業の整合性を保つため、**一律 60分** の猶予期間を設ける。
-    * **動作仕様**: 
-        1.  「許可時間内」に開始された操作に対し、`teald` はチケットを発行する。
-        2.  チケットの有効期限（TTL）は、ポリシー指定の秒数に一律 60分（3600秒）を加算した値、または業務終了時刻から 60分後を上限として設定される。
-        3.  一度発行されたチケットは、カーネルキャッシュ内で有効である限り、業務時間外になっても当該プロセスの継続実行を許可する。
-        4.  業務時間外に新たに開始（`file_open` 等）を試みるプロセスについては、チケットが発行されず、即座に `DENY` となる。
+* **一律猶予期間（Uniform Grace Period）の導入**:トラブル対応や緊急メンテナンスにおける作業の整合性を保つため、**一律 60分** の猶予期間を自動付与する。
+- **動作仕様:**
+  1. 「許可時間内」に開始された操作に対し、teald は正当なアクセスチケットを発行する。
+  2. チケットの有効期限（TTL）は、ポリシー指定の秒数に一律 60分（3,600秒）を加算した値、または業務終了時刻から 60分後を上限として自動設定される。
+  3. 一度発行されたチケットは、カーネル内のRCU爆速検索キャッシュ（Fast Path）に載っている限り、業務時間外（タイムウィンドウ外）になっても当該プロセスの継続実行（既存ファイルの書き込み等）を許可する。
+  4. 業務時間外に、新たに開始（file\_open, chmod 等の新規システムコール呼び出し）を試みるプロセスについては、キャッシュにヒットしないためデーモン（Slow Path）へ回り、一律で DENY となる。
 
 ### 11.5. ポリシー例（重要ファイルのMPA制御）
 
+以下に、環境コンテキスト（対話型TTYの強制、PAMセッション完全一致ルール）および時間軸制御を組み込んだ、最新のポリシーエンジンスキーマ（json5形式）の定義例を示す。
+
 ```json5
 {
-  "id": "critical-ops-with-context",
+  "id": "critical-ops-with-lockdown-context",
   "subject": {
-    "uid": 1000,
+    "uid": 0,
+    "program": "/usr/bin/teal-cli",
     "login_context": {
       "source_ip": "192.168.1.0/24",
-      "auth_method": "publickey"
+      "auth_method": "publickey",
+      "require_interactive_tty": true, // 非対話型プロセス（Webシェル等）からの要求を即時Deny  
+      "bind_registered_session": true  // PAMが登録した最新の有効セッション（TTY名）との完全一致を強制  
     }
   },
   "time_constraints": [
-    { "days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "window": { "start": "09:00", "end": "18:00" } }
+    {
+      "days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+      "window": { "start": "09:00", "end": "18:00" }
+    }
   ],
   "object": { "path": "/etc/shadow" },
-  "action": { "ops": ["write"] },
+  "action": { "ops": ["CHMOD", "CHOWN", "WRITE"] },
   "effect": "need_approval",
   "threshold": 2,
   "grace_period_sec": 3600
@@ -1281,10 +1312,18 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 ```
 
 ### 11.6. 例外処理（Break-Glass）
+
 システム障害時等の緊急対応において、時間外かつ環境外からのアクセスが必要な場合は、以下のいずれかのルートで対応する。
 
-1.  **物理コンソール**: `/dev/tty1` 等の物理端末からの操作は、環境チェックをスキップするようデフォルトポリシーで定義。
-2.  **緊急延長申請**: `teal-cli` を用い、管理者2名以上の承認（MPA）を条件に、特定のチケットIDの有効期限を動的に延長する。
+1. **物理コンソール（ローカル制御）:** /dev/tty1 〜 /dev/tty6 などの物理端末、またはハイパーバイザ直結の仮想コンソールからの操作は、リモート攻撃の文脈から外れるため、環境チェックの一部（source\_ip等）をスキップするようデフォルトのビルトインルールで安全に定義。
+2. **緊急延長申請（多人数承認の強制）:** teal-cli を用い、あらかじめ指定された異なるロールを持つ管理者2名以上の暗号署名（MPA）が揃うことを条件に、特定のUID、あるいは特定のアクティブチケットの有効期限を動的に延長・例外許可する。
+
+### **11.7. 将来の認証拡張性（パスキー / FIDO2等への発展ロードマップ）**
+
+本章で確立した「PAM（ログインイベント通知）── teald（ユーザー空間頭脳）── teal\_lsm（カーネルセンサー）」の3層連携モデルは、将来的な**パスキー（Passkeys / FIDO2 / WebAuthn）**や生体認証への拡張性をネイティブに内包している。
+
+- **認証方式のプラグイン化:** 将来、FIDO2対応のPAMモジュール（pam\_u2f.so等）を導入する際、本システムのアーキテクチャを変更する必要はない。PAMモジュールがログイン成功時に「デバイスの公開鍵識別子」や「ユーザー検証（生体認証通過フラグ）」を teald の AppState に動的登録するだけで拡張が完了する。
+- **安全な署名検証境界の維持:** パキーが求めるチャレンジ・レスポンス等の複雑かつ重量級の非対称鍵暗号処理は、カーネル空間ではなく、ユーザー空間の安全なRustデーモン（teald）側で非同期に処理される。これにより、LSM側のFast Path（O(1)キャッシュ）の超高速性を一切阻害せず、カーネルパニックのリスクをゼロに抑えたままモダンな認証制限を組み込むことが技術的に担保されている。
 
 ---
 
@@ -1296,10 +1335,10 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 
 * **検知条件**: Netlink 送受信における致命的エラー（`EPIPE`, `ECONNRESET`, `ENOENT`）または受信チャネルの閉鎖（`None` の受信）を検知した場合、通信断とみなす。
 * **動的データのクリア**: 不整合防止のため、以下の管理データを直ちに破棄する。
-    * **動作モード**: `is_enforce` を `false` (Audit Mode) へ初期化（フェイルセーフ）。
-    * **世代管理**: `current_epoch` を `0` へ初期化し、カーネル側のリセットと同期させる。
-    * **Fast Path**: 仕掛中のリクエスト（`drafts`）、承認済みチケット（`approved`）、ログ用キャッシュ（`tickets`）を全削除する。
-    * **Slow Path**: 未完了の `pending_requests` および管理操作（`pending_start/stop`）を破棄する。
+  * **動作モード**: `is_enforce` を `false` (Audit Mode) へ初期化（フェイルセーフ）。
+  * **世代管理**: `current_epoch` を `0` へ初期化し、カーネル側のリセットと同期させる。
+  * **Fast Path**: 仕掛中のリクエスト（`drafts`）、承認済みチケット（`approved`）、ログ用キャッシュ（`tickets`）を全削除する。
+  * **Slow Path**: 未完了の `pending_requests` および管理操作（`pending_start/stop`）を破棄する。
 * **静的データの保持**: ユーザーの公開鍵（`registered_keys`）は「静的な信頼」に基づくため、通信断に関わらず保持を継続する。
 
 ### 12.2 スーパーバイザーによる自動復旧
@@ -1309,6 +1348,7 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 * **再同期シーケンス**: 再接続成功時、`bundle.json` から最新の設定を再ロードし、カーネルへ `REGISTER` コマンドを発行してポリシーと世代（Epoch）の同期を完了させてから、各ワーカーを再生成する。
 
 ### 12.3 段階的セーフティネットとタイムアウト
+
 通信断が継続する場合、設定されたタイムアウト（`fatal_timeout_min`: デフォルト30分、変更可能）に基づき以下のフェーズへ移行する。
 
 * **Recovery (0〜5分)**: 指数バックオフによる自動復旧試行。
@@ -1317,12 +1357,12 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 * **Final Action (30分超)**: 設定に基づき、`panic`（カーネルパニック誘発）、`halt`（システム停止）、または `ignore`（リトライ継続）の最終手段を実行する。
 
 ### 12.4 監視とエスカレーション (Logging & Alert)
+
 リトライが継続している間、運用者が異常に気づけるよう以下のログレベル制御を行う。
 
 * **警告 (WARN):** リトライ回数が1回〜5回までの間。「一時的な瞬断」として記録。
 * **重大エラー (ERROR):** リトライが5回を超えた場合。LSMモジュールの致命的な不具合や不正なアンロードが疑われるため、システム管理者への通知（syslog/アラート）を発生させる。
 * **情報 (INFO):** 再接続に成功し、ポリシーの `REGISTER` およびワーカーの再起動が完了した際に記録。
-
 
 ---
 
@@ -1331,9 +1371,8 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 開発効率と機能検証を優先するため、機能実装を以下の2段階に分割する。
 
 | フェーズ | 目的 | 実装方針 |
-| --- | --- | --- |
-| **Alpha (現在)** | **疎通・基本動作** | 厳密な検証（Hash計算、世代管理）を省略し、該当フィールドを `0` や `Dummy` で埋めることを許容する。 |
-|     |     | ただし、**通信フォーマットはBeta版（最終形）に準拠**させ、将来的なカーネル改修コストを最小化する。 |
+| :--- | :--- | :--- |
+| **Alpha (現在)** | **疎通・基本動作** | 厳密な検証（Hash計算、世代管理）を省略し、該当フィールドを `0` や `Dummy` で埋めることを許容する。<br>ただし、**通信フォーマットはBeta版（最終形）に準拠**させ、将来的なカーネル改修コストを最小化する。 |
 | **Beta / Final** | **完全なセキュリティ** | 「Multi-call binaryハッシュ」「Epoch管理」「Audit ID」をロジックとして完全実装し、正規の値を流す。 |
 
 ### Alpha版におけるパラメータ実装対照表
@@ -1341,13 +1380,16 @@ ENFORCEモード（防御）での稼働中であっても、特定の操作の�
 `TICKET_ADD` コマンドにおいて、以下のフィールドは暫定的な扱いとする。
 
 | フィールド | Beta/Final (本来の仕様) | **Alpha (暫定実装)** |
-| --- | --- | --- |
+| :--- | :--- | :--- |
 | `applet_hash` | `argv[0]`ハッシュ値 | **`0` (固定)** (検証スキップ) |
-| `uses_left` | 残り回数 | **`0` or `1**` (onceフラグにより決定) |
+| `uses_left` | 残り回数 | **`0`** または **`1`** (onceフラグにより決定) |
 | `epoch` | Policy Epoch | **`0` (固定)** |
+| **`system_type`** | ポリシー記述の完全な動的評価、およびマージ時の相互排他バリデーションを厳格に強制。 | **`SystemType::Server` をデフォルト（固定）として扱う。**<br>ポリシーファイル内に記述がない場合は自動補完され、プロファイラ（自動学習モード）が生成するポリシードラフトも `server` を規定値として出力する。 |
 
 **User Space 実装指針:**
 Alpha版 `teald` は、コマンド生成時にこれらのフィールドに固定値 `0` を埋めて送信する。
+
+また、Alpha版 `teald` は内部リテラル、デフォルトポリシー、およびプロファイリング JSON 出力（`generate_profile_json`）において、最も制約の強い `SystemType::Server` を静的に埋め込む。これにより、開発フェーズにおける不要なパラメータの複雑化を回避しつつ、Fail-Safe な評価基盤を最小構成で確立する。workstation モードの動的な CLI 切り替えオプションは Beta 以降のロードマップとする。
 
 **Kernel Space 実装指針:**
 カーネルは全フィールドをパースするが、`applet_hash` が `0` の場合はハッシュ検証を行わない（常に一致とみなす）。これにより将来 `teald` が正規の値を送り始めた際、カーネル側の変更なしに機能が有効化される。
@@ -1356,11 +1398,12 @@ Alpha版 `teald` は、コマンド生成時にこれらのフィールドに固
 
 * **Kernel:** `INFO` メッセージ生成時、パス文字列化のオーバーヘッドを省き、**`TEAL_ATTR_TARGET_INO` 等の属性（u64）に直接 Inode 番号をパッキング**する実装とする。
 * **User (`teald`):**
-    * 受信スレッドは `INFO` メッセージをパースし、構造体へマッピングする。
-    * ログ保存スレッドは `ticket_id` を用いて、メモリ上の `IssuedTicketMap` からパス情報を取得する。
-    * Alpha段階では、再起動等でマップが消失した場合の逆引き（Reverse Lookup）実装は省略し、パス不明（`UNKNOWN`）として記録することを許容する。
+  * 受信スレッドは `INFO` メッセージをパースし、構造体へマッピングする。
+  * ログ保存スレッドは `ticket_id` を用いて、メモリ上の `IssuedTicketMap` からパス情報を取得する。
+  * Alpha段階では、再起動等でマップが消失した場合の逆引き（Reverse Lookup）実装は省略し、パス不明（`UNKNOWN`）として記録することを許容する。
 
-###　Beta / Final フェーズ実装項目:**
+### Beta / Final フェーズ実装項目
+
 * `teal_task_meta` への Inode キャッシュ機構の実装。
 * （Alphaフェーズでは、スクリプトパス判定は文字列比較または「スクリプト指定なし」のみをサポートする暫定実装でも可とする）
 
@@ -1374,13 +1417,13 @@ Alpha版 `teald` は、コマンド生成時にこれらのフィールドに固
 
 `ApproverAction` 構造体等の `method` フィールドにおいて、将来サポート予定の認証方式を以下の通り定義・予約する。これにより、監査ログ上で「強固な認証を経た承認」と「簡易的な承認」を区別可能にする。
 
-| 識別子 (`method`) | 分類 | 説明 | 実装フェーズ |
-| :--- | :--- | :--- | :--- |
-| **`local_ed25519`** | 鍵ファイル | ローカルファイルシステム上の秘密鍵による署名（現在のCLI実装）。 | **Alpha (Current)** |
-| **`ssh_agent`** | 公開鍵認証 | SSH Agent (`ssh-rsa`, `ssh-ed25519`) への署名要求による承認。秘密鍵はメモリ上またはHSMに存在。 | Beta |
-| **`fido2`** | ハードウェア | YubiKey 等の FIDO2/WebAuthn デバイスを使用した、物理的接触を伴う承認。 | Future |
-| **`mfa_totp`** | 多要素 | 管理画面等でパスワードに加え、Time-based OTP (Google Authenticator等) を確認した場合。 | Future |
-| **`passkey`** | 生体認証 | プラットフォーム認証（TouchID, Windows Hello）を利用した Passkey 署名。 | Future |
+| 識別子 (`method`)      | 分類     | 説明                                                                  | 実装フェーズ              |
+|:------------------- |:------ |:------------------------------------------------------------------- |:------------------- |
+| **`local_ed25519`** | 鍵ファイル  | ローカルファイルシステム上の秘密鍵による署名（現在のCLI実装）。                                   | **Alpha (Current)** |
+| **`ssh_agent`**     | 公開鍵認証  | SSH Agent (`ssh-rsa`, `ssh-ed25519`) への署名要求による承認。秘密鍵はメモリ上またはHSMに存在。 | Beta                |
+| **`fido2`**         | ハードウェア | YubiKey 等の FIDO2/WebAuthn デバイスを使用した、物理的接触を伴う承認。                     | Future              |
+| **`mfa_totp`**      | 多要素    | 管理画面等でパスワードに加え、Time-based OTP (Google Authenticator等) を確認した場合。      | Future              |
+| **`passkey`**       | 生体認証   | プラットフォーム認証（TouchID, Windows Hello）を利用した Passkey 署名。                 | Future              |
 
 ### 14.2 閾値暗号と分散承認 (Threshold Cryptography)
 
@@ -1388,10 +1431,10 @@ Alpha版 `teald` は、コマンド生成時にこれらのフィールドに固
 
 * **目的:** 単一の `teald` サーバーが侵害された場合でも、秘密鍵（または署名権限）全体が漏洩しない構造にする。
 * **拡張方針:**
-    * 承認者（Approver）は、分散鍵生成 (DKG) プロトコルにより生成された「秘密鍵シェア」を持つ。
-    * ApproverAction.signature は署名シェア (Signature Share) として扱われる。
-    * teald は署名シェアが閾値 ($t$) に達した時点で、それらを合成して単一の有効な署名を復元する。
-    * これにより、監査ログ (`TICKET_ISSUED`) には「誰が承認したか」のリストと、「数学的に正当な単一署名」のみが記録される。
+  * 承認者（Approver）は、分散鍵生成 (DKG) プロトコルにより生成された「秘密鍵シェア」を持つ。
+  * ApproverAction.signature は署名シェア (Signature Share) として扱われる。
+  * teald は署名シェアが閾値 ($t$) に達した時点で、それらを合成して単一の有効な署名を復元する。
+  * これにより、監査ログ (`TICKET_ISSUED`) には「誰が承認したか」のリストと、「数学的に正当な単一署名」のみが記録される。
 
 ### 14.3 ポリシーエンジンの Wasm 化
 
@@ -1404,11 +1447,11 @@ Alpha版 `teald` は、コマンド生成時にこれらのフィールドに固
 
 システムの完全性を物理層から保証するため、TPM 2.0 (Trusted Platform Module) との連携を設計に含める。
 
-1.  **鍵のシール (Sealing):**
-    * teald が使用する秘密鍵、および承認者のローカル鍵を TPM 内に生成・保管し、外部への持ち出しを不可能にする。
-2.  **リモート構成証明 (Remote Attestation):**
-    * カーネル (`teal_lsm`, `teal_module`) および `teald` のバイナリハッシュを PCR (Platform Configuration Registers) に測定する。
-    * 承認者は承認操作を行う際、サーバーから送られた PCR 値を検証し、「改竄されていない正しい TEAL システムからの要求であること」を確認してから署名を行うフロー（Machine Identity 認証）を導入する。
+1. **鍵のシール (Sealing):**
+   * teald が使用する秘密鍵、および承認者のローカル鍵を TPM 内に生成・保管し、外部への持ち出しを不可能にする。
+2. **リモート構成証明 (Remote Attestation):**
+   * カーネル (`teal_lsm`, `teal_module`) および `teald` のバイナリハッシュを PCR (Platform Configuration Registers) に測定する。
+   * 承認者は承認操作を行う際、サーバーから送られた PCR 値を検証し、「改竄されていない正しい TEAL システムからの要求であること」を確認してから署名を行うフロー（Machine Identity 認証）を導入する。
 
 ### 14.5 真のゼロトラストと運用自動化を実現する
 
@@ -1448,14 +1491,16 @@ Alpha版 `teald` は、コマンド生成時にこれらのフィールドに固
 ### 14.8 ログ管理の高度化と外部連携（将来拡張）
 
 #### 14.8.1 ログファイル命名規則の標準化
+
 将来的なクラウドストレージ（S3等）への自動転送や、長期アーカイブ時の検索性を高めるため、ローテーション後のファイル名にメタデータを付与する。
 
 * **推奨形式**: `audit.jsonl.[YYYYMMDD].[POLICY_EPOCH].gz`
 * **各項目の意味**:
-    * `[YYYYMMDD]`: ログがローテーション（切り出し）された日付。
-    * `[POLICY_EPOCH]`: そのログファイルが閉じられた時点での `current_epoch`（ポリシー世代）。これにより、ログ内容を解析する際に適用すべき正確なポリシーバージョンを即座に特定可能とする。
+  * `[YYYYMMDD]`: ログがローテーション（切り出し）された日付。
+  * `[POLICY_EPOCH]`: そのログファイルが閉じられた時点での `current_epoch`（ポリシー世代）。これにより、ログ内容を解析する際に適用すべき正確なポリシーバージョンを即座に特定可能とする。
 
 #### 14.8.2 ログの整合性保護
+
 アーカイブされたログの改ざん検知のため、ローテーション完了時にファイル全体のハッシュ値（SHA-256）を計算し、署名付きメタデータファイルとして保存する機能を検討する。
 
 ---
@@ -1481,6 +1526,4 @@ Alpha版 `teald` は、コマンド生成時にこれらのフィールドに固
     }
   }
 }
-
 ```
-

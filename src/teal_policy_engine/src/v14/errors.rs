@@ -40,7 +40,7 @@ pub enum CompileError {
     #[error("invalid role name: {name} ({reason})")]
     InvalidRoleName { name: String, reason: String },
     #[error("semantic error: {0}")]
-    Semantic(String),
+    Semantic(#[from] anyhow::Error),
     #[error("missing field error: {0}")]
     MissingField(&'static str),
     #[error("invalid field error: {0} : {1}")]

@@ -1,0 +1,13 @@
+[package]
+name = "pam_teal"
+version = "0.1.0"
+edition = "2021"
+
+# ここが最重要：C言語の動的ライブラリ(.so)としてビルドする指示
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pam-sys = "0.5" 
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
