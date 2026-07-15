@@ -349,10 +349,32 @@ fn json_path_contains(kept: &str, target: &str) -> bool {
 
 /// 包含関係にある冗長なルールをクリーンアップし、ポリシーを最小化する
 pub fn optimize_rules(rules: Vec<RawRule>, annotate_reason: bool) -> Vec<RawRule> {
-    // 1. Grouping（バケツを Effect と AuditLevel に）
-    // これにより、プログラムを跨いだクロスグループ・マージを同一バケツ内で一元評価可能にする
-    let mut groups: HashMap<MergeKey, Vec<RawRule>> = HashMap::new();
+    // 1. Grouping
+    let groups = group_rules_by_effect_and_audit(rules); // mutは不要になります
 
+    let mut optimized_rules = Vec::new();
+
+    // 2 & 3. 包含チェックと最適化
+    // into_values() で HashMap を消費し、所有権のある Vec<RawRule> を直接取り出す
+    for mut group_rules in groups.into_values() {
+        // メモリコピーせず、その場で直接ソートする
+        sort_rules_for_optimization(&mut group_rules);
+        
+        // 所有権ごとフィルタ関数に渡す
+        optimized_rules.extend(filter_shadowed_rules(group_rules, annotate_reason));
+    }
+
+    // 4. IDのユニーク化
+    ensure_unique_rule_ids(&mut optimized_rules);
+
+    // 5. 最終ソート
+    sort_rules_for_display(&mut optimized_rules);
+
+    optimized_rules
+}
+
+fn group_rules_by_effect_and_audit(rules: Vec<RawRule>) -> HashMap<MergeKey, Vec<RawRule>> {
+    let mut groups = HashMap::new();
     for rule in rules {
         let key = MergeKey {
             effect: rule.effect.as_str().to_string(),
@@ -360,124 +382,146 @@ pub fn optimize_rules(rules: Vec<RawRule>, annotate_reason: bool) -> Vec<RawRule
         };
         groups.entry(key).or_insert_with(Vec::new).push(rule);
     }
+    groups
+}
 
-    let mut optimized_rules = Vec::new();
+fn sort_rules_for_optimization(group_rules: &mut [RawRule]) {
+    // バケツの中で「最も適用範囲が広くて強いルール」が必ず先頭に来るように多段ソート
+    group_rules.sort_by(|a, b| {
+        let path_a_len = a.object.as_ref().map(|o| effective_path_len(&o.path)).unwrap_or(0);
+        let path_b_len = b.object.as_ref().map(|o| effective_path_len(&o.path)).unwrap_or(0);
 
-    // 2 & 3. 多次元ソートと包含チェック
-    for (_, mut group_rules) in groups {
-        // バケツの中で「最も適用範囲が広くて強いルール」が必ず先頭に来るように多段ソート
-        group_rules.sort_by(|a, b| {
-            let path_a_len = a.object.as_ref().map(|o| effective_path_len(&o.path)).unwrap_or(0);
-            let path_b_len = b.object.as_ref().map(|o| effective_path_len(&o.path)).unwrap_or(0);
+        let npath_a_len = a.object.as_ref().and_then(|o| o.new_path.as_deref()).map(effective_path_len).unwrap_or(0);
+        let npath_b_len = b.object.as_ref().and_then(|o| o.new_path.as_deref()).map(effective_path_len).unwrap_or(0);
 
-            // new_path の長さ計算
-            let npath_a_len = a.object.as_ref().and_then(|o| o.new_path.as_deref()).map(effective_path_len).unwrap_or(0);
-            let npath_b_len = b.object.as_ref().and_then(|o| o.new_path.as_deref()).map(effective_path_len).unwrap_or(0);
+        path_a_len.cmp(&path_b_len)
+            .then_with(|| npath_a_len.cmp(&npath_b_len))
+            .then_with(|| {
+                let prog_a_len = a.subject.origin_program.as_deref().map(effective_path_len).unwrap_or(0);
+                let prog_b_len = b.subject.origin_program.as_deref().map(effective_path_len).unwrap_or(0);
+                prog_a_len.cmp(&prog_b_len)
+            })
+            .then_with(|| a.subject.origin_applet.cmp(&b.subject.origin_applet))
+            .then_with(|| a.subject.user.cmp(&b.subject.user))
+            .then_with(|| a.subject.login_context.cmp(&b.subject.login_context))
+            .then_with(|| b.action.ops.len().cmp(&a.action.ops.len()))
+    });
+}
 
-            // ① 対象オブジェクトのパスが短い順
-            path_a_len.cmp(&path_b_len)
-                // ② 移動先のパスが短い順（昇順）
-                .then_with(|| npath_a_len.cmp(&npath_b_len))
-                // ③ プログラムの指定範囲が広い順
-                .then_with(|| {
-                    let prog_a_len = a.subject.origin_program.as_deref().map(effective_path_len).unwrap_or(0);
-                    let prog_b_len = b.subject.origin_program.as_deref().map(effective_path_len).unwrap_or(0);
-                    prog_a_len.cmp(&prog_b_len)
-                })
-                // ④ アプレット指定がないのが先
-                .then_with(|| a.subject.origin_applet.cmp(&b.subject.origin_applet))
-                // ⑤ ユーザー指定がない(None)のが先（昇順: None < Some）
-                .then_with(|| a.subject.user.cmp(&b.subject.user))
-                // ⑥ アクションの権限（ops）の数が多い順（降順）
-                .then_with(|| b.action.ops.len().cmp(&a.action.ops.len()))
-        });
+fn filter_shadowed_rules(sorted_rules: Vec<RawRule>, annotate_reason: bool) -> Vec<RawRule> {
+    let mut kept_rules: Vec<RawRule> = Vec::new();
+    
+    for current_rule in sorted_rules {
+        // 1対1の比較ロジック(is_shadowed)を渡し、一致する要素そのものを探す
+        // find() は最初に見つかった &mut RawRule を Option で包んで返します（短絡評価されます）
+        let shadowed_by = kept_rules.iter_mut().find(|kept| is_shadowed(&current_rule, kept));
 
-        let mut kept_rules: Vec<RawRule> = Vec::new();
-
-        for current_rule in group_rules {
-            let mut is_shadowed = false;
-
-            for kept_rule in &mut kept_rules {
-                // --- A. Subject (Program) の包含チェック ---
-                let is_prog_shadowed = kept_rule.subject.origin_program.is_none() 
-                    || (kept_rule.subject.origin_program.as_deref().unwrap_or("") == "") 
-                    || json_path_contains(
-                        kept_rule.subject.origin_program.as_deref().unwrap_or(""),
-                        current_rule.subject.origin_program.as_deref().unwrap_or("")
-                    );
-
-                // --- B. Subject (Applet) の包含チェック ---
-                let is_applet_shadowed = kept_rule.subject.origin_applet.is_none()
-                    || kept_rule.subject.origin_applet == current_rule.subject.origin_applet;
-
-                // --- C. Subject (User) の包含チェック ---
-                let is_user_shadowed = kept_rule.subject.user.is_none()
-                    || kept_rule.subject.user == current_rule.subject.user;
-
-                // --- D. Object (Path) の包含チェック ---
-                let is_path_shadowed = match (&kept_rule.object, &current_rule.object) {
-                    (None, None) => true,
-                    (Some(kept_obj), Some(curr_obj)) => {
-                        // 1. 移動元(path) の包含チェック
-                        let path_match = json_path_contains(&kept_obj.path, &curr_obj.path);
-
-                        // 2. 移動先(new_path) の包含チェック
-                        let new_path_match = match (&kept_obj.new_path, &curr_obj.new_path) {
-                            // kept側に制限がない(None)なら包含成立
-                            (None, _) => true, 
-                            // kept側に制限があるのに、curr側にないなら包含不可
-                            (Some(_), None) => false, 
-                            // 両方ある場合はパス文字列の包含チェック
-                            (Some(kept_np), Some(curr_np)) => json_path_contains(kept_np, curr_np),
-                        };
-
-                        path_match && new_path_match
-                    },
-                    _ => false,
-                };
-
-                // --- E. Action (ops) の包含チェック ---
-                let is_ops_shadowed = current_rule.action.ops.iter()
-                    .all(|op| kept_rule.action.ops.contains(op));
-
-                // 全ての多次元包含関係が成立すれば、後続ルールは完全に不要（Shadowed）
-                if is_prog_shadowed && is_applet_shadowed && is_user_shadowed && is_path_shadowed && is_ops_shadowed {
-                    is_shadowed = true;
-                    if annotate_reason {
-                        let new_reason = match &kept_rule.reason {
-                            Some(r) => {
-                                if r.contains("Merged with narrower rules") {
-                                    r.clone()
-                                } else {
-                                    format!("{} (Merged with narrower rules)", r)
-                                }
-                            }
-                            None => "Merged with narrower rules".to_string(),
-                        };
-                        kept_rule.reason = Some(new_reason);
-                    }
-                    break;
-                }
+        if let Some(kept) = shadowed_by {
+            // 条件を満たした（自分を包含してくれた）上位ルール(kept)が見つかった場合の処理
+            if annotate_reason {
+                // 上位ルール側の理由を書き換える
+                kept.reason = Some(update_reason(kept.reason.take()));
             }
-
-            if !is_shadowed {
-                kept_rules.push(current_rule);
-            }
+        } else {
+            // 誰にも包含されなかった場合は、新しい判定基準（上位ルール候補）として追加
+            kept_rules.push(current_rule);
         }
-        optimized_rules.extend(kept_rules);
     }
+    kept_rules
+}
 
-    // 4. ルールIDの重複回避（ユニーク化サフィックスの付与）
-    let mut seen_ids: HashMap<String, usize> = HashMap::new();
-    for rule in &mut optimized_rules {
+/// 保持されているルール (kept_rule) が、現在のルール (current_rule) を包含しているかを判定する
+fn is_shadowed(current_rule: &RawRule, kept_rule: &RawRule) -> bool {
+    // --- A. Subject (Program) の包含チェック ---
+    let is_prog_shadowed = kept_rule.subject.origin_program.is_none() 
+        || (kept_rule.subject.origin_program.as_deref().unwrap_or("") == "") 
+        || json_path_contains(
+            kept_rule.subject.origin_program.as_deref().unwrap_or(""),
+            current_rule.subject.origin_program.as_deref().unwrap_or("")
+        );
+
+    // --- B. Subject (Applet) の包含チェック ---
+    let is_applet_shadowed = kept_rule.subject.origin_applet.is_none()
+        || kept_rule.subject.origin_applet == current_rule.subject.origin_applet;
+
+    // --- C. Subject (User) の包含チェック ---
+    let is_user_shadowed = kept_rule.subject.user.is_none()
+        || kept_rule.subject.user == current_rule.subject.user;
+
+    // --- D. Object (Path) の包含チェック ---
+    let is_path_shadowed = match (&kept_rule.object, &current_rule.object) {
+        (None, None) => true,
+        (Some(kept_obj), Some(curr_obj)) => {
+            // 1. 移動元(path) の包含チェック
+            let path_match = json_path_contains(&kept_obj.path, &curr_obj.path);
+
+            // 2. 移動先(new_path) の包含チェック
+            let new_path_match = match (&kept_obj.new_path, &curr_obj.new_path) {
+                // kept側に制限がない(None)なら包含成立
+                (None, _) => true, 
+                // kept側に制限があるのに、curr側にないなら包含不可
+                (Some(_), None) => false, 
+                // 両方ある場合はパス文字列の包含チェック
+                (Some(kept_np), Some(curr_np)) => json_path_contains(kept_np, curr_np),
+            };
+
+            path_match && new_path_match
+        },
+        _ => false,
+    };
+
+    // --- E. Subject (LoginContext) の包含チェック ---
+    let is_login_context_shadowed = match (&kept_rule.subject.login_context, &current_rule.subject.login_context) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some(kept_ctx), Some(curr_ctx)) => {
+            let ip_match = kept_ctx.source_ip.is_none() || kept_ctx.source_ip == curr_ctx.source_ip;
+            let auth_match = kept_ctx.auth_method.is_none() || kept_ctx.auth_method == curr_ctx.auth_method;
+            let tty_match = kept_ctx.require_interactive_tty.is_none() || kept_ctx.require_interactive_tty == curr_ctx.require_interactive_tty;
+            let bind_match = kept_ctx.bind_registered_session.is_none() || kept_ctx.bind_registered_session == curr_ctx.bind_registered_session;
+
+            ip_match && auth_match && tty_match && bind_match
+        }
+    };
+
+    // --- F. Action (ops) の包含チェック ---
+    let is_ops_shadowed = current_rule.action.ops.iter()
+        .all(|op| kept_rule.action.ops.contains(op));
+
+    // すべての条件を満たした場合のみ true を返す
+    is_prog_shadowed 
+        && is_applet_shadowed 
+        && is_user_shadowed 
+        && is_login_context_shadowed
+        && is_path_shadowed 
+        && is_ops_shadowed
+}
+
+fn update_reason(reason: Option<String>) -> String {
+    match reason {
+        Some(mut r) => {
+            if !r.contains("Merged with narrower rules") {
+                r.push_str(" (Merged with narrower rules)");
+            }
+            r
+        }
+        None => "Merged with narrower rules".to_string(),
+    }
+}
+
+fn ensure_unique_rule_ids(rules: &mut [RawRule]) {
+    let mut seen_ids = HashMap::new();
+    for rule in rules {
         let count = seen_ids.entry(rule.id.clone()).or_insert(0);
         if *count > 0 {
             rule.id = format!("{}-{}", rule.id, count);
         }
         *count += 1;
     }
+}
 
-    // 5. 管理者の視認性を高める最終5段階ソート
+/// 管理者の視認性を高める最終5段階ソート
+fn sort_rules_for_display(optimized_rules: &mut [RawRule]) {
     optimized_rules.sort_by(|a, b| {
         a.subject.origin_program.cmp(&b.subject.origin_program)
             .then_with(|| a.subject.origin_applet.cmp(&b.subject.origin_applet))
@@ -494,8 +538,6 @@ pub fn optimize_rules(rules: Vec<RawRule>, annotate_reason: bool) -> Vec<RawRule
             })
             .then_with(|| a.subject.user.cmp(&b.subject.user))
     });
-
-    optimized_rules
 }
 
 // --- ヘルパー1: パスの抽象化 ---

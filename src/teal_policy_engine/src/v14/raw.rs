@@ -123,7 +123,7 @@ pub struct RawSubject {
     pub login_context: Option<RawLoginContext>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, PartialOrd, Ord)]
 #[serde(deny_unknown_fields)]
 pub struct RawLoginContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
