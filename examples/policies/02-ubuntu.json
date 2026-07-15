@@ -11,40 +11,9 @@
   },
   "rules": [
     {
-      "id": "auto_allow_bash_ops_192",
-      "rule_type": "standard",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/bin/bash",
-        "origin_applet": "bash"
-      },
-      "object": {
-        "path": "/etc/passwd"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
       "id": "auto_allow_bash_ops_11",
       "rule_type": "standard",
       "subject": {
-        "user": "toshiyuki",
         "origin_program": "/usr/bin/bash",
         "origin_applet": "bash"
       },
@@ -190,70 +159,9 @@
       }
     },
     {
-      "id": "auto_allow_dbus-daemon_ops_437",
-      "rule_type": "standard",
-      "subject": {
-        "user": "lightdm",
-        "origin_program": "/usr/bin/dbus-daemon",
-        "origin_applet": "dbus-daemon"
-      },
-      "object": {
-        "path": "/etc/passwd"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
-      "id": "auto_allow_dbus-daemon_ops_405",
-      "rule_type": "standard",
-      "subject": {
-        "user": "messagebus",
-        "origin_program": "/usr/bin/dbus-daemon",
-        "origin_applet": "dbus-daemon"
-      },
-      "object": {
-        "path": "/etc/passwd"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
       "id": "auto_allow_dbus-daemon_ops_544",
       "rule_type": "standard",
       "subject": {
-        "user": "toshiyuki",
         "origin_program": "/usr/bin/dbus-daemon",
         "origin_applet": "dbus-daemon"
       },
@@ -1309,138 +1217,11 @@
       }
     },
     {
-      "id": "auto_allow_crashreporter_ops_486",
-      "rule_type": "standard",
-      "subject": {
-        "user": "toshiyuki",
-        "origin_program": "/usr/lib/firefox/crashreporter"
-      },
-      "object": {
-        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
-      },
-      "action": {
-        "ops": [
-          "WRITE",
-          "READ",
-          "FILE_DELETE"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
-      "id": "auto_allow_crashreporter_rename_265",
-      "rule_type": "standard",
-      "subject": {
-        "user": "toshiyuki",
-        "origin_program": "/usr/lib/firefox/crashreporter"
-      },
-      "object": {
-        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox",
-        "new_path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
-      },
-      "action": {
-        "ops": [
-          "FILE_RENAME"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
-      "id": "auto_allow_firefox_ops_278",
-      "rule_type": "standard",
-      "subject": {
-        "user": "toshiyuki",
-        "origin_program": "/usr/lib/firefox/firefox"
-      },
-      "object": {
-        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
-      },
-      "action": {
-        "ops": [
-          "READ",
-          "WRITE",
-          "FILE_DELETE"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
-      "id": "auto_allow_firefox_rename_80",
-      "rule_type": "standard",
-      "subject": {
-        "user": "toshiyuki",
-        "origin_program": "/usr/lib/firefox/firefox"
-      },
-      "object": {
-        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox",
-        "new_path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
-      },
-      "action": {
-        "ops": [
-          "FILE_RENAME"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
       "id": "auto_allow_firefox_ops_452",
       "rule_type": "standard",
       "subject": {
-        "user": "toshiyuki",
         "origin_program": "/usr/lib/firefox/firefox",
-        "origin_applet": "firefox",
-        "login_context": {
-          "require_interactive_tty": false,
-          "bind_registered_session": true
-        }
+        "origin_applet": "firefox"
       },
       "object": {
         "path": "/etc/passwd"
@@ -1461,37 +1242,6 @@
       "ticket_profile": {
         "silent_io": false,
         "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
-      "id": "auto_suppress_firefox_rename_3",
-      "rule_type": "standard",
-      "subject": {
-        "user": "toshiyuki",
-        "origin_program": "/usr/lib/firefox/firefox",
-        "origin_applet": "glean.dispatche"
-      },
-      "object": {
-        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox",
-        "new_path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
-      },
-      "action": {
-        "ops": [
-          "FILE_RENAME"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 86400
-      },
-      "reason": "Auto-generated suppress rule (count: 1081)",
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true,
         "allow_nameless_ipc": false
       }
     },
@@ -1672,6 +1422,66 @@
       }
     },
     {
+      "id": "auto_allow_systemd_ops_0",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(colord)"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_systemd_ops_1",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(colord)"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
       "id": "auto_allow_systemd_ops_3",
       "rule_type": "standard",
       "subject": {
@@ -1702,7 +1512,7 @@
       }
     },
     {
-      "id": "auto_allow_systemd_ops_1",
+      "id": "auto_allow_systemd_ops_1-1",
       "rule_type": "standard",
       "subject": {
         "user": "root",
@@ -2065,7 +1875,6 @@
       "id": "auto_allow_gvfs-udisks2-volume-monitor_ops_5",
       "rule_type": "standard",
       "subject": {
-        "user": "toshiyuki",
         "origin_program": "/usr/libexec/gvfs-udisks2-volume-monitor",
         "origin_applet": "gvfs-udisks2-vo"
       },
@@ -2185,7 +1994,6 @@
       "id": "auto_allow_xdg-desktop-portal_ops_98",
       "rule_type": "standard",
       "subject": {
-        "user": "toshiyuki",
         "origin_program": "/usr/libexec/xdg-desktop-portal",
         "origin_applet": "xdg-desktop-por"
       },
@@ -2215,7 +2023,6 @@
       "id": "auto_allow_xdg-desktop-portal_ops_137",
       "rule_type": "standard",
       "subject": {
-        "user": "toshiyuki",
         "origin_program": "/usr/libexec/xdg-desktop-portal",
         "origin_applet": "xdg-desktop-por"
       },

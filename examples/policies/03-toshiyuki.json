@@ -1,0 +1,167 @@
+{
+  "version": "1.4",
+  "system_type": "workstation",
+  "default_effect": "allow",
+  "default_reason": "No matching rule; default allow.",
+  "ttl_minutes": 60,
+  "sweep_minutes": 5,
+  "pre_approval_defaults": {
+    "ttl_sec_default": 600,
+    "ttl_sec_max": 900
+  },
+  "rules": [
+    {
+      "id": "auto_allow_crashreporter_ops_486",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/firefox/crashreporter"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
+      },
+      "action": {
+        "ops": [
+          "WRITE",
+          "READ",
+          "FILE_DELETE"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_crashreporter_rename_265",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/firefox/crashreporter"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox",
+        "new_path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
+      },
+      "action": {
+        "ops": [
+          "FILE_RENAME"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_firefox_ops_278",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/firefox/firefox"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
+      },
+      "action": {
+        "ops": [
+          "READ",
+          "WRITE",
+          "FILE_DELETE"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_firefox_rename_80",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/firefox/firefox"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox",
+        "new_path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
+      },
+      "action": {
+        "ops": [
+          "FILE_RENAME"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_suppress_firefox_rename_3",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/firefox/firefox",
+        "origin_applet": "glean.dispatche"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox",
+        "new_path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
+      },
+      "action": {
+        "ops": [
+          "FILE_RENAME"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "silent",
+      "max_uses": 10000,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 86400
+      },
+      "reason": "Auto-generated suppress rule (count: 1081)",
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    }
+  ]
+}
