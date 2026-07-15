@@ -11,10 +11,120 @@
   },
   "rules": [
     {
+      "id": "allow_teal_keys",
+      "rule_type": "standard",
+      "subject": {
+        "roles": [
+          "admin",
+          "security_officer"
+        ],
+        "login_context": {
+          "require_interactive_tty": true,
+          "bind_registered_session": true
+        }
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.teal"
+      },
+      "action": {
+        "ops": [
+          "READ",
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "reason": "protect the key files for teal control",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "allow_teal_cli_access",
+      "rule_type": "standard",
+      "subject": {
+        "roles": [
+          "admin",
+          "security_officer"
+        ],
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "bash",
+        "login_context": {
+          "require_interactive_tty": true,
+          "bind_registered_session": true
+        }
+      },
+      "object": {
+        "path": "/usr/local/bin/teal-cli"
+      },
+      "action": {
+        "ops": [
+          "READ",
+          "EXECUTE"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "control teal-cli command run",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_xfce4-terminal_ops_11",
+      "rule_type": "standard",
+      "subject": {
+        "roles": [
+          "admin",
+          "security_officer"
+        ],
+        "origin_program": "/usr/bin/xfce4-terminal",
+        "origin_applet": "bash",
+        "login_context": {
+          "require_interactive_tty": true,
+          "bind_registered_session": true
+        }
+      },
+      "object": {
+        "path": "/usr/local/bin/teal-cli"
+      },
+      "action": {
+        "ops": [
+          "EXECUTE"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
       "id": "auto_allow_xfce4-terminal_ops_9",
       "rule_type": "standard",
       "subject": {
-        "roles": ["admin", "security_officer"],
+        "roles": [
+          "admin",
+          "security_officer"
+        ],
         "origin_program": "/usr/bin/xfce4-terminal",
         "origin_applet": "bash",
         "login_context": {
@@ -45,24 +155,23 @@
       }
     },
     {
-      "id": "allow_teal_cli_access",
+      "id": "auto_allow_teal-cli_ops_72",
       "rule_type": "standard",
       "subject": {
-        "roles": ["admin", "security_officer"],
-        "origin_program": "/usr/bin/bash",
-        "origin_applet": "bash",
+        "user": "toshiyuki",
+        "origin_program": "/usr/local/bin/teal-cli",
+        "origin_applet": "teal-cli",
         "login_context": {
           "require_interactive_tty": true,
           "bind_registered_session": true
         }
       },
       "object": {
-        "path": "/usr/local/bin/teal-cli"
+        "path": "prefix:/home/toshiyuki/.teal"
       },
       "action": {
         "ops": [
-          "READ",
-          "EXECUTE"
+          "FILE_CHMOD"
         ]
       },
       "effect": "allow",
@@ -72,7 +181,7 @@
         "enabled": false,
         "ttl_sec": 3600
       },
-      "reason": "control teal-cli command run",
+      "reason": "Auto-generated allow draft",
       "ticket_profile": {
         "silent_io": false,
         "inherit": false,

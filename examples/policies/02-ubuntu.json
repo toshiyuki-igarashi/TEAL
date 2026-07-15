@@ -11,27 +11,268 @@
   },
   "rules": [
     {
-      "id": "allow_teal_keys",
+      "id": "auto_allow_bash_ops_192",
       "rule_type": "standard",
       "subject": {
-        "roles": ["admin", "security_officer"],
-        "login_context": {
-          "require_interactive_tty": true,
-          "bind_registered_session": true
-        }
+        "user": "root",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "bash"
       },
       "object": {
-        "path": "prefix:/home/toshiyuki/.teal"
+        "path": "/etc/passwd"
       },
       "action": {
         "ops": [
-          "READ", "WRITE"
+          "READ"
         ]
       },
       "effect": "allow",
       "audit_level": "standard",
       "max_uses": 1,
-      "reason": "protect the key files for teal control",
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_bash_ops_11",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "bash"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_chgrp_ops_592",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/chgrp",
+        "origin_applet": "chgrp"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_chown_ops_279",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/chown",
+        "origin_applet": "chown"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_chown_ops_468",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/chown",
+        "origin_applet": "chown"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_dbus-daemon_ops_194",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/bin/dbus-daemon",
+        "origin_applet": "dbus-daemon"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_dbus-daemon_ops_437",
+      "rule_type": "standard",
+      "subject": {
+        "user": "lightdm",
+        "origin_program": "/usr/bin/dbus-daemon",
+        "origin_applet": "dbus-daemon"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_dbus-daemon_ops_405",
+      "rule_type": "standard",
+      "subject": {
+        "user": "messagebus",
+        "origin_program": "/usr/bin/dbus-daemon",
+        "origin_applet": "dbus-daemon"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_dbus-daemon_ops_544",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/bin/dbus-daemon",
+        "origin_applet": "dbus-daemon"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
       "ticket_profile": {
         "silent_io": false,
         "inherit": false,
@@ -99,43 +340,12 @@
       }
     },
     {
-      "id": "auto_suppress_firefox_rename_3",
+      "id": "auto_allow_groups_ops_198",
       "rule_type": "standard",
       "subject": {
-        "user": "toshiyuki",
-        "origin_program": "/usr/lib/firefox/firefox",
-        "origin_applet": "glean.dispatche"
-      },
-      "object": {
-        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox",
-        "new_path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
-      },
-      "action": {
-        "ops": [
-          "FILE_RENAME"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 86400
-      },
-      "reason": "Auto-generated suppress rule (count: 1081)",
-      "ticket_profile": {
-        "silent_io": true,
-        "inherit": true,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
-      "id": "auto_suppress_polkitd_ops_1",
-      "rule_type": "standard",
-      "subject": {
-        "user": "polkitd",
-        "origin_program": "/usr/lib/polkit-1/polkitd",
-        "origin_applet": "polkitd"
+        "user": "root",
+        "origin_program": "/usr/bin/groups",
+        "origin_applet": "groups"
       },
       "object": {
         "path": "/etc/group"
@@ -146,26 +356,141 @@
         ]
       },
       "effect": "allow",
-      "audit_level": "silent",
-      "max_uses": 10000,
+      "audit_level": "standard",
+      "max_uses": 1,
       "pre_approval": {
         "enabled": false,
-        "ttl_sec": 86400
+        "ttl_sec": 3600
       },
-      "reason": "Auto-generated suppress rule (count: 1145)",
+      "reason": "Auto-generated allow draft",
       "ticket_profile": {
-        "silent_io": true,
-        "inherit": true,
+        "silent_io": false,
+        "inherit": false,
         "allow_nameless_ipc": false
       }
     },
     {
-      "id": "auto_allow_bash_ops_11",
+      "id": "auto_allow_ibus-daemon_ops_385",
       "rule_type": "standard",
       "subject": {
-        "user": "toshiyuki",
-        "origin_program": "/usr/bin/bash",
-        "origin_applet": "bash"
+        "origin_program": "/usr/bin/ibus-daemon",
+        "origin_applet": "ibus-daemon"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_id_ops_109",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/bin/id",
+        "origin_applet": "id"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_nano_ops_0",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/bin/nano",
+        "origin_applet": "editor"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_pipewire_ops_249",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_pipewire_ops_229",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/bin/pipewire",
+        "origin_applet": "pipewire-pulse"
       },
       "object": {
         "path": "/etc/passwd"
@@ -250,6 +575,35 @@
       }
     },
     {
+      "id": "auto_allow_python3.12_ops_3",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/python3.12"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
       "id": "auto_allow_python3.12_ops_7",
       "rule_type": "standard",
       "subject": {
@@ -308,11 +662,191 @@
       }
     },
     {
+      "id": "auto_allow_sudo_ops_505",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/sudo",
+        "origin_applet": "sudo"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_sudo_ops_496",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/sudo",
+        "origin_applet": "sudo"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_systemd-tmpfiles_ops_13",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/systemd-tmpfiles",
+        "origin_applet": "systemd-tmpfile"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_systemd-tmpfiles_ops_12",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/systemd-tmpfiles",
+        "origin_applet": "systemd-tmpfile"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
       "id": "auto_allow_thunar_ops_13",
       "rule_type": "standard",
       "subject": {
         "origin_program": "/usr/bin/thunar",
         "origin_applet": "Thunar"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_udevadm_ops_14",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/udevadm",
+        "origin_applet": "systemd-udevd"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_udevadm_ops_264",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/udevadm",
+        "origin_applet": "systemd-udevd"
       },
       "object": {
         "path": "/etc/passwd"
@@ -366,11 +900,215 @@
       }
     },
     {
+      "id": "auto_allow_wireplumber_ops_503",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/bin/wireplumber",
+        "origin_applet": "wireplumber"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_xfce4-panel_ops_508",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/bin/xfce4-panel",
+        "origin_applet": "xfce4-panel"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
       "id": "auto_allow_xfce4-power-manager_ops_3",
       "rule_type": "standard",
       "subject": {
         "origin_program": "/usr/bin/xfce4-power-manager",
         "origin_applet": "xfce4-power-man"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_xfce4-session_ops_501",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/bin/xfce4-session",
+        "origin_applet": "xfce4-session"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_xfce4-session_ops_153",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/bin/xfce4-session",
+        "origin_applet": "xfce4-session"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_xfce4-terminal_ops_4",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/bin/xfce4-terminal",
+        "origin_applet": "bash"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_xfce4-terminal_ops_8",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/bin/xfce4-terminal",
+        "origin_applet": "sudo"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_xfce4-terminal_ops_7",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/xfce4-terminal",
+        "origin_applet": "sudo"
       },
       "object": {
         "path": "/etc/passwd"
@@ -482,6 +1220,428 @@
       }
     },
     {
+      "id": "auto_allow_xfwm4_ops_518",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/bin/xfwm4",
+        "origin_applet": "xfwm4"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_cups-exec_ops_6",
+      "rule_type": "standard",
+      "subject": {
+        "user": "lp",
+        "origin_program": "/usr/lib/cups/daemon/cups-exec",
+        "origin_applet": "dbus"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_dbus_ops_214",
+      "rule_type": "standard",
+      "subject": {
+        "user": "lp",
+        "origin_program": "/usr/lib/cups/notifier/dbus",
+        "origin_applet": "dbus"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_crashreporter_ops_486",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/firefox/crashreporter"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
+      },
+      "action": {
+        "ops": [
+          "WRITE",
+          "READ",
+          "FILE_DELETE"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_crashreporter_rename_265",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/firefox/crashreporter"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox",
+        "new_path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
+      },
+      "action": {
+        "ops": [
+          "FILE_RENAME"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_firefox_ops_278",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/firefox/firefox"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
+      },
+      "action": {
+        "ops": [
+          "READ",
+          "WRITE",
+          "FILE_DELETE"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_firefox_rename_80",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/firefox/firefox"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox",
+        "new_path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
+      },
+      "action": {
+        "ops": [
+          "FILE_RENAME"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_firefox_ops_452",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/firefox/firefox",
+        "origin_applet": "firefox",
+        "login_context": {
+          "require_interactive_tty": false,
+          "bind_registered_session": true
+        }
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_suppress_firefox_rename_3",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/lib/firefox/firefox",
+        "origin_applet": "glean.dispatche"
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.config/mozilla/firefox",
+        "new_path": "prefix:/home/toshiyuki/.config/mozilla/firefox"
+      },
+      "action": {
+        "ops": [
+          "FILE_RENAME"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "silent",
+      "max_uses": 10000,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 86400
+      },
+      "reason": "Auto-generated suppress rule (count: 1081)",
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_ibus-engine-mozc_ops_422",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/lib/ibus-mozc/ibus-engine-mozc",
+        "origin_applet": "Renderer"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_ibus-engine-mozc_ops_495",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/lib/ibus-mozc/ibus-engine-mozc",
+        "origin_applet": "ibus-engine-moz"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_mozc_renderer_ops_354",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/lib/mozc/mozc_renderer",
+        "origin_applet": "mozc_renderer"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_mozc_server_ops_389",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/lib/mozc/mozc_server",
+        "origin_applet": "mozc_server"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_suppress_polkitd_ops_1",
+      "rule_type": "standard",
+      "subject": {
+        "user": "polkitd",
+        "origin_program": "/usr/lib/polkit-1/polkitd",
+        "origin_applet": "polkitd"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "silent",
+      "max_uses": 10000,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 86400
+      },
+      "reason": "Auto-generated suppress rule (count: 1145)",
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
       "id": "auto_allow_polkitd_ops_8",
       "rule_type": "standard",
       "subject": {
@@ -512,12 +1672,372 @@
       }
     },
     {
+      "id": "auto_allow_systemd_ops_3",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(fwupdmgr)"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_systemd_ops_1",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd",
+        "origin_applet": "(fwupdmgr)"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_systemd-executor_ops_270",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_systemd-executor_ops_65",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_systemd-executor_ops_220",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-executor",
+        "origin_applet": "(systemd)",
+        "login_context": {
+          "require_interactive_tty": false,
+          "bind_registered_session": true
+        }
+      },
+      "object": {
+        "path": "/etc/shadow"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_systemd-logind_ops_1",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-logind",
+        "origin_applet": "systemd-logind"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_systemd-user-runtime-dir_ops_231",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/systemd/systemd-user-runtime-dir",
+        "origin_applet": "systemd-user-ru"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_wrapper-2.0_ops_105",
+      "rule_type": "standard",
+      "subject": {
+        "origin_program": "/usr/lib/x86_64-linux-gnu/xfce4/panel/wrapper-2.0"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_Xorg_ops_5",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/lib/xorg/Xorg",
+        "origin_applet": "Xorg"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_accounts-daemon_ops_585",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/accounts-daemon",
+        "origin_applet": "accounts-daemon"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
       "id": "auto_allow_accounts-daemon_ops_6",
       "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/libexec/accounts-daemon",
         "origin_applet": "accounts-daemon"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_accounts-daemon_ops_346",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/accounts-daemon",
+        "origin_applet": "accounts-daemon"
+      },
+      "object": {
+        "path": "/etc/shadow"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_fwupd_ops_5",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/fwupd/fwupd",
+        "origin_applet": "fwupd"
       },
       "object": {
         "path": "/etc/passwd"
@@ -572,225 +2092,162 @@
       }
     },
     {
+      "id": "auto_allow_generate_ops_2",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/netplan/generate",
+        "origin_applet": "netplan"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_generate_ops_10",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/netplan/generate",
+        "origin_applet": "netplan"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_rtkit-daemon_ops_95",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/libexec/rtkit-daemon",
+        "origin_applet": "rtkit-daemon"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_xdg-desktop-portal_ops_98",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xdg-desktop-portal",
+        "origin_applet": "xdg-desktop-por"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_xdg-desktop-portal_ops_137",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/libexec/xdg-desktop-portal",
+        "origin_applet": "xdg-desktop-por"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
       "id": "auto_allow_NetworkManager_ops_14",
       "rule_type": "standard",
       "subject": {
         "user": "root",
         "origin_program": "/usr/sbin/NetworkManager",
         "origin_applet": "NetworkManager"
-      },
-      "object": {
-        "path": "/etc/passwd"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
-      "id": "auto_allow_cups-browsed_ops_17",
-      "rule_type": "standard",
-      "subject": {
-        "user": "cups-browsed",
-        "origin_program": "/usr/sbin/cups-browsed",
-        "origin_applet": "cups-browsed"
-      },
-      "object": {
-        "path": "/etc/passwd"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
-      "id": "auto_allow_cupsd_ops_2",
-      "rule_type": "standard",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/sbin/cupsd",
-        "origin_applet": "cupsd"
-      },
-      "object": {
-        "path": "/etc/passwd"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
-      "id": "auto_allow_lightdm_ops_1",
-      "rule_type": "standard",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/sbin/lightdm",
-        "origin_applet": "lightdm"
-      },
-      "object": {
-        "path": "/etc/passwd"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
-      "id": "auto_allow_python3.12_ops_3",
-      "rule_type": "standard",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/bin/python3.12"
-      },
-      "object": {
-        "path": "/etc/passwd"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
-      "id": "auto_allow_python3.12_ops_7",
-      "rule_type": "standard",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/bin/python3.12",
-        "origin_applet": "package-data-do",
-        "login_context": {
-          "require_interactive_tty": false,
-          "bind_registered_session": true
-        }
-      },
-      "object": {
-        "path": "/etc/passwd"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
-      "id": "auto_allow_systemd-logind_ops_1",
-      "rule_type": "standard",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/lib/systemd/systemd-logind",
-        "origin_applet": "systemd-logind"
-      },
-      "object": {
-        "path": "/etc/passwd"
-      },
-      "action": {
-        "ops": [
-          "READ"
-        ]
-      },
-      "effect": "allow",
-      "audit_level": "standard",
-      "max_uses": 1,
-      "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
-      },
-      "reason": "Auto-generated allow draft",
-      "ticket_profile": {
-        "silent_io": false,
-        "inherit": false,
-        "allow_nameless_ipc": false
-      }
-    },
-    {
-      "id": "auto_allow_Xorg_ops_5",
-      "rule_type": "standard",
-      "subject": {
-        "user": "root",
-        "origin_program": "/usr/lib/xorg/Xorg",
-        "origin_applet": "Xorg"
       },
       "object": {
         "path": "/etc/passwd"
@@ -905,6 +2362,36 @@
       }
     },
     {
+      "id": "auto_allow_cups-browsed_ops_17",
+      "rule_type": "standard",
+      "subject": {
+        "user": "cups-browsed",
+        "origin_program": "/usr/sbin/cups-browsed",
+        "origin_applet": "cups-browsed"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
       "id": "auto_allow_cupsd_ops_6",
       "rule_type": "standard",
       "subject": {
@@ -914,6 +2401,126 @@
       },
       "object": {
         "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_cupsd_ops_2",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/cupsd",
+        "origin_applet": "cupsd"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_lightdm_ops_30",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/lightdm",
+        "origin_applet": "lightdm"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_lightdm_ops_1",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/lightdm",
+        "origin_applet": "lightdm"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_lightdm_ops_497",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/lightdm",
+        "origin_applet": "lightdm"
+      },
+      "object": {
+        "path": "/etc/shadow"
       },
       "action": {
         "ops": [
