@@ -40,6 +40,74 @@
       }
     },
     {
+      "id": "auto_allow_bash_ops_3",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "sudo",
+        "login_context": {
+          "require_interactive_tty": true,
+          "bind_registered_session": true
+        }
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_bash_ops_0",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/bash",
+        "origin_applet": "sudo",
+        "login_context": {
+          "require_interactive_tty": true,
+          "bind_registered_session": true
+        }
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
       "id": "auto_allow_chgrp_ops_592",
       "rule_type": "standard",
       "subject": {
@@ -546,6 +614,40 @@
       "subject": {
         "origin_program": "/usr/bin/snap",
         "origin_applet": "snap"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_su_ops_2",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/su",
+        "origin_applet": "su",
+        "login_context": {
+          "require_interactive_tty": true,
+          "bind_registered_session": true
+        }
       },
       "object": {
         "path": "/etc/passwd"
@@ -2259,6 +2361,66 @@
       }
     },
     {
+      "id": "auto_allow_dumpe2fs_ops_4",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/dumpe2fs",
+        "origin_applet": "dumpe2fs"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_dumpe2fs_ops_6",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/dumpe2fs",
+        "origin_applet": "dumpe2fs"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
       "id": "auto_allow_lightdm_ops_30",
       "rule_type": "standard",
       "subject": {
@@ -2325,6 +2487,96 @@
         "user": "root",
         "origin_program": "/usr/sbin/lightdm",
         "origin_applet": "lightdm"
+      },
+      "object": {
+        "path": "/etc/shadow"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_sshd_ops_5",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/sshd",
+        "origin_applet": "sshd"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_sshd_ops_7",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/sshd",
+        "origin_applet": "sshd"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_sshd_ops_1",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/sshd",
+        "origin_applet": "sshd"
       },
       "object": {
         "path": "/etc/shadow"
