@@ -182,7 +182,7 @@ pub struct RawPreApproval {
 
     /// Per-rule TTL override in seconds for JIT_ALLOW.
     /// If None, the policy-level default (or engine default) is used.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_sec: Option<u64>,
 }
 

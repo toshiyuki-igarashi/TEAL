@@ -3,7 +3,7 @@
   "system_type": "workstation",
   "default_effect": "allow",
   "default_reason": "No matching rule; default allow.",
-  "ttl_minutes": 60,
+  "ttl_minutes": 10,
   "sweep_minutes": 5,
   "pre_approval_defaults": {
     "ttl_sec_default": 600,
@@ -70,8 +70,7 @@
       "audit_level": "standard",
       "max_uses": 1,
       "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
+        "enabled": false
       },
       "reason": "control teal-cli command run",
       "ticket_profile": {
@@ -107,8 +106,7 @@
       "audit_level": "standard",
       "max_uses": 1,
       "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
+        "enabled": false
       },
       "reason": "Auto-generated allow draft",
       "ticket_profile": {
@@ -144,8 +142,7 @@
       "audit_level": "standard",
       "max_uses": 1,
       "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
+        "enabled": false
       },
       "reason": "Auto-generated allow draft",
       "ticket_profile": {
@@ -178,8 +175,7 @@
       "audit_level": "standard",
       "max_uses": 1,
       "pre_approval": {
-        "enabled": false,
-        "ttl_sec": 3600
+        "enabled": false
       },
       "reason": "Auto-generated allow draft",
       "ticket_profile": {
