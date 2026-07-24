@@ -1879,11 +1879,7 @@
       "subject": {
         "user": "root",
         "origin_program": "/usr/lib/systemd/systemd-executor",
-        "origin_applet": "(systemd)",
-        "login_context": {
-          "require_interactive_tty": false,
-          "bind_registered_session": true
-        }
+        "origin_applet": "(systemd)"
       },
       "object": {
         "path": "/etc/shadow"
