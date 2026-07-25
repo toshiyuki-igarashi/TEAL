@@ -13,6 +13,7 @@ use std::{fs, path::{Path, PathBuf}};
 use blst::min_pk::SecretKey; // min_pk モードを選択
 use rand::{RngCore, thread_rng};
 use colored::Colorize;
+use clap::{Parser, Subcommand};
 
 use teal_policy_engine::load::load_json_file;
 use teal_policy_engine::raw::RawPolicyV14;
@@ -22,38 +23,93 @@ use crate::verify::ast::TealIrModel;
 mod common;
 mod verify;
 
+// ==========================================
+// 1. CLI引数の構造体定義 (clap)
+// ==========================================
+
+/// TEAL Command Line Interface
+#[derive(Parser, Debug)]
+#[command(name = "teal-cli", version, about = "TEAL System Management CLI", long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Generate BLS keypair
+    Keygen,
+    /// Register public key to teald
+    Register,
+    /// Show pending requests
+    List,
+    /// Approve with digital signature
+    Approve {
+        /// Request ID to approve
+        id: String,
+    },
+    /// Reject request
+    Deny {
+        /// Request ID to deny
+        id: String,
+    },
+    /// Request ticket request
+    Ticket {
+        /// Rule ID
+        rule_id: String,
+    },
+    /// Start Enforce mode
+    Start,
+    /// Stop Enforce mode and start Audit mode
+    Stop,
+    /// Activate Break-Glass Mode
+    Emergency {
+        /// Emergency token
+        token: String,
+    },
+    /// Verify policy rules
+    Verify {
+        /// Policy JSON file path
+        policy_file: String,
+
+        /// Goal YAML file path
+        #[arg(long)]
+        goal: Option<String>,
+
+        /// Enable visualization output
+        #[arg(long)]
+        visualize: bool,
+
+        /// Enable debug output
+        #[arg(long)]
+        debug: bool,
+    },
+    /// Reload policies and increment Epoch
+    Reload,
+    /// Flush caches (Global Kill Switch)
+    Flush,
+}
+
+// ==========================================
+// 2. メインロジック
+// ==========================================
+
 fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        print_usage();
-        return Ok(());
-    }
+    let cli = Cli::parse(); 
 
-    let sub_cmd = args[1].as_str();
-
-    match sub_cmd {
-        "keygen" => {
-            if args.len() >= 3 {
-                println!("Usage: teal-cli keygen");
-                return Ok(());
-            }
+    match &cli.command {
+        Commands::Keygen => {
             generate_user_key()?;
         }
-        "register" => {
-            if args.len() >= 3 {
-                println!("Usage: teal-cli register");
-                return Ok(());
-            }
-
+        Commands::Register => {
             let dir = teal_key_dir()?;
             let pub_path = dir.join("id_bls.pub");
 
             if !pub_path.exists() {
-                eprintln!(
+                anyhow::bail!(
                     "Error: Public key '{}' not found. Run `teal-cli keygen` first.",
                     pub_path.display()
                 );
-                return Ok(());
             }
 
             let hex_key = fs::read_to_string(&pub_path)
@@ -61,111 +117,94 @@ fn main() -> Result<()> {
 
             send_command(&format!("REGISTER {}", hex_key.trim()))?;
         }
-        "list" => {
+        Commands::List => {
             send_command("LIST")?;
         }
-        "approve" => {
-            if args.len() < 3 {
-                println!("Usage: teal-cli approve <ID>");
-                return Ok(());
-            }
-            run_signed_decision(DecisionKind::Approve, &args[2])?;
+        Commands::Approve { id } => {
+            run_signed_decision(DecisionKind::Approve, id)?;
         }
-        "deny" => {
-            if args.len() < 3 {
-                println!("Usage: teal-cli deny <ID>");
-                return Ok(());
-            }
-            run_signed_decision(DecisionKind::Deny, &args[2])?;
+        Commands::Deny { id } => {
+            run_signed_decision(DecisionKind::Deny, id)?;
         }
-        "ticket" => {
-            if args.len() < 3 {
-                println!("Usage: teal-cli ticket <RULE_ID>");
-                return Ok(());
-            }
-            run_signed_decision(DecisionKind::Ticket, &args[2])?;
+        Commands::Ticket { rule_id } => {
+            run_signed_decision(DecisionKind::Ticket, rule_id)?;
         }
-        "start" => {
-            if args.len() != 2 {
-                println!("Usage: teal-cli start");
-                return Ok(());
-            }
+        Commands::Start => {
             run_signed_decision(DecisionKind::Start, "")?;
         }
-        "stop" => {
-            if args.len() != 2 {
-                println!("Usage: teal-cli stop");
-                return Ok(());
-            }
+        Commands::Stop => {
             run_signed_decision(DecisionKind::Stop, "")?;
         }
-        "emergency" => {
-            if args.len() < 3 {
-                println!("Usage: teal-cli emergency <TOKEN>");
-                return Ok(());
-            }
-            let token = &args[2];
+        Commands::Emergency { token } => {
             send_command(&format!("EMERGENCY {}", token))?;
         }
-        "verify" => {
-            if args.len() < 3 {
-                println!("Usage: teal-cli verify <policy.json> [--goal <goal.yaml>] [--visualize] [--debug]");
-                return Ok(());
-            }
-
-            // 引数から入力パスを取得
-            let input_path_str = &args[2]; 
-            let path = std::path::Path::new(input_path_str);
-
-            // ファイル名からポリシー名（識別子）を抽出
-            let policy_name = path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("default_policy")
-                .to_string(); // 後で使うためにStringとして持っておく
-
-            let visualize_flag = args.iter().any(|arg| arg == "--visualize");
-            let debug_flag = args.iter().any(|arg| arg == "--debug");
-
-            // ゴール定義の読み込み
-            let mut goals: Vec<verify::VerifyGoal> = Vec::new(); 
-            if let Some(pos) = args.iter().position(|arg| arg == "--goal") {
-                if pos + 1 < args.len() {
-                    let goal_path = &args[pos + 1];
-                    let yaml_str = std::fs::read_to_string(goal_path)
-                        .with_context(|| format!("Failed to read goal yaml file: {}", goal_path))?;
-                    goals = serde_yaml::from_str(&yaml_str)
-                        .with_context(|| format!("Failed to deserialize goal yaml: {}", goal_path))?;
-                    println!("=> ゴール定義ファイル '{}' を読み込みました ({} 個のゴール)", goal_path, goals.len());
-                } else {
-                    anyhow::bail!("--goal option requires a file path.");
-                }
-            } else {
-                println!("=> ゴール定義(--goal)が指定されていません。ポリシーの論理矛盾チェックのみを実行します。");
-            }
-
-            // 1. ポリシーJSONのパース
-            let v = load_json_file(path)
-                .with_context(|| format!("Failed to load policy json: {}", input_path_str))?;
-            let policy: RawPolicyV14 = serde_json::from_value(v)
-                .with_context(|| format!("Failed to deserialize policy raw struct: {}", input_path_str))?;
-
-            // 2. 中間論理モデル (TealIrModel) の構築
-            println!("{} 中間論理モデル(Teal-IR)を構築中...", "-> [1/3]".cyan());
-            let model = TealIrModel::from_raw(&policy, &goals, &policy_name)?;
-
-            // 3. 検証実行 (Executorの起動)
-            let jar_path = env::var("TEAL_ALLOY_JAR")
-                .unwrap_or_else(|_| "alloy-cli.jar".to_string());
-
-            // 4. 検証エグゼキューターの初期化と実行
-            println!("{} Alloyトランスパイラを初期化中...", "-> [2/3]".cyan());
-            let mut executor = verify::VerifyExecutor::new(&jar_path);
-            
-            // 内部で transpile -> run_alloy -> parse_xml -> report が走る
-            executor.execute(&model, visualize_flag, debug_flag)?;
+        Commands::Verify {
+            policy_file,
+            goal,
+            visualize,
+            debug,
+        } => {
+            run_verify(policy_file, goal.as_deref(), *visualize, *debug)?;
         }
-        _ => print_usage(),
+        Commands::Reload => {
+            send_command("RELOAD")?;
+        }
+        Commands::Flush => {
+            send_command("FLUSH")?;
+        }
     }
+    Ok(())
+}
+
+/// ポリシーの形式検証（Alloy連携）を実行する
+fn run_verify(
+    policy_file: &str,
+    goal: Option<&str>,
+    visualize: bool,
+    debug: bool,
+) -> Result<()> {
+    let path = Path::new(policy_file);
+    
+    // 拡張子を除いたファイル名を抽出（ポリシーの識別名として利用）
+    let policy_name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("default_policy")
+        .to_string();
+
+    // ゴール定義（YAML）の読み込みとパース
+    let mut goals: Vec<verify::VerifyGoal> = Vec::new();
+    if let Some(goal_path) = goal {
+        let yaml_str = std::fs::read_to_string(goal_path)
+            .with_context(|| format!("Failed to read goal yaml file: {}", goal_path))?;
+        goals = serde_yaml::from_str(&yaml_str)
+            .with_context(|| format!("Failed to deserialize goal yaml: {}", goal_path))?;
+        println!(
+            "=> ゴール定義ファイル '{}' を読み込みました ({} 個のゴール)",
+            goal_path,
+            goals.len()
+        );
+    } else {
+        println!("=> ゴール定義(--goal)が指定されていません。ポリシーの論理矛盾チェックのみを実行します。");
+    }
+
+    // ポリシー本体（JSON）の読み込みとパース
+    let v = load_json_file(path)
+        .with_context(|| format!("Failed to load policy json: {}", policy_file))?;
+    let policy: RawPolicyV14 = serde_json::from_value(v)
+        .with_context(|| format!("Failed to deserialize policy raw struct: {}", policy_file))?;
+
+    // Alloy用の中間論理モデル (TEAL-IR) の構築
+    println!("{} 中間論理モデル(Teal-IR)を構築中...", "-> [1/3]".cyan());
+    let model = TealIrModel::from_raw(&policy, &goals, &policy_name)?;
+
+    // Executorの初期化と実行
+    let jar_path = env::var("TEAL_ALLOY_JAR").unwrap_or_else(|_| "alloy-cli.jar".to_string());
+    println!("{} Alloyトランスパイラを初期化中...", "-> [2/3]".cyan());
+    let mut executor = verify::VerifyExecutor::new(&jar_path);
+
+    executor.execute(&model, visualize, debug)?;
+
     Ok(())
 }
 
@@ -309,18 +348,4 @@ fn send_command(cmd: &str) -> Result<()> {
     stream.read_to_string(&mut response)?;
     println!("{}", response);
     Ok(())
-}
-
-fn print_usage() {
-    println!("Usage:");
-    println!("  teal-cli keygen                 Generate Ed25519 keypair");
-    println!("  teal-cli register               Register public key to teald");
-    println!("  teal-cli list                   Show pending requests");
-    println!("  teal-cli approve <ID>           Approve with digital signature");
-    println!("  teal-cli deny <ID>              Reject request");
-    println!("  teal-cli ticket <ID>            Request ticket request");
-    println!("  teal-cli start                  Start Enforce mode");
-    println!("  teal-cli stop                   Stop Enforce mode and start Audit mode");
-    println!("  teal-cli emergency <TOKEN>      Activate Break-Glass Mode");
-    println!("  teal-cli verify <POLICY_FILE> [--goal <goal.yaml>] [--visualize] [--debug]    Verify policy rules");
 }
