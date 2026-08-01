@@ -10,7 +10,7 @@ use anyhow::Result;
 // プロジェクト内の必要なモジュールをインポート
 use crate::state::app_state;
 use crate::types::{
-    AppState, Request, InternalEvent, PolicyDecision, EntityId, PendingEntry,
+    Request, InternalEvent, PolicyDecision, EntityId, PendingEntry,
     ApprovedTicket, PolicyResult, TicketPayload
 };
 use crate::bundle::bundle;
@@ -18,8 +18,8 @@ use crate::decide::request_to_ctx;
 use crate::netlink::{TealNetlinkMessage, NlWriter};
 
 use teal_policy_engine::types::Action;
-use teal_policy_engine::ir::Decision;
-use teal_policy_engine::util::ktime_prefix;
+use teal_policy_engine::ir::{CompiledRule, Decision};
+use teal_policy_engine::util::{uid_to_name, ktime_prefix};
 use teal_policy_engine::eval::evaluate;
 use teal_policy_engine::types::AuditLevel;
 
@@ -45,46 +45,15 @@ pub async fn decision_worker_loop(
             _ => continue, // Decisionレーンには Req (ENFORCE) しか来ない想定
         };
 
-        // 2. Netlinkの TealReq を内部処理用の Request 構造体に変換
-        let req = Request {
-            id: nl_req.trans_id,
-            pid: nl_req.pid,
-            ppid: nl_req.ppid,
-            session_id: nl_req.session_id,
-            uid: nl_req.uid,
-            gid: nl_req.gid,
-            prog_dev: nl_req.prog_dev as u64,
-            prog_ino: nl_req.prog_ino,
-            raw_program: nl_req.program.clone(),
-            raw_action: nl_req.action.clone(),
-            
-            // --- Source ---
-            target_dev: nl_req.target_dev as u64,
-            target_ino: nl_req.target_ino,
-            raw_target: nl_req.target.clone(),
-            
-            // --- Destination ---
-            new_target_dev: nl_req.new_target_dev as u64,
-            new_target_ino: nl_req.new_target_ino,
-            raw_new_target: normalize_opt_field(&nl_req.new_target),
-            
-            // --- その他 ---
-            script_dev: nl_req.script_dev as u64,
-            script_ino: nl_req.script_ino,
-            raw_script: normalize_opt_field(&nl_req.script),
-            raw_applet: normalize_opt_field(&nl_req.applet),
-            lsm_label_hex: nl_req.lsm_label.clone(),
-            args_head: normalize_opt_field(&nl_req.args_head),
-            flag: nl_req.flags,
-            is_audit: false, // ルーティング時点で ENFORCE であることが確定している
-            session_tty: nl_req.session_tty.clone(),
-        };
+        // nl_req がムーブ（消費）される前に、互換性用の文字列を作っておく
+        let req_line = format!("NETLINK_REQ: {:?}", nl_req);
 
-        let mut state = app_state().lock().await;
+        // 2. ENFORCEモード用として Request 構造体に変換 (is_audit = false)
+        // ここで nl_req の所有権が移動（消費）される
+        let req = Request::from_enforce_teal_req(nl_req);
 
         // 3. ポリシー判定の実行
-        let mut policy_result = evaluate_policy(&req, &mut state);
-        drop(state); 
+        let mut policy_result = process_policy_decision(&req).await;
 
         // 4. カーネルへの即時応答（Netlink経由で TICKET_ADD または APPROVE/DENY を送信）
         if let Err(e) = reply_to_kernel(&nl_tx, &req, &mut policy_result).await {
@@ -95,7 +64,7 @@ pub async fn decision_worker_loop(
 
         // 5. ログ記録を Audit Worker へ委譲
         let event = InternalEvent::Resolved {
-            req_line: format!("NETLINK_REQ: {:?}", nl_req), // 互換性のため文字列化
+            req_line,       // 事前に作っておいた文字列を渡す
             parsed_req: req,
             decision: policy_result.decision.clone(), 
             rule_id: policy_result.rule_id.clone(),
@@ -108,149 +77,225 @@ pub async fn decision_worker_loop(
     }
 }
 
-pub fn evaluate_policy(req: &Request, state: &mut AppState) -> PolicyResult {
+// ============================================================================
+// 1. メイン関数（非同期化し、ロック期間を最小化）
+// ============================================================================
+pub async fn process_policy_decision(req: &Request) -> PolicyResult {
     let compiled = bundle();
-    // PAMのデータと突き合わせる
-    let session_info = state.check_registered_session(&req.session_tty, req.uid);
-    let ctx = request_to_ctx(&req, &compiled.roles, session_info);
 
-    match evaluate(&compiled.policy, &ctx) {
-        // ---------------------------------------------------------
-        // 1. NotManaged: 対象外パス (Silent & Unlimited Mode のキャッシュ)
-        // ---------------------------------------------------------
-        Decision::Pass => {
-            let payload = TicketPayload {
-                ticket_id: "T-000000000".to_string(),  // 予約値0
-                uid: req.uid,
-                op: 0xFFFFFFFF,             // Alpha版: 対象外は全操作許可マスク
-                prog_dev: req.prog_dev,
-                prog_ino: req.prog_ino,
-                script_dev: req.script_dev,
-                script_ino: req.script_ino,
-                applet_hash: 0,             // Alphaフェーズ固定
-                target_dev: req.target_dev,
-                target_ino: req.target_ino,
-                new_target_dev: req.new_target_dev,
-                new_target_ino: req.new_target_ino,
-                expires_in_sec: u64::MAX,   // Epochが変わるまで無限
-                flags: 0,
-                uses_left: 1,               // 予約値0でもプロトコル要件として1以上
-                epoch: state.current_epoch, // グローバルEpochと紐付け
-                audit_flags: AuditLevel::Silent.to_u32(),
-            };
-            
-            PolicyResult {
-                decision: PolicyDecision::NotManaged,
-                rule_id: None,
-                ticket: Some(payload),
-            }
-        }
+    // 1. AppStateのロックを取得する *前* に、重い名前解決を非同期 (spawn_blocking) で済ませる
+    let target_uid = req.uid; 
 
-        // ---------------------------------------------------------
-        // 2. NoRuleMatched: デフォルト拒否 (キャッシュ不可)
-        // ---------------------------------------------------------
-        Decision::NoMatchManaged => {
-            // 仕様書においてキャッシュ(AllowList)は許可操作用のため、
-            // デフォルト拒否の場合はチケットを作成せず、都度 DENY を返す
-            PolicyResult {
-                decision: PolicyDecision::NoRuleMatched,
-                rule_id: None,
-                ticket: None,
-            }
-        }
+    let request_user = tokio::task::spawn_blocking(move || {
+        uid_to_name(target_uid).ok() // 戻り値は Option<String> と推測される
+    })
+    .await
+    .unwrap_or(None); // 万が一タスクがパニックしても None として安全に扱う
 
-        // ---------------------------------------------------------
-        // 3. Matched: ルールに基づくチケット生成 / 状態の更新
-        // ---------------------------------------------------------
-        Decision::Matched(r) => {
-            let decision_kind = match r.effect.as_str() {
-                "allow" => PolicyDecision::Allow,
-                "deny" => PolicyDecision::Deny,
-                "audit_only" => PolicyDecision::AuditOnly,
-                "need_approval" => PolicyDecision::NeedApproval,
-                _ => PolicyDecision::Deny,
-            };
+    // 【フェーズ1】一瞬だけロックを取り、判定に必要な事実（ファクト）だけをコピー
+    let (session_info, current_epoch) = {
+        let state = app_state().lock().await;
+        (
+            state.check_registered_session(&req.session_tty, req.uid, request_user.as_deref()),
+            state.current_epoch
+        )
+    }; // 即座にロック解放！
 
-            let mut ticket_payload = None;
+    // 【フェーズ2】ロックを持たない状態で、重いポリシー評価を並行実行
+    let ctx = request_to_ctx(req, &compiled.roles, session_info);
+    let decision = evaluate(&compiled.policy, &ctx);
 
-            if decision_kind == PolicyDecision::Allow && r.pre_approval.ttl_sec > 0 {
-                // 仕様書 5.1.2 準拠: T-XXXXXX 形式のID生成
-                let ticket_seq = state.generate_next_ticket_seq(); // (内部カウンターで生成)
-                let formatted_id = format!("T-{:09}", ticket_seq);
+    // 【フェーズ3】評価結果に応じた処理へルーティング
+    match decision {
+        Decision::Pass => build_not_managed_result(req, current_epoch),
+        Decision::NoMatchManaged => build_no_match_result(),
+        Decision::Matched(rule) => apply_matched_rule(rule, req, current_epoch).await,
+    }
+}
 
-                let payload = TicketPayload {
-                    ticket_id: formatted_id.clone(),
-                    uid: req.uid,
-                    op: r.action_match.to_u32(), // ルールの操作マスク
-                    prog_dev: req.prog_dev,
-                    prog_ino: req.prog_ino,
-                    script_dev: req.script_dev,
-                    script_ino: req.script_ino,
-                    applet_hash: 0,
-                    target_dev: req.target_dev,
-                    target_ino: req.target_ino,
-                    new_target_dev: req.new_target_dev,
-                    new_target_ino: req.new_target_ino,
-                    expires_in_sec: r.pre_approval.ttl_sec,
-                    flags: r.ticket_profile.flags,
-                    uses_left: r.max_uses,
-                    epoch: state.current_epoch,
-                    audit_flags: r.audit_level.to_u32(),
-                };
-                
-                ticket_payload = Some(payload);
-            } else if decision_kind == PolicyDecision::NeedApproval {
-                // 1. HashMapのvaluesから、ルールIDが一致したチケットを1つ探す
-                let target_ticket_id = state.fast.approved.values()
-                    .find(|t| t.rule_id == r.id)
-                    .map(|t| t.ticket_id.clone());
+// ============================================================================
+// 2. 対象外パス (NotManaged) 用の処理
+// ============================================================================
+fn build_not_managed_result(req: &Request, current_epoch: u32) -> PolicyResult {
+    let payload = TicketPayload {
+        ticket_id: "T-000000000".to_string(), // 予約値0
+        uid: req.uid,
+        op: 0xFFFFFFFF,             // Alpha版: 対象外は全操作許可マスク
+        prog_dev: req.prog_dev,
+        prog_ino: req.prog_ino,
+        script_dev: req.script_dev,
+        script_ino: req.script_ino,
+        applet_hash: 0,             // Alphaフェーズ固定
+        target_dev: req.target_dev,
+        target_ino: req.target_ino,
+        new_target_dev: req.new_target_dev,
+        new_target_ino: req.new_target_ino,
+        expires_in_sec: u64::MAX,   // Epochが変わるまで無限
+        flags: 0,
+        uses_left: 1,               // 予約値0でもプロトコル要件として1以上
+        epoch: current_epoch,       // グローバルEpochと紐付け
+        audit_flags: AuditLevel::Silent.to_u32(),
+    };
+    
+    PolicyResult {
+        decision: PolicyDecision::NotManaged,
+        rule_id: None,
+        ticket: Some(payload),
+    }
+}
 
-                // 2. 該当するIDが見つかった場合のみ、approvedからticketsへticketを移す
-                if let Some(ticket_id) = target_ticket_id {
-                    if let Some(approved) = state.fast.approved.remove(&ticket_id) {
-                        state.fast.tickets.insert(approved.ticket_id.clone(), approved.clone());
+// ============================================================================
+// 3. デフォルト拒否 (NoMatchManaged) 用の処理
+// ============================================================================
+fn build_no_match_result() -> PolicyResult {
+    PolicyResult {
+        decision: PolicyDecision::NoRuleMatched,
+        rule_id: None,
+        ticket: None,
+    }
+}
 
-                        let payload = TicketPayload {
-                            ticket_id: approved.ticket_id.clone(),
-                            uid: req.uid,
-                            op: approved.op_mask,
-                            prog_dev: req.prog_dev,
-                            prog_ino: req.prog_ino,
-                            script_dev: req.script_dev,
-                            script_ino: req.script_ino,
-                            applet_hash: 0,
-                            target_dev: req.target_dev,
-                            target_ino: req.target_ino,
-                            new_target_dev: req.new_target_dev,
-                            new_target_ino: req.new_target_ino,
-                            expires_in_sec: approved.ttl_sec,
-                            flags: r.ticket_profile.flags,
-                            uses_left: approved.max_uses,
-                            epoch: state.current_epoch,
-                            audit_flags: r.audit_level.to_u32(),
-                        };
-                        
-                        return PolicyResult {
-                            decision: PolicyDecision::Approved(approved),
-                            rule_id: Some(r.id.clone()),
-                            ticket: Some(payload),
-                        };
-                    }
-                }
+// ============================================================================
+// 4. ルールマッチ時の処理（状態変更が必要な場合のみ再度ロック）
+// ============================================================================
+async fn apply_matched_rule(r: &CompiledRule, req: &Request, current_epoch: u32) -> PolicyResult {
+    let decision_kind = match r.effect.as_str() {
+        "allow" => PolicyDecision::Allow,
+        "deny" => PolicyDecision::Deny,
+        "audit_only" => PolicyDecision::AuditOnly,
+        "need_approval" => PolicyDecision::NeedApproval,
+        _ => PolicyDecision::Deny,
+    };
 
-                // 3. 見つからなかった場合は通常の承認待ち (PendingEntry) を作成
-                // 3-1. PendingEntry (リッチなコンテキスト) を生成
-                let pending_entry = PendingEntry::from_rule(&r, req);
+    match decision_kind {
+        PolicyDecision::Allow if r.pre_approval.ttl_sec > 0 => {
+            // チケット発行に必要な「次のシーケンス番号」だけを、一瞬のロックで取得
+            let ticket_seq = {
+                let mut state = app_state().lock().await;
+                state.generate_next_ticket_seq()
+            }; // ロックを即解放
 
-                // 3-2. Slow Lane (承認待ちリスト) へ登録
-                state.slow.pending_requests.insert(req.id, pending_entry);
-            }
+            // AppStateへの参照を渡さず、値だけを渡して純粋な関数として処理
+            let ticket = generate_allow_ticket(r, req, ticket_seq, current_epoch);
 
             PolicyResult {
                 decision: decision_kind,
                 rule_id: Some(r.id.clone()),
-                ticket: ticket_payload, // NeedApproval時は None になるためカーネルへは返さない
+                ticket: Some(ticket),
             }
+        },
+        PolicyDecision::NeedApproval => {
+            // キューの操作を伴うため、内部でロックを取って安全に処理
+            process_need_approval(r, req, current_epoch).await
+        },
+        _ => {
+            PolicyResult {
+                decision: decision_kind,
+                rule_id: Some(r.id.clone()),
+                ticket: None,
+            }
+        }
+    }
+}
+
+// ============================================================================
+// 5. 許可(ALLOW)チケットの生成ロジック（純粋な関数になり、ロック非依存に）
+// ============================================================================
+fn generate_allow_ticket(
+    r: &CompiledRule, 
+    req: &Request, 
+    ticket_seq: u64, 
+    current_epoch: u32
+) -> TicketPayload {
+    let formatted_id = format!("T-{:09}", ticket_seq);
+
+    TicketPayload {
+        ticket_id: formatted_id,
+        uid: req.uid,
+        op: r.action_match.to_u32(),
+        prog_dev: req.prog_dev,
+        prog_ino: req.prog_ino,
+        script_dev: req.script_dev,
+        script_ino: req.script_ino,
+        applet_hash: 0,
+        target_dev: req.target_dev,
+        target_ino: req.target_ino,
+        new_target_dev: req.new_target_dev,
+        new_target_ino: req.new_target_ino,
+        expires_in_sec: r.pre_approval.ttl_sec,
+        flags: r.ticket_profile.flags,
+        uses_left: r.max_uses,
+        epoch: current_epoch, // フェーズ1で取得したコピーを使用
+        audit_flags: r.audit_level.to_u32(),
+    }
+}
+
+// ============================================================================
+// 6. NeedApproval 特有の処理 (究極までロックを最小化したJIT Hydration)
+// ============================================================================
+async fn process_need_approval(r: &CompiledRule, req: &Request, current_epoch: u32) -> PolicyResult {
+    // 【フェーズ1: 準備】
+    // Uuid生成やメモリ確保を伴う重い処理は、ロックを取る「前」に済ませておく
+    let pending_entry = PendingEntry::from_rule(r, req);
+
+    // 【フェーズ2: 状態変更 (一瞬だけロック)】
+    let approved_ticket_opt = {
+        let mut state = app_state().lock().await;
+
+        // 1. HashMapから該当ルールのチケットを探す
+        let target_ticket_id = state.fast.approved.values()
+            .find(|t| t.rule_id == r.id)
+            .map(|t| t.ticket_id.clone());
+
+        if let Some(ticket_id) = target_ticket_id {
+            // 2. 見つかった場合: JIT Hydration (approved から tickets へ移動)
+            if let Some(approved) = state.fast.approved.remove(&ticket_id) {
+                state.fast.tickets.insert(approved.ticket_id.clone(), approved.clone());
+                Some(approved) // 成功したチケット情報をコピーして返す
+            } else {
+                None
+            }
+        } else {
+            // 3. 見つからなかった場合: 承認待ちキューへ登録
+            // (事前のフェーズ1で作っておいた pending_entry を挿入するだけ)
+            state.slow.pending_requests.insert(req.id, pending_entry);
+            None
+        }
+    }; // 即座にロック解放！
+
+    // 【フェーズ3: 結果の構築】
+    // ロック解放後に、取得できたチケット情報を使ってペイロードを組み立てる
+    if let Some(approved) = approved_ticket_opt {
+        let payload = TicketPayload {
+            ticket_id: approved.ticket_id.clone(),
+            uid: req.uid,
+            op: approved.op_mask,
+            prog_dev: req.prog_dev,
+            prog_ino: req.prog_ino,
+            script_dev: req.script_dev,
+            script_ino: req.script_ino,
+            applet_hash: 0,
+            target_dev: req.target_dev,
+            target_ino: req.target_ino,
+            new_target_dev: req.new_target_dev,
+            new_target_ino: req.new_target_ino,
+            expires_in_sec: approved.ttl_sec,
+            flags: r.ticket_profile.flags,
+            uses_left: approved.max_uses,
+            epoch: current_epoch,
+            audit_flags: r.audit_level.to_u32(),
+        };
+        
+        PolicyResult {
+            decision: PolicyDecision::Approved(approved),
+            rule_id: Some(r.id.clone()),
+            ticket: Some(payload),
+        }
+    } else {
+        PolicyResult {
+            decision: PolicyDecision::NeedApproval,
+            rule_id: Some(r.id.clone()),
+            ticket: None,
         }
     }
 }
@@ -324,11 +369,3 @@ async fn reply_to_kernel(nl_tx: &NlWriter, req: &Request, policy_result: &mut Po
     }
 }
 
-// --- ヘルパー関数 ---
-fn normalize_opt_field(s: &str) -> Option<String> {
-    if s == "-" || s.is_empty() {
-        None
-    } else {
-        Some(s.to_string())
-    }
-}

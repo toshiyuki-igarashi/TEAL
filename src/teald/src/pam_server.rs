@@ -88,9 +88,7 @@ async fn handle_pam_connection(mut stream: UnixStream) {
 
 /// パース済みのPAMイベントを評価し、AppStateのアクティブセッション台帳を更新する
 async fn process_pam_event(event: PamEvent) {
-    let mut st = app_state().lock().await;
-    
-    // TTY名の正規化（例: "pts/1" -> "pts1"）
+    // TTY名の正規化（ロックを取る前にできることは先にやる）
     let normalized_key = normalize_tty_name(&event.session_tty);
 
     match event.action.as_str() {
@@ -101,8 +99,12 @@ async fn process_pam_event(event: PamEvent) {
                 auth_method: event.auth_method.clone(),
             };
             
-            st.slow.active_tty_sessions.insert(normalized_key, session);
-            
+            {
+                // ロックを取得し、HashMapを更新したら即座にスコープを抜けてロックを解放する
+                let mut st = app_state().lock().await;
+                st.slow.active_tty_sessions.insert(normalized_key, session);
+            }   // ロック解除！
+
             println!(
                 "[teald-PAM] Registered session: user={} at {} (from: {}, auth: {})", 
                 event.user, 
@@ -112,7 +114,10 @@ async fn process_pam_event(event: PamEvent) {
             );
         }
         "logout" => {
-            st.slow.active_tty_sessions.remove(&normalized_key);
+            {
+                let mut st = app_state().lock().await;
+                st.slow.active_tty_sessions.remove(&normalized_key);
+            }   // ここでロック解除！
             
             println!(
                 "[teald-PAM] Removed session for TTY {} (normalized)", 

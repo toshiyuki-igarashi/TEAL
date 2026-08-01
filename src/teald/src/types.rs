@@ -16,13 +16,14 @@ use hex;
 use blst::min_pk::{Signature, AggregateSignature};
 
 use teal_policy_engine::ir::{CompiledRule, RegisteredSession};
-use teal_policy_engine::util::{uid_to_name, normalize_tty_name, ktime_prefix};
+use teal_policy_engine::util::{uid_to_name, normalize_opt_field, normalize_tty_name, ktime_prefix};
 use teal_policy_engine::types::{Effect, RuleType};
 
 use crate::evidence;
 use crate::state::app_state;
 use crate::bundle::bundle;
 use crate::ticket::{is_ticketable, make_draft_id, ticket_from_entry};
+use crate::netlink::TealReq;
 use crate::worker::admin::find_rule;
 
 #[derive(Debug, Clone)]
@@ -62,6 +63,49 @@ pub struct Request {
     pub session_tty: String,
 }
 
+impl Request {
+    /// TealReq から Request 構造体に変換する（共通処理）
+    pub fn from_teal_req(nl_req: TealReq, is_audit: bool) -> Self {
+        Self {
+            id: nl_req.trans_id,
+            pid: nl_req.pid,
+            ppid: nl_req.ppid,
+            session_id: nl_req.session_id,
+            uid: nl_req.uid,
+            gid: nl_req.gid,
+            prog_dev: nl_req.prog_dev as u64,
+            prog_ino: nl_req.prog_ino,
+            raw_program: nl_req.program, // .clone()不要でムーブできるため高速
+            raw_action: nl_req.action,
+            target_dev: nl_req.target_dev as u64,
+            target_ino: nl_req.target_ino,
+            raw_target: nl_req.target,
+            new_target_dev: nl_req.new_target_dev as u64,
+            new_target_ino: nl_req.new_target_ino,
+            raw_new_target: normalize_opt_field(&nl_req.new_target),
+            script_dev: nl_req.script_dev as u64,
+            script_ino: nl_req.script_ino,
+            raw_script: normalize_opt_field(&nl_req.script),
+            raw_applet: normalize_opt_field(&nl_req.applet),
+            lsm_label_hex: nl_req.lsm_label,
+            args_head: normalize_opt_field(&nl_req.args_head),
+            flag: nl_req.flags,
+            is_audit, // 指定したモードをセット
+            session_tty: nl_req.session_tty,
+        }
+    }
+
+    /// Audit レーン用変換ヘルパー
+    pub fn from_audit_teal_req(nl_req: TealReq) -> Self {
+        Self::from_teal_req(nl_req, true)
+    }
+
+    /// Enforce (Decision) レーン用変換ヘルパー
+    pub fn from_enforce_teal_req(nl_req: TealReq) -> Self {
+        Self::from_teal_req(nl_req, false)
+    }
+}
+
 #[derive(Debug)]
 pub struct AppState {
     pub fast: FastState,
@@ -87,27 +131,33 @@ impl AppState {
     }
 
     /// 指定されたTTYとUIDが、PAMで認証済みの正規セッションか厳密に検証し、成功すればセッション情報を返す
-    pub fn check_registered_session(&self, tty: &str, uid: u32) -> Option<RegisteredSession> {
+    pub fn check_registered_session(&self, tty: &str, uid: u32, request_user: Option<&str>) -> Option<RegisteredSession> {
         // TTYが空、またはプレースホルダーの場合は未登録とみなす（バックグラウンドプロセス等）
         if tty.is_empty() || tty == "-" { 
             return None; 
         }
-        
+
         // 1. TTY名の正規化（例: "/dev/pts/1" -> "pts1"）
         let normalized_key = normalize_tty_name(tty);
 
-        // 2. システム関数 (getpwuid) を使って、カーネルから来た UID をユーザー名に変換
-        let request_user = uid_to_name(uid).ok()?;
+        // 2. ユーザー名が解決できなかった場合は検証不可能なので弾く
+        let request_user_str = match request_user {
+            Some(name) => name,
+            None => {
+                eprintln!("[WARN] check_registered_session: Failed to resolve name for UID {}", uid);
+                return None;
+            }
+        };
 
         // 3. 登録されたセッション情報を取得して厳密に突き合わせる（ハイジャック防止）
         if let Some(session) = self.slow.active_tty_sessions.get(&normalized_key) {
-            if request_user == session.user {
+            if request_user_str == session.user {
                 // 検証成功！セッション情報を丸ごと呼び出し元へ返却
                 return Some(session.clone());
             } else {
                 eprintln!(
                     "[SECURITY ALERT] TTY Hijack detected! Process (UID={}, User='{}') tried to use TTY {} which belongs to Registered User '{}'",
-                    uid, request_user, normalized_key, session.user
+                    uid, request_user_str, normalized_key, session.user
                 );
             }
         }
