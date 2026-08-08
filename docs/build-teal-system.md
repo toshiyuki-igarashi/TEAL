@@ -480,7 +480,7 @@ In Audit mode, TEAL may generate a significant volume of logs. To prevent disk s
 Create a file at `/etc/logrotate.d/teal`:
 
 ```text
-/var/log/teal/*.log {
+/var/log/teal/*.jsonl {
     daily
     rotate 7
     compress
