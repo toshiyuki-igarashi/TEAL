@@ -1557,24 +1557,13 @@ send      ← TEAL-NET で停止
 # **12. 攻撃カテゴリ別の評価**
 
 | 攻撃      | TEAL による防御手法（メカニズム）                      |
-| ------- | -------------- | ----------------------- |
-| 資格情報窃取  | read STOP / send STOP |
-| (Credential Theft) | 機密ファイルやメモリの読み出しを禁止し、外部送信も遮断するため、認証情報を持ち出せない。 |
-|||
-| ランサムウェア |  write STOP / Key-read STOP |
-| (Ransomware) |  暗号化のための大量書き込みと、復号鍵の読み出し・生成をブロックし、暗号化プロセスを成立させない。|
-|||
-| 内部不正    |  Root制御 / WORM / MPA             |
-| (Insider Threat) |  Root権限であっても単独での破壊・持ち出しを禁止。MPA（多人数承認）と改ざん不可ログにより不正を物理的に抑止する。|
-|||
-| 横展開     | Process-based Outbound Control           |
-| (Lateral Movement) | SSH や SCP などの管理ツールであっても、許可された宛先以外への接続（Connect）をプロセス単位で禁止する。|
-|||
-| サプライチェーン攻撃 | Exec STOP / Network STOP |
-| (Software Supply Chain) | 正規ソフトに混入した悪意あるコードが、未承認の外部通信や不正なファイル操作を行った瞬間に遮断する。|
-|||
-| 永続化     | Config Write STOP   |
-| (Persistence) | systemd, cron, rc.local などの起動設定への書き込みをMPA必須とし、バックドアの設置を防ぐ。|
+| ------- | -------------- |
+| 資格情報窃取<br>(Credential Theft) | read STOP / send STOP<br>機密ファイルやメモリの読み出しを禁止し、外部送信も遮断するため、認証情報を持ち出せない。 |
+| ランサムウェア<br>(Ransomware) |  write STOP / Key-read STOP<br>暗号化のための大量書き込みと、復号鍵の読み出し・生成をブロックし、暗号化プロセスを成立させない。 |
+| 内部不正<br>(Insider Threat) |  Root制御 / WORM / MPA<br>Root権限であっても単独での破壊・持ち出しを禁止。MPA（多人数承認）と改ざん不可ログにより不正を物理的に抑止する。 |
+| 横展開<br>(Lateral Movement) | Process-based Outbound Control<br>SSH や SCP などの管理ツールであっても、許可された宛先以外への接続（Connect）をプロセス単位で禁止する。 |
+| サプライチェーン攻撃<br>(Software Supply Chain) | Exec STOP / Network STOP<br>正規ソフトに混入した悪意あるコードが、未承認の外部通信や不正なファイル操作を行った瞬間に遮断する。 |
+| 永続化<br>(Persistence) | Config Write STOP<br>systemd, cron, rc.local などの起動設定への書き込みをMPA必須とし、バックドアの設置を防ぐ。 |
 
 このように、攻撃の「目的達成」に必要な操作（読む・書く・送る）そのものを制御することで、既知・未知を問わず、OS レイヤであらゆる攻撃の影響を極小化する。
 
