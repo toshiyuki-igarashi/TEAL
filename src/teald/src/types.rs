@@ -112,6 +112,7 @@ pub struct AppState {
     pub slow: SlowState,
     pub dev: TealDeviceState,
     pub is_enforce: bool,
+    pub is_flushed: bool,
     pub current_epoch: u32, // カーネル側の定義(u32)に合わせる
 }
 
@@ -181,20 +182,48 @@ impl FastState {
     }
 }
 
+// 1. ライフサイクル操作の種類を定義する Enum を新設
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MgmtCtlKind {
+    Start,
+    Stop,
+    PolicyUpdate,
+    Flush,
+}
+
+impl MgmtCtlKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MgmtCtlKind::Start => "START",
+            MgmtCtlKind::Stop => "STOP",
+            MgmtCtlKind::PolicyUpdate => "POLICY_UPDATE",
+            MgmtCtlKind::Flush => "FLUSH",
+        }
+    }
+}
+
+// 2. 構造体を統合し、先ほどの Enum を持たせる
+#[derive(Debug, Clone)]
+pub struct MgmtPendingCtl {
+    pub kind: MgmtCtlKind,      // 何のコマンドに対する承認待ちかを識別
+    pub initiator_uid: u32,
+    pub initiator_user: String,
+    pub audit_id: String,       // 監査用ID (UUID v7推奨)
+    pub mpa_state: MpaState,    // MPAの承認状態
+    pub timeout_minutes: u32,
+}
+
+// 3. SlowState は、この単一の Option を持つように変更
 #[derive(Debug)]
 pub struct SlowState {
     pub pending_requests: HashMap<u64, PendingEntry>,
     pub registered_keys: HashMap<u32, String>, // uid -> hex public key
 
-    pub pending_start: Option<MgmtPendingStart>,
-    pub pending_stop: Option<MgmtPendingStop>,
+    pub pending_ctl: Option<MgmtPendingCtl>,
 
-    // PAMから通知されたアクティブなログインセッション（拡充版）
-    // キー: 正規化されたTTY名 (例: "pts1")
-    // 値: セッションの詳細情報（ユーザー名、IP、認証方式など）
+    // PAMから通知されたアクティブなログインセッション
     pub active_tty_sessions: HashMap<String, RegisteredSession>,
 }
-
 
 #[derive(Debug)]
 pub struct TealDeviceState {
@@ -426,19 +455,6 @@ impl fmt::Display for EntityId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.dev, self.ino)
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct MgmtPendingStart {
-    pub initiator_uid: u32,
-    pub initiator_user: String,
-
-    /// 監査用ID (UUID v7推奨)。ログやSIEMでの検索キー。
-    pub audit_id: String,
-
-    // --- MPA Control (承認状態) ---
-    pub mpa_state: MpaState,
-    pub timeout_minutes: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -999,16 +1015,6 @@ pub enum PolicyDecision {
     Approved(ApprovedTicket),
 }
 
-/// STOPコマンド（AUDITへの降格）の保留状態
-#[derive(Debug, Clone)]
-pub struct MgmtPendingStop {
-    pub initiator_uid: u32,
-    pub initiator_user: String,
-    pub audit_id: String,
-    pub mpa_state: MpaState,
-    pub timeout_minutes: u32,
-}
-
 /// ワーカー間でやり取りする非同期メッセージ（事後報告イベント）
 #[derive(Debug, Clone)]
 pub enum InternalEvent {
@@ -1020,7 +1026,6 @@ pub enum InternalEvent {
         rule_id: Option<String>,
         ticket_id: Option<String>,
     },
-    // ... (以下、MpaApproved 等の他のバリアントはそのまま)
     MpaApproved {
         draft: PreApprovalDraft,
         ticket: ApprovedTicket,
@@ -1030,12 +1035,14 @@ pub enum InternalEvent {
         cacheable: bool,
         ticket_id: String,
     },
-    StartApproved {
-        pending_start: MgmtPendingStart,
+    
+    // ==========================================
+    // ライフサイクル管理（Start/Stop/PolicyUpdate/Flush）の許可イベント
+    // ==========================================
+    CtlApproved {
+        pending_ctl: MgmtPendingCtl,
     },
-    StopApproved {
-        pending_stop: MgmtPendingStop,
-    },
+    
     DraftDenied {
         draft: PreApprovalDraft,
         ticket: ApprovedTicket,
@@ -1045,12 +1052,12 @@ pub enum InternalEvent {
         entry: PendingEntry,
         denier_uid: u32,
     },
-    StartDenied {
-        pending_start: MgmtPendingStart,
-        denier_uid: u32,
-    },
-    StopDenied {
-        pending_stop: MgmtPendingStop,
+    
+    // ==========================================
+    // ライフサイクル管理（Start/Stop/PolicyUpdate/Flush）の拒否イベント
+    // ==========================================
+    CtlDenied {
+        pending_ctl: MgmtPendingCtl,
         denier_uid: u32,
     },
 }
@@ -1096,5 +1103,3 @@ pub struct TicketPayload {
     pub epoch: u32,             // 発行時点のポリシー世代
     pub audit_flags: u32,       // logの制御フラグ
 }
-
-

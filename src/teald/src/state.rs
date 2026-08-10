@@ -33,8 +33,7 @@ pub async fn init_state() {
             slow: SlowState {
                 pending_requests: HashMap::new(),
                 registered_keys: HashMap::new(),
-                pending_start: None,
-                pending_stop: None,
+                pending_ctl: None,
                 active_tty_sessions: HashMap::new(),
             },
             dev: TealDeviceState {
@@ -42,6 +41,7 @@ pub async fn init_state() {
                 device_file: None, 
             },
             is_enforce: false,
+            is_flushed: false,
             current_epoch: 0,
         }))
     )

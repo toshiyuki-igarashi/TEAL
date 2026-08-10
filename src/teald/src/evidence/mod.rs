@@ -19,7 +19,7 @@ use uuid::Uuid;
 use teal_policy_engine::util::{uid_to_name, ktime_prefix, u32_to_str};
 use teal_policy_engine::types::Effect;
 
-use crate::types::{PreApprovalDraft, ApprovedTicket, PendingEntry, MgmtPendingStart, MgmtPendingStop, KernelEventLog};
+use crate::types::{PreApprovalDraft, ApprovedTicket, PendingEntry, MgmtPendingCtl, MgmtCtlKind, KernelEventLog};
 use self::schema::{
     AuditLogEntry, AuthInfo, LogType, ObjectInfo, PolicyEvalResult, SubjectInfo,
     SyscallContext, TicketRef, IssuedTicketInfo,
@@ -324,50 +324,55 @@ impl EvidenceManager {
         self.send_entry(entry).await;
     }
 
-    /// 便利関数: static アクセス
-    pub async fn log_enforce_start_static(
+    /// 便利関数: static アクセス (ライフサイクル管理コマンド用)
+    pub async fn log_mgmt_ctl_static(
         log_type: LogType,
         decision: Effect,
-        pending_start: &MgmtPendingStart,
+        pending_ctl: &MgmtPendingCtl,
     ) {
         // グローバルインスタンス経由で送信
-        Self::instance().enqueue_enforce_start(log_type, decision, pending_start).await;
+        Self::instance().enqueue_mgmt_ctl(log_type, decision, pending_ctl).await;
     }
 
-    /// enforce mode start (承認時) のログ記録
-    /// args, 署名情報などが必須
-    pub async fn enqueue_enforce_start(
+    /// ライフサイクル管理（Start/Stop/PolicyUpdate/Flush）のログ記録
+    pub async fn enqueue_mgmt_ctl(
         &self,
         log_type: LogType,
         decision: Effect,
-        pending_start: &MgmtPendingStart,
+        pending_ctl: &MgmtPendingCtl,
     ) {
-        // 2. Hash計算 (Slow Pathは実ファイルから計算)
         let hash = calculate_sha256("/bin/teal-cli").unwrap_or_else(|_| "HASH_CALC_FAILED".to_string());
 
-        // 3. 構造体組み立て
+        // MgmtCtlKind に応じて、ログに出力する文字列を動的に切り替える
+        let (action_str, object_path, arg_str) = match pending_ctl.kind {
+            MgmtCtlKind::Start      => ("enable enforce mode", "system:mode/enforce", "start"),
+            MgmtCtlKind::Stop       => ("disable enforce mode", "system:mode/audit", "stop"),
+            MgmtCtlKind::PolicyUpdate => ("update policies", "system:policy/reload", "reload"),
+            MgmtCtlKind::Flush      => ("flush caches and lockdown", "system:network/lockdown", "flush"),
+        };
+
         let entry = AuditLogEntry {
             ver: "1.5".to_string(),
-            id: pending_start.audit_id.clone(),
+            id: pending_ctl.audit_id.clone(),
             log_type,
             ts: Utc::now(),
             host: get_hostname(),
             syscall_context: SyscallContext {
-                uid: pending_start.initiator_uid,
-                user: pending_start.initiator_user.clone(),
+                uid: pending_ctl.initiator_uid,
+                user: pending_ctl.initiator_user.clone(),
                 pid: 0,
-                action: "enable enforce mode".to_string(),
+                action: action_str.to_string(),
                 subject: SubjectInfo {
                     path: "/bin/teal-cli".to_string(),
                     hash,
                     applet: None,
                     script_path: None,
-                    args: Some("start".to_string()),
+                    args: Some(arg_str.to_string()),
                     session_tty: None,
                 },
                 object: ObjectInfo {
                     kind: "unknown".to_string(),
-                    path: "system:mode/enforce".to_string(),
+                    path: object_path.to_string(),
                     inode: 0,
                     device_id: 0,
                     new_path: None,
@@ -380,79 +385,15 @@ impl EvidenceManager {
                 policy_eval: PolicyEvalResult {
                     rule_id: "".to_string(),
                     matched_file: "management.json".to_string(),
-                    mpa_level_required: pending_start.mpa_state.threshold,
+                    mpa_level_required: pending_ctl.mpa_state.threshold,
                     decision,
                     issued_ticket: None,
                 },
-                mpa_proof: pending_start.mpa_state.clone(),
+                mpa_proof: pending_ctl.mpa_state.clone(),
             },
         };
 
-        // 4. チャネルに送信 (バッファがいっぱいの場合は待つ or エラーにする)
-        self.send_entry(entry).await;
-    }
-
-    /// 便利関数: static アクセス (STOP用)
-    pub async fn log_enforce_stop_static(
-        log_type: LogType,
-        decision: Effect,
-        pending_stop: &MgmtPendingStop,
-    ) {
-        // グローバルインスタンス経由で送信
-        Self::instance().enqueue_enforce_stop(log_type, decision, pending_stop).await;
-    }
-
-    /// enforce mode stop (承認時) のログ記録
-    pub async fn enqueue_enforce_stop(
-        &self,
-        log_type: LogType,
-        decision: Effect,
-        pending_stop: &MgmtPendingStop,
-    ) {
-        let hash = calculate_sha256("/bin/teal-cli").unwrap_or_else(|_| "HASH_CALC_FAILED".to_string());
-
-        let entry = AuditLogEntry {
-            ver: "1.5".to_string(),
-            id: pending_stop.audit_id.clone(),
-            log_type,
-            ts: Utc::now(),
-            host: get_hostname(),
-            syscall_context: SyscallContext {
-                uid: pending_stop.initiator_uid,
-                user: pending_stop.initiator_user.clone(),
-                pid: 0,
-                action: "disable enforce mode".to_string(),
-                subject: SubjectInfo {
-                    path: "/bin/teal-cli".to_string(),
-                    hash,
-                    applet: None,
-                    script_path: None,
-                    args: Some("stop".to_string()),
-                    session_tty: None,
-                },
-                object: ObjectInfo {
-                    kind: "unknown".to_string(),
-                    path: "system:mode/audit".to_string(),
-                    inode: 0,
-                    device_id: 0,
-                    new_path: None,
-                    new_device_id: None,
-                    new_inode: None,
-                },
-            },
-            environment_context: None,
-            auth_info: AuthInfo::SlowPath {
-                policy_eval: PolicyEvalResult {
-                    rule_id: "".to_string(),
-                    matched_file: "management.json".to_string(),
-                    mpa_level_required: pending_stop.mpa_state.threshold,
-                    decision,
-                    issued_ticket: None,
-                },
-                mpa_proof: pending_stop.mpa_state.clone(),
-            },
-        };
-
+        // チャネルに送信
         self.send_entry(entry).await;
     }
 
@@ -467,7 +408,6 @@ impl EvidenceManager {
         }
     }
 }
-
 
 /// ホスト名を取得 (簡易実装)
 fn get_hostname() -> String {
@@ -495,4 +435,3 @@ pub fn calculate_sha256(path: &str) -> io::Result<String> {
     let result = hasher.finalize();
     Ok(format!("sha256:{:x}", result))
 }
-

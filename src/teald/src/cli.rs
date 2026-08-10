@@ -62,6 +62,10 @@ enum Commands {
     Start,
     /// Stop Enforce mode and start Audit mode
     Stop,
+    /// Update policies and increment Epoch
+    PolicyUpdate,
+    /// Flush caches (Global Kill Switch)
+    Flush,
     /// Activate Break-Glass Mode
     Emergency {
         /// Emergency token
@@ -84,10 +88,6 @@ enum Commands {
         #[arg(long)]
         debug: bool,
     },
-    /// Reload policies and increment Epoch
-    Reload,
-    /// Flush caches (Global Kill Switch)
-    Flush,
 }
 
 // ==========================================
@@ -135,6 +135,12 @@ fn main() -> Result<()> {
         Commands::Stop => {
             run_signed_decision(DecisionKind::Stop, "")?;
         }
+        Commands::PolicyUpdate => {
+            send_command("POLICY_UPDATE")?;
+        }
+        Commands::Flush => {
+            send_command("FLUSH")?;
+        }
         Commands::Emergency { token } => {
             send_command(&format!("EMERGENCY {}", token))?;
         }
@@ -145,12 +151,6 @@ fn main() -> Result<()> {
             debug,
         } => {
             run_verify(policy_file, goal.as_deref(), *visualize, *debug)?;
-        }
-        Commands::Reload => {
-            send_command("RELOAD")?;
-        }
-        Commands::Flush => {
-            send_command("FLUSH")?;
         }
     }
     Ok(())

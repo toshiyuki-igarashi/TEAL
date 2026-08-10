@@ -82,14 +82,8 @@ pub async fn handle_internal_event(event: InternalEvent) {
         InternalEvent::MpaApproved { draft, ticket } => {
             EvidenceManager::log_ticket_add_static(LogType::TicketIssued, Effect::Allow, &draft, &ticket).await;
         }
-        InternalEvent::StartApproved { pending_start } => {
-            EvidenceManager::log_enforce_start_static(LogType::InteractiveDecision, Effect::Allow, &pending_start).await;
-        }
         InternalEvent::EntryApproved { entry, cacheable, ticket_id } => {
             EvidenceManager::log_slow_path_static(LogType::InteractiveDecision, Effect::Allow, cacheable, &ticket_id, &entry).await;
-        }
-        InternalEvent::StartDenied { pending_start, denier_uid: _ } => {
-            EvidenceManager::log_enforce_start_static(LogType::AccessDenied, Effect::Deny, &pending_start).await;
         }
         InternalEvent::DraftDenied { draft, ticket, denier_uid: _ } => {
             EvidenceManager::log_ticket_add_static(LogType::InteractiveDecision, Effect::Deny, &draft, &ticket).await;
@@ -97,11 +91,15 @@ pub async fn handle_internal_event(event: InternalEvent) {
         InternalEvent::EntryDenied { entry, denier_uid: _ } => {
             EvidenceManager::log_slow_path_static(LogType::InteractiveDecision, Effect::Deny, false, "", &entry).await;
         }
-        InternalEvent::StopApproved { pending_stop } => {
-            EvidenceManager::log_enforce_stop_static(LogType::InteractiveDecision, Effect::Allow, &pending_stop).await;
+
+        // ==============================================================
+        // ライフサイクル管理 (Start/Stop/Reload/Flush) 用のパス
+        // ==============================================================
+        InternalEvent::CtlApproved { pending_ctl } => {
+            EvidenceManager::log_mgmt_ctl_static(LogType::InteractiveDecision, Effect::Allow, &pending_ctl).await;
         }
-        InternalEvent::StopDenied { pending_stop, denier_uid: _ } => {
-            EvidenceManager::log_enforce_stop_static(LogType::AccessDenied, Effect::Deny, &pending_stop).await;
+        InternalEvent::CtlDenied { pending_ctl, denier_uid: _ } => {
+            EvidenceManager::log_mgmt_ctl_static(LogType::AccessDenied, Effect::Deny, &pending_ctl).await;
         }
     }
 }

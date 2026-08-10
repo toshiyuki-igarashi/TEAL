@@ -15,7 +15,7 @@ use crate::state::app_state;
 use crate::bundle::bundle;
 use crate::management::management;
 use crate::common::DecisionKind;
-use crate::types::{InternalEvent, MgmtPendingStart, MgmtPendingStop, MpaState, AppState, SignedCmdArgs, ApprovedTicket};
+use crate::types::{InternalEvent, MgmtPendingCtl, MgmtCtlKind, MpaState, AppState, SignedCmdArgs, ApprovedTicket};
 use crate::ticket::{is_ticketable, draft_from_rule};
 use crate::netlink::NlWriter;
 
@@ -72,8 +72,10 @@ async fn handle_admin_connection(mut stream: tokio::net::UnixStream, nl_tx: &NlW
         "TICKET"   => handle_ticket(&cmd, uid).await,
         "APPROVE"  => handle_approve(&cmd, uid, nl_tx).await,
         "DENY"     => handle_deny(&cmd, uid, nl_tx).await,
-        "START"    => handle_start(&cmd, uid, nl_tx).await,
-        "STOP"     => handle_stop(&cmd, uid, nl_tx).await,
+        "START"    => handle_mgmt(&cmd, MgmtCtlKind::Start, DecisionKind::Start, uid, nl_tx).await,
+        "STOP"     => handle_mgmt(&cmd, MgmtCtlKind::Stop, DecisionKind::Stop, uid, nl_tx).await,
+        "POLICY_UPDATE" => handle_mgmt(&cmd, MgmtCtlKind::PolicyUpdate, uid, nl_tx).await,
+        "FLUSH"         => handle_mgmt(&cmd, MgmtCtlKind::Flush, uid, nl_tx).await,
         _ => ("ERR unknown cmd\n".to_string(), None),
     };
 
@@ -171,14 +173,21 @@ async fn handle_deny(cmd: &str, uid: u32, nl_tx: &NlWriter) -> (String, Option<I
     handle_signed_decision(cmd, DecisionKind::Deny, uid, Some(nl_tx)).await
 }
 
-async fn handle_start(cmd: &str, uid: u32, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
-    eprintln!("{}[INFO] START: user={}", ktime_prefix(), uid_to_name(uid).unwrap_or_else(|_| "".to_string()));
-    handle_signed_decision(cmd, DecisionKind::Start, uid, Some(nl_tx)).await
-}
-
-async fn handle_stop(cmd: &str, uid: u32, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
-    eprintln!("{}[INFO] STOP: user={}", ktime_prefix(), uid_to_name(uid).unwrap_or_else(|_| "".to_string()));
-    handle_signed_decision(cmd, DecisionKind::Stop, uid, Some(nl_tx)).await
+/// 管理操作コマンド（START/STOP等）の受付共通ハンドラ
+async fn handle_mgmt(
+    cmd: &str,
+    ctl_kind: MgmtCtlKind,
+    decision_kind: DecisionKind,
+    uid: u32,
+    nl_tx: &NlWriter,
+) -> (String, Option<InternalEvent>) {
+    eprintln!(
+        "{}[INFO] {}: user={}",
+        ktime_prefix(),
+        ctl_kind.as_str(),
+        uid_to_name(uid).unwrap_or_else(|_| "".to_string())
+    );
+    handle_signed_decision(cmd, decision_kind, uid, Some(nl_tx)).await
 }
 
 // --- 署名検証とメイン制御 ---
@@ -281,19 +290,24 @@ async fn fetch_pubkey_and_verify(uid: u32, kind: DecisionKind, args: &SignedCmdA
 const TEAL_DST: &[u8] = b"TEAL_SYSTEM_V1_MPA_SIG";
 
 // --- 分岐と適用 ---
-async fn apply_decision(kind: DecisionKind, args: SignedCmdArgs, nl_tx: Option<&NlWriter>) -> (String, Option<InternalEvent>) {
+async fn apply_decision(
+    kind: DecisionKind,
+    args: SignedCmdArgs,
+    nl_tx: Option<&NlWriter>
+) -> (String, Option<InternalEvent>) {
     match kind {
         DecisionKind::Approve => process_approval(args, nl_tx.unwrap()).await,
-        DecisionKind::Deny => process_deny(args, nl_tx.unwrap()).await,
+        DecisionKind::Deny    => process_deny(args, nl_tx.unwrap()).await,
+        DecisionKind::Ticket  => process_ticket(&args.id, args.uid).await,
+        
         DecisionKind::Start => {
             let mgmt = management();
-            check_start_initiator_and_handle(&mgmt, args.uid, nl_tx.unwrap()).await
+            check_initiator_and_handle(MgmtCtlKind::Start, &mgmt, args.uid, nl_tx.unwrap()).await
         }
         DecisionKind::Stop => {
             let mgmt = management();
-            check_stop_initiator_and_handle(&mgmt, args.uid, nl_tx.unwrap()).await
+            check_initiator_and_handle(MgmtCtlKind::Stop, &mgmt, args.uid, nl_tx.unwrap()).await
         }
-        DecisionKind::Ticket => process_ticket(&args.id, args.uid).await,
     }
 }
 
@@ -321,11 +335,14 @@ async fn process_approval(args: SignedCmdArgs, nl_tx: &NlWriter) -> (String, Opt
     }
 }
 
+fn is_mgmt_id(id: &str) -> bool {
+    let id_upper = id.to_uppercase();
+    matches!(id_upper.as_str(), "START" | "STOP" | "RELOAD" | "POLICY_UPDATE" | "FLUSH")
+}
+
 async fn finalize_approval(args: &SignedCmdArgs, nl_tx: &NlWriter) -> Option<InternalEvent> {
-    if args.id == "start" {
-        finalize_start_approval(nl_tx).await
-    } else if args.id == "stop" {
-        finalize_stop_approval(nl_tx).await
+    if is_mgmt_id(&args.id) {
+        finalize_ctl_approval(nl_tx).await
     } else if is_draft_id(&args.id) {
         finalize_draft_approval(&args.id).await
     } else {
@@ -382,82 +399,56 @@ async fn process_approve_draft(args: &SignedCmdArgs) -> Result<bool, String> {
     Ok(is_fulfilled)
 }
 
-async fn process_approve_start(args: &SignedCmdArgs) -> Result<bool, String> {
+async fn process_approve_ctl(args: &SignedCmdArgs) -> Result<bool, String> {
     // 1. 必要なデータ（MpaState）だけをクローンして取り出し、即座にロックを解除
     let mut current_mpa_state = {
         let st = app_state().lock().await;
-        match &st.slow.pending_start {
-            Some(p) => p.mpa_state.clone(), // 状態のコピーをもらう
-            None => return Err("ERR no pending start\n".to_string()),
+        match &st.slow.pending_ctl {
+            Some(p) => p.mpa_state.clone(),
+            None => return Err("ERR no pending management command\n".to_string()),
         }
-    }; // ここでスコープを抜け、確実にロック解除！
+    }; // ここでスコープを抜け、確実にロック解放！
 
-    // 2. ロックを持たない安全な状態で、CPU計算（ロールチェックや要素の削除）を行う
+    // 2. ロックを持たない安全な状態で、CPU計算（ロールチェックや要素の追加）を行う
     let is_fulfilled = check_fully_approved(args, &mut current_mpa_state)?;
 
     // 3. 計算結果を、もう一度一瞬だけロックを取って書き戻す
     {
         let mut st = app_state().lock().await;
-        if let Some(pending) = st.slow.pending_start.as_mut() {
-            pending.mpa_state = current_mpa_state; // 結果を反映
+        if let Some(pending) = st.slow.pending_ctl.as_mut() {
+            pending.mpa_state = current_mpa_state; // 署名追加・状態更新結果を反映
         }
-    } // 即解除
+    } // 即解放
 
     Ok(is_fulfilled)
 }
 
-async fn process_approve_stop(args: &SignedCmdArgs) -> Result<bool, String> {
-    // 1. 必要なデータ（MpaState）だけをクローンして取り出し、即座にロックを解除
-    let mut current_mpa_state = {
-        let st = app_state().lock().await;
-        match &st.slow.pending_stop {
-            Some(p) => p.mpa_state.clone(), // 状態のコピーをもらう
-            None => return Err("ERR no pending stop\n".to_string()),
-        }
-    }; // ここでスコープを抜け、確実にロック解除！
-
-    // 2. ロックを持たない安全な状態で、CPU計算を行う
-    let is_fulfilled = check_fully_approved(args, &mut current_mpa_state)?;
-
-    // 3. 計算結果を、もう一度一瞬だけロックを取って書き戻す
-    {
+/// 管理コマンドの最終決裁共通関数
+async fn finalize_ctl_approval(
+    nl_tx: &NlWriter,
+) -> Option<InternalEvent> {
+    // 1. まず所有権を取り出す
+    let pending_ctl = {
         let mut st = app_state().lock().await;
-        if let Some(pending) = st.slow.pending_stop.as_mut() {
-            pending.mpa_state = current_mpa_state; // 結果を反映
-        }
-    } // 即解除
+        st.slow.pending_ctl.take()?
+    };
 
-    Ok(is_fulfilled)
-}
+    let kind = pending_ctl.kind.clone();
+    let uid = pending_ctl.initiator_uid;
 
-/// 最終決裁 (START)
-async fn finalize_start_approval(nl_tx: &NlWriter) -> Option<InternalEvent> {
-    let mut event = None;
-    let mut pending_ids = Vec::new();
+    // 2. 暗号計算 (BLS集約) はロック外で実行
+    let mut pending_ctl = tokio::task::spawn_blocking(move || {
+        let _ = pending_ctl.mpa_state.try_aggregate();
+        pending_ctl
+    })
+    .await
+    .ok()?;
 
-    {
-        let mut st = app_state().lock().await;
-        if let Some(mut pending_start) = st.slow.pending_start.take() {
-            let _ = pending_start.mpa_state.try_aggregate();
-            event = Some(InternalEvent::StartApproved { pending_start });
-        }
+    // 3. kind に応じた実行ロジックへ委約 (引数 _mgmt を削除して呼び出し)
+    execute_mgmt_ctl(kind, uid, nl_tx).await;
 
-        if !st.slow.pending_requests.is_empty() {
-            pending_ids = st.slow.pending_requests.keys().cloned().collect();
-            eprintln!("{}[WARN] Flushing {} pending requests before ENFORCE start.", ktime_prefix(), pending_ids.len());
-        }
-
-        clear_ephemeral_state_for_enforce(&mut st);
-        st.is_enforce = true;
-    } // ロック解放
-
-    // Netlinkでの送信（ロックなしで安全に実行）
-    for id in pending_ids {
-        let _ = nl_tx.send_deny(id).await;
-    }
-    let _ = nl_tx.send_mode_switch(1).await;
-
-    event
+    // 4. 承認イベントを返す
+    Some(InternalEvent::CtlApproved { pending_ctl })
 }
 
 async fn finalize_draft_approval(id: &str) -> Option<InternalEvent> {
@@ -541,48 +532,14 @@ async fn finalize_entry_approval(args: &SignedCmdArgs, nl_tx: &NlWriter) -> Opti
     event
 }
 
-/// 最終決裁 (STOP)
-async fn finalize_stop_approval(nl_tx: &NlWriter) -> Option<InternalEvent> {
-    // 1. ロック内では「所有権の取り出し(take)」と「メモリクリア」だけを行い、数ナノ秒で即座にロック解除！
-    let pending_stop_opt = {
-        let mut st = app_state().lock().await;
-        
-        let stop = st.slow.pending_stop.take();
-        
-        st.is_enforce = false;
-        st.slow.pending_requests.clear();
-        st.fast.drafts.clear();
-        st.slow.pending_start = None;
-        
-        stop
-    }; // スコープを抜けてここで即座にロック解放！
-
-    // 2. ロックを持たない安全な状態で、重いBLS暗号計算を専用スレッドに逃がして実行する
-    let event = if let Some(mut pending_stop) = pending_stop_opt {
-        // CPU密集処理（BLS署名の検証・集約）を spawn_blocking で非同期スレッドプールに逃がす
-        let pending_stop = tokio::task::spawn_blocking(move || {
-            let _ = pending_stop.mpa_state.try_aggregate();
-            pending_stop
-        })
-        .await
-        .ok()?;
-
-        Some(InternalEvent::StopApproved { pending_stop })
-    } else {
-        None
-    };
-
-    // 3. カーネルへのモード切り替え送信（Netlink I/O）
-    let _ = nl_tx.send_mode_switch(0).await;
-
-    event
-}
-
 async fn record_approval(args: &SignedCmdArgs) -> Result<bool, String> {
-    if args.id == "start" { process_approve_start(args).await }
-    else if args.id == "stop" { process_approve_stop(args).await }
-    else if is_draft_id(&args.id) { process_approve_draft(args).await }
-    else { process_approve_entry(args).await }
+    if is_mgmt_id(&args.id) {
+        process_approve_ctl(args).await
+    } else if is_draft_id(&args.id) {
+        process_approve_draft(args).await
+    } else {
+        process_approve_entry(args).await
+    }
 }
 
 fn check_fully_approved(args: &SignedCmdArgs, mpa_state: &mut MpaState) -> Result<bool, String> {
@@ -595,42 +552,69 @@ fn check_fully_approved(args: &SignedCmdArgs, mpa_state: &mut MpaState) -> Resul
 }
 
 async fn process_deny(args: SignedCmdArgs, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
-    if args.id == "start" { process_deny_start(args.uid).await }
-    else if args.id == "stop" { process_deny_stop(args.uid).await }
+    if is_mgmt_id(&args.id) { 
+        process_deny_ctl(&args.id, args.uid).await 
+    }
     else if is_draft_id(&args.id) { process_deny_draft(&args.id, args.uid).await }
     else { process_deny_entry(&args, nl_tx).await }
 }
 
-async fn process_deny_start(uid: u32) -> (String, Option<InternalEvent>) {
-    // 1. 必要なデータ（検証用のロール）だけを一瞬でコピーしてロックを手放す
-    let approver_roles = {
-        let st = app_state().lock().await;
-        match st.slow.pending_start.as_ref() {
-            Some(p) => p.mpa_state.approver_roles.clone(), // 必要な部分だけコピー
-            None => return ("ERR no pending start\n".to_string(), None),
-        }
-    }; // ここで即座にロック解放！
+/// 保留中の管理コマンド要求を拒否する
+async fn process_deny_ctl(cmd_id: &str, uid: u32) -> (String, Option<InternalEvent>) {
+    // 1. 引数(cmd_id)から、ユーザーが何を拒否しようとしているか推測する
+    let expected_kind = match cmd_id {
+        "start" => MgmtCtlKind::Start,
+        "stop" => MgmtCtlKind::Stop,
+        "policy_update" | "reload" => MgmtCtlKind::PolicyUpdate,
+        "flush" => MgmtCtlKind::Flush,
+        _ => return (format!("ERR unknown management command {}\n", cmd_id), None),
+    };
 
-    // 2. ロックを持たない安全な状態でロールを検証する
+    // 2. 必要なデータ（検証用のロール）を一瞬でコピーしてロック解放
+    let (approver_roles, kind) = {
+        let st = app_state().lock().await;
+        match st.slow.pending_ctl.as_ref() {
+            Some(p) if p.kind == expected_kind => {
+                // 要求されたコマンドと、実際に保留中のコマンドが完全に一致！
+                (p.mpa_state.approver_roles.clone(), p.kind.clone())
+            },
+            Some(p) => {
+                // 誤爆防止: 要求と実際の保留状態が食い違っている
+                return (format!("ERR pending command is {}, not {}\n", p.kind.as_str(), expected_kind.as_str()), None);
+            },
+            None => {
+                return (format!("ERR no pending {} command\n", expected_kind.as_str()), None);
+            }
+        }
+    }; // 即解放
+
+    // 3. ロックを持たない安全な状態で権限チェック
     let has_permission = check_permission(uid, &approver_roles).0;
 
-    // 3. 検証結果がOKなら、再度一瞬だけロックを取り直して対象を取り除く（take）
-    if has_permission { 
+    // 4. 権限があれば再度ロックを取って対象を取り除く (take)
+    if has_permission {
         let pending = {
             let mut st = app_state().lock().await;
-            st.slow.pending_start.take()
+            // 競合状態を防ぐため、取り出す直前に再度 kind の一致を確認して take()
+            if st.slow.pending_ctl.as_ref().map(|p| &p.kind) == Some(&kind) {
+                st.slow.pending_ctl.take()
+            } else {
+                None
+            }
         }; // 即解放
-        
-        if let Some(p) = pending {
-            let event = Some(InternalEvent::StartDenied { pending_start: p, denier_uid: uid });
-            ("OK denied\n".to_string(), event)
+
+        if let Some(pending_ctl) = pending {
+            let event = Some(InternalEvent::CtlDenied {
+                pending_ctl,
+                denier_uid: uid,
+            });
+            (format!("OK {} denied\n", kind.as_str()), event)
         } else {
-            // チェック直後に誰かに処理されてしまった場合（競合回避のフェイルセーフ）
-            ("ERR no pending start\n".to_string(), None)
+            ("ERR pending command was already processed\n".to_string(), None)
         }
-    } else { 
-        ("ERR user are not allowed to deny\n".to_string(), None)
-    } 
+    } else {
+        ("ERR user is not allowed to deny\n".to_string(), None)
+    }
 }
 
 async fn process_deny_draft(id: &str, uid: u32) -> (String, Option<InternalEvent>) {
@@ -723,38 +707,6 @@ async fn process_deny_entry(args: &SignedCmdArgs, nl_tx: &NlWriter) -> (String, 
     ("DENIED\n".to_string(), event)
 }
 
-async fn process_deny_stop(uid: u32) -> (String, Option<InternalEvent>) {
-    // 1. 必要なデータ（検証用のロール）だけを一瞬でコピーしてロックを手放す
-    let approver_roles = {
-        let st = app_state().lock().await;
-        match st.slow.pending_stop.as_ref() {
-            Some(p) => p.mpa_state.approver_roles.clone(),
-            None => return ("ERR no pending stop\n".to_string(), None),
-        }
-    }; // ここで即座にロック解放！
-
-    // 2. ロックを持たない安全な状態でロールを検証する
-    let has_permission = check_permission(uid, &approver_roles).0;
-
-    // 3. 検証結果がOKなら、再度一瞬だけロックを取り直して対象を取り除く（take）
-    if has_permission { 
-        let pending = {
-            let mut st = app_state().lock().await;
-            st.slow.pending_stop.take()
-        }; // 即解放
-        
-        if let Some(p) = pending {
-            let event = Some(InternalEvent::StopDenied { pending_stop: p, denier_uid: uid });
-            ("OK denied\n".to_string(), event)
-        } else {
-            // チェック直後に他の人が処理済みだった場合
-            ("ERR no pending stop\n".to_string(), None)
-        }
-    } else { 
-        ("ERR user are not allowed to deny\n".to_string(), None)
-    } 
-}
-
 async fn process_ticket(id: &str, uid: u32) -> (String, Option<InternalEvent>) {
     let rule = match find_rule(id) { Ok(r) => r, Err(err) => return (format!("ERR {}\n", err), None) };
     if let Err(err) = is_ticketable(&rule) { return (format!("ERR {}\n", err), None); }
@@ -769,20 +721,65 @@ async fn process_ticket(id: &str, uid: u32) -> (String, Option<InternalEvent>) {
     ("OK\n".to_string(), None)
 }
 
-async fn check_start_initiator_and_handle(mgmt: &CompiledManagement, uid: u32, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
-    if !mgmt.controls.start.initiator_uids.contains(&uid) { return ("ERR not permitted to START\n".to_string(), None); }
-    handle_start_cmd(mgmt, uid, nl_tx).await
+/// 管理コマンド実行者の権限チェックとハンドラ呼び出しの共通関数
+async fn check_initiator_and_handle(
+    kind: MgmtCtlKind,
+    mgmt: &CompiledManagement,
+    uid: u32,
+    nl_tx: &NlWriter,
+) -> (String, Option<InternalEvent>) {
+    // 1. kind に応じて該当操作の initiator_uids を取得
+    let initiator_uids = match kind {
+        MgmtCtlKind::Start        => &mgmt.controls.start.initiator_uids,
+        MgmtCtlKind::Stop         => &mgmt.controls.stop.initiator_uids,
+        MgmtCtlKind::PolicyUpdate => &mgmt.controls.reload.initiator_uids, // JSONスキーマ上はreload
+        MgmtCtlKind::Flush        => &mgmt.controls.flush.initiator_uids,
+    };
+
+    // 2. initiator 権限チェック
+    if !initiator_uids.contains(&uid) {
+        return (format!("ERR not permitted to {}\n", kind.as_str()), None);
+    }
+
+    // 3. 権限OKなら、前回作成した handle_mgmt_cmd へ委約
+    handle_mgmt_cmd(kind, mgmt, uid, nl_tx).await
 }
 
-async fn handle_start_cmd(mgmt: &CompiledManagement, uid: u32, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
-    match &mgmt.controls.start.mpa {
-        CompiledMgmtMpa::Disabled => handle_enforce_start(mgmt, uid, nl_tx).await,
-        CompiledMgmtMpa::Enabled(mpa) => create_start_pending(uid, mpa).await,
+/// 管理コマンドの受付共通処理 (Start/Stop/PolicyUpdate/Flush)
+async fn handle_mgmt_cmd(
+    kind: MgmtCtlKind,
+    mgmt: &CompiledManagement,
+    uid: u32,
+    nl_tx: &NlWriter,
+) -> (String, Option<InternalEvent>) {
+    // 1. kind に応じて、management.json 内の該当MPA設定を引っ張ってくる
+    let mpa_config = match kind {
+        MgmtCtlKind::Start        => &mgmt.controls.start.mpa,
+        MgmtCtlKind::Stop         => &mgmt.controls.stop.mpa,
+        MgmtCtlKind::PolicyUpdate => &mgmt.controls.reload.mpa, // JSONのキー名はreloadのまま
+        MgmtCtlKind::Flush        => &mgmt.controls.flush.mpa,
+    };
+
+    // 2. MPAが有効か無効かで分岐し、先ほど作った共通関数へ投げるだけ！
+    match mpa_config {
+        CompiledMgmtMpa::Disabled => {
+            // MPA不要: 即時実行
+            execute_mgmt_ctl(kind, mgmt, uid, nl_tx).await
+        }
+        CompiledMgmtMpa::Enabled(mpa) => {
+            // MPA必要: 承認待ち状態を作成
+            create_mgmt_pending(kind, uid, mpa).await
+        }
     }
 }
 
-async fn create_start_pending(uid: u32, mpa: &CompiledMgmtMpaEnabled) -> (String, Option<InternalEvent>) {
-    // 1. ロックを取る前に、重い処理（外部I/OやUUID生成）を完全に終わらせておく
+/// ライフサイクル管理コマンドの承認待ち(Pending)状態を作成する
+async fn create_mgmt_pending(
+    kind: MgmtCtlKind,
+    uid: u32,
+    mpa: &CompiledMgmtMpaEnabled
+) -> (String, Option<InternalEvent>) {
+    // 1. 事前準備：重い処理（名前解決とUUID生成）をロックの外で完全に終わらせる
     let initiator_user = tokio::task::spawn_blocking(move || {
         uid_to_name(uid).unwrap_or_else(|_| "".to_string())
     })
@@ -791,15 +788,18 @@ async fn create_start_pending(uid: u32, mpa: &CompiledMgmtMpaEnabled) -> (String
     
     let audit_id = Uuid::new_v4().to_string();
 
-    // 2. 具材が揃ったら、一瞬だけロックを取ってポンと入れる（超高速）
+    // 2. 具材が揃ったら、一瞬だけロックを取って状態を更新する
     {
-        let mut st = app_state().lock().await;
-        if st.slow.pending_start.is_some() { 
-            return ("ERR start already pending\n".to_string(), None); 
+        let mut st = app_state().lock().await; // ロック取得
+        
+        // 既に何らかの管理コマンドがPending中ならエラーにする（排他制御）
+        if let Some(existing) = &st.slow.pending_ctl { 
+            return (format!("ERR {} is already pending\n", existing.kind.as_str()), None); 
         }
         
-        st.slow.pending_start = Some(
-            MgmtPendingStart { 
+        st.slow.pending_ctl = Some(
+            MgmtPendingCtl {
+                kind: kind.clone(),
                 initiator_uid: uid,
                 initiator_user,
                 audit_id,
@@ -813,61 +813,110 @@ async fn create_start_pending(uid: u32, mpa: &CompiledMgmtMpaEnabled) -> (String
                 timeout_minutes: mpa.timeout_minutes
             }
         );
-    } // ここで即座にロック解除！
+    } // ここで即座にロック解放！
     
     ("PENDING\n".to_string(), None)
 }
 
-async fn handle_enforce_start(mgmt: &CompiledManagement, uid: u32, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
-    let event: Option<InternalEvent>;   
-    let mut pending_ids = Vec::new();
-
-    // 1. ロックを取る前に、重い処理（名前解決とUUID生成）を終わらせておく
+/// 管理コマンドの即時実行、またはMPA承認完了後の状態変更とカーネル通知を行う
+async fn execute_mgmt_ctl(
+    kind: MgmtCtlKind,
+    uid: u32,
+    nl_tx: &NlWriter,
+) -> (String, Option<InternalEvent>) {
+    // 1. ロック前に重い処理（名前解決・UUID生成）を実行
     let initiator_user_str = tokio::task::spawn_blocking(move || {
         uid_to_name(uid).unwrap_or_else(|_| "".to_string())
     })
     .await
     .unwrap_or_default();
-    
+
     let generated_audit_id = Uuid::new_v4().to_string();
 
+    // 即時実行用の監査イベント生成 (承認情報はデフォルトで空)
+    let pending_ctl = MgmtPendingCtl {
+        kind: kind.clone(),
+        initiator_uid: uid,
+        initiator_user: initiator_user_str,
+        audit_id: generated_audit_id,
+        mpa_state: MpaState::default(), // MpaState::default() を使用
+        timeout_minutes: 0,
+    };
+    let event = Some(InternalEvent::CtlApproved {
+        pending_ctl: pending_ctl.clone(),
+    });
+
+    let mut pending_deny_ids = Vec::new();
+    let current_epoch: u32;
+
+    // 2. ロックを取得してインメモリ状態を更新 (フェーズ1)
     {
-        let mut st = app_state().lock().await; // ロック取得
-        if !st.slow.pending_requests.is_empty() {
-            pending_ids = st.slow.pending_requests.keys().cloned().collect();
-            eprintln!("{}[WARN] handle_enforce_start: Auto-denying {} pending requests to prevent hang.", ktime_prefix(), pending_ids.len());
+        let mut st = app_state().lock().await;
+
+        match kind {
+            MgmtCtlKind::Start => {
+                if st.is_flushed {
+                    st.is_flushed = false; // ネットワーク復旧
+                }
+                if !st.slow.pending_requests.is_empty() {
+                    pending_deny_ids = st.slow.pending_requests.keys().cloned().collect();
+                    eprintln!(
+                        "{}[WARN] Auto-denying {} pending requests before ENFORCE start.",
+                        ktime_prefix(),
+                        pending_deny_ids.len()
+                    );
+                }
+                clear_ephemeral_state_for_enforce(&mut st);
+                st.is_enforce = true;
+            }
+            MgmtCtlKind::Stop => {
+                st.is_enforce = false;
+                clear_ephemeral_state_for_enforce(&mut st);
+            }
+            MgmtCtlKind::PolicyUpdate => {
+                // TODO: 今後の本実装で、新 bundle.json の検証・コンパイル・アトミック差し替えを行う。
+                // 現在はEpochの更新とキャッシュクリアのみを行うスタブ（骨組み）として動作。
+                st.current_epoch = st.current_epoch.wrapping_add(1);
+                st.fast.drafts.clear();
+                st.fast.approved.clear();
+                st.fast.tickets.clear();
+            }
+            MgmtCtlKind::Flush => {
+                st.is_flushed = true;
+                st.current_epoch = st.current_epoch.wrapping_add(1);
+                clear_ephemeral_state_for_enforce(&mut st);
+            }
         }
 
-        let timeout_minutes = match &mgmt.controls.start.mpa {
-            CompiledMgmtMpa::Enabled(enabled) => enabled.timeout_minutes,
-            _ => 0
-        };
-        
-        let mgmt_start = MgmtPendingStart {
-            initiator_uid: uid,
-            initiator_user: initiator_user_str,
-            audit_id: generated_audit_id,
-            mpa_state: MpaState {
-                threshold: 1,
-                approver_roles: HashSet::new(),
-                required_roles: HashSet::new(),
-                approvals: HashMap::new(),
-                aggregated_signature: None
-            },
-            timeout_minutes
-        };
+        current_epoch = st.current_epoch;
+        st.slow.pending_ctl = None; // 管理コマンドの承認待ち状態を解除
+    } // ロック解放
 
-        event = Some(InternalEvent::StartApproved { pending_start: mgmt_start });
-        clear_ephemeral_state_for_enforce(&mut st);
-        st.is_enforce = true;
-    } // 即座にロック解放
-
-    for id in pending_ids {
-        let _ = nl_tx.send_deny(id).await;
+    // 3. ロック外で安全に外部I/O（Netlink送信など）を実行 (フェーズ2)
+    match kind {
+        MgmtCtlKind::Start => {
+            for id in pending_deny_ids {
+                let _ = nl_tx.send_deny(id).await;
+            }
+            let _ = nl_tx.send_mode_switch(1).await;
+        }
+        MgmtCtlKind::Stop => {
+            let _ = nl_tx.send_mode_switch(0).await;
+        }
+        MgmtCtlKind::PolicyUpdate => {
+            // TODO: カーネルへ Epoch 更新メッセージを送る本実装時に有効化
+            // let _ = nl_tx.send_sync_epoch(current_epoch).await;
+        }
+        MgmtCtlKind::Flush => {
+            // TODO: カーネルへ Epoch 更新メッセージを送る本実装時に有効化
+            // let _ = nl_tx.send_sync_epoch(current_epoch).await;
+        }
     }
-    let _ = nl_tx.send_mode_switch(1).await;
-    
-    ("OK started\n".to_string(), event)
+
+    (
+        format!("OK {} executed (Epoch: {})\n", kind.as_str(), current_epoch),
+        event,
+    )
 }
 
 fn clear_ephemeral_state_for_enforce(state: &mut AppState) {
@@ -875,107 +924,6 @@ fn clear_ephemeral_state_for_enforce(state: &mut AppState) {
     state.fast.tickets.clear();
     state.slow.pending_requests.clear();
     state.slow.pending_start = None;
-}
-
-async fn check_stop_initiator_and_handle(mgmt: &CompiledManagement, uid: u32, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
-    if !mgmt.controls.stop.initiator_uids.contains(&uid) { return ("ERR not permitted to STOP\n".to_string(), None); }
-    handle_stop_cmd(mgmt, uid, nl_tx).await
-}
-
-async fn handle_stop_cmd(mgmt: &CompiledManagement, uid: u32, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
-    match &mgmt.controls.stop.mpa {
-        CompiledMgmtMpa::Disabled => handle_enforce_stop(mgmt, uid, nl_tx).await,
-        CompiledMgmtMpa::Enabled(mpa) => create_stop_pending(uid, mpa).await,
-    }
-}
-
-async fn handle_enforce_stop(mgmt: &CompiledManagement, uid: u32, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
-    let event: Option<InternalEvent>;   
-
-    // 1. ロックを取る前に、重い処理（名前解決とUUID生成）を終わらせておく
-    let initiator_user_str = tokio::task::spawn_blocking(move || {
-        uid_to_name(uid).unwrap_or_else(|_| "".to_string())
-    })
-    .await
-    .unwrap_or_default();
-
-    let generated_audit_id = Uuid::new_v4().to_string();
-
-    {
-        let mut st = app_state().lock().await; // ロック取得
-        
-        let timeout_minutes = match &mgmt.controls.stop.mpa {
-            CompiledMgmtMpa::Enabled(enabled) => enabled.timeout_minutes,
-            _ => 0
-        };
-
-        let mgmt_stop = MgmtPendingStop {
-            initiator_uid: uid,
-            initiator_user: initiator_user_str,
-            audit_id: generated_audit_id,
-            mpa_state: MpaState {
-                threshold: 1,
-                approver_roles: HashSet::new(),
-                required_roles: HashSet::new(),
-                approvals: HashMap::new(),
-                aggregated_signature: None
-            },
-            timeout_minutes
-        };
-
-        event = Some(InternalEvent::StopApproved { pending_stop: mgmt_stop });
-
-        // 状態のリセット（メモリ操作のみで高速）
-        st.is_enforce = false;
-        st.slow.pending_requests.clear();
-        st.fast.drafts.clear();
-        st.fast.tickets.clear();
-        st.slow.pending_start = None;
-        st.slow.pending_stop = None;
-    } // 即座にロック解放
-
-    // ロックを持たない安全な状態で、カーネルへのモード切り替え送信（I/O）
-    let _ = nl_tx.send_mode_switch(0).await;
-
-    ("OK stopped\n".to_string(), event)
-}
-
-async fn create_stop_pending(uid: u32, mpa: &CompiledMgmtMpaEnabled) -> (String, Option<InternalEvent>) {
-    // 1. 事前準備：重い処理（名前解決とUUID生成）をロックの外で完全に終わらせる
-    let initiator_user_str = tokio::task::spawn_blocking(move || {
-        uid_to_name(uid).unwrap_or_else(|_| "".to_string())
-    })
-    .await
-    .unwrap_or_default();
-    
-    let generated_audit_id = Uuid::new_v4().to_string();
-
-    // 2. 具材が揃ったら、一瞬だけロックを取って状態を更新する
-    {
-        let mut st = app_state().lock().await; // ロック取得
-        
-        if st.slow.pending_stop.is_some() { 
-            return ("ERR stop already pending\n".to_string(), None); 
-        }
-        
-        st.slow.pending_stop = Some(
-            MgmtPendingStop {
-                initiator_uid: uid,
-                initiator_user: initiator_user_str,
-                audit_id: generated_audit_id,
-                mpa_state: MpaState {
-                    threshold: mpa.threshold,
-                    approver_roles: mpa.approver_roles.clone(),
-                    required_roles: mpa.approver_roles.clone(),
-                    approvals: HashMap::new(),
-                    aggregated_signature: None
-                },
-                timeout_minutes: mpa.timeout_minutes
-            }
-        );
-    } // ここでロック解放！
-    
-    ("PENDING\n".to_string(), None)
 }
 
 // --- ヘルパー関数 ---
