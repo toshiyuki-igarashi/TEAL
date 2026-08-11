@@ -10,9 +10,6 @@ use std::collections::{HashMap, HashSet};
 use crate::errors::{CompileError, CompileWarnings};
 use crate::ir::CompiledRolesCore;
 
-///   pub management: Option<RawManagement>
-///   pub management: Option<CompiledManagement>
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawManagement {
     pub roles: Vec<RawMgmtRole>,
@@ -28,9 +25,16 @@ pub struct RawMgmtRole {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RawMgmtControls {
     pub start: RawMgmtControl,
     pub stop: RawMgmtControl,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_update: Option<RawMgmtControl>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flush: Option<RawMgmtControl>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -78,6 +82,8 @@ pub struct CompiledManagement {
 pub struct CompiledMgmtControls {
     pub start: CompiledMgmtControl,
     pub stop: CompiledMgmtControl,
+    pub policy_update: Option<CompiledMgmtControl>,
+    pub flush: Option<CompiledMgmtControl>,
 }
 
 #[derive(Debug, Clone)]
@@ -226,7 +232,7 @@ pub fn compile_management(
         };
 
 
-    // ---- 2) control(start/stop) をコンパイル ----
+    // ---- 2) control(start/stop/policy_update/flush) をコンパイル ----
 
     fn compile_control(
         which: &str,
@@ -389,12 +395,30 @@ pub fn compile_management(
         }))
     }
 
+    // 1. 必須項目 (start / stop)
     let start = compile_control("start", raw.controls.start, &mut warnings, &mut resolve_role_uids)?;
     let stop  = compile_control("stop",  raw.controls.stop,  &mut warnings, &mut resolve_role_uids)?;
 
+    // 2. 任意項目 (policy_update)
+    let policy_update = match raw.controls.policy_update {
+        Some(c) => Some(compile_control("policy_update", c, &mut warnings, &mut resolve_role_uids)?),
+        None => None,
+    };
+
+    // 3. 任意項目 (flush)
+    let flush = match raw.controls.flush {
+        Some(c) => Some(compile_control("flush", c, &mut warnings, &mut resolve_role_uids)?),
+        None => None,
+    };
+
     let compiled = CompiledManagement {
         roles: mgmt_roles,
-        controls: CompiledMgmtControls { start, stop },
+        controls: CompiledMgmtControls {
+            start,
+            stop,
+            policy_update,
+            flush,
+        },
     };
 
     Ok((compiled, warnings))

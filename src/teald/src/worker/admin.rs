@@ -65,17 +65,25 @@ async fn handle_admin_connection(mut stream: tokio::net::UnixStream, nl_tx: &NlW
     let cmd = String::from_utf8_lossy(&buf[..n]).trim().to_string();
     let cmd_name = cmd.split_whitespace().next().unwrap_or_else(|| "");
 
+    // 管理設定(CompiledManagement)の参照を取得
+    let mgmt = management();
+
     // Netlinkの送信が必要なコマンドには nl_tx を渡す
     let (response, event) = match cmd_name {
-        "LIST"     => handle_list(&cmd, uid).await,
-        "REGISTER" => handle_register(&cmd, uid).await,
-        "TICKET"   => handle_ticket(&cmd, uid).await,
-        "APPROVE"  => handle_approve(&cmd, uid, nl_tx).await,
-        "DENY"     => handle_deny(&cmd, uid, nl_tx).await,
-        "START"    => handle_mgmt(&cmd, MgmtCtlKind::Start, DecisionKind::Start, uid, nl_tx).await,
-        "STOP"     => handle_mgmt(&cmd, MgmtCtlKind::Stop, DecisionKind::Stop, uid, nl_tx).await,
-        "POLICY_UPDATE" => handle_mgmt(&cmd, MgmtCtlKind::PolicyUpdate, uid, nl_tx).await,
-        "FLUSH"         => handle_mgmt(&cmd, MgmtCtlKind::Flush, uid, nl_tx).await,
+        "LIST"          => handle_list(&cmd, uid).await,
+        "REGISTER"      => handle_register(&cmd, uid).await,
+        "TICKET"        => handle_ticket(&cmd, uid).await,
+        "APPROVE"       => handle_approve(&cmd, uid, nl_tx).await,
+        "DENY"          => handle_deny(&cmd, uid, nl_tx).await,
+
+        // 【署名が必要なライフサイクル操作】
+        "START"         => handle_mgmt(&cmd, MgmtCtlKind::Start, DecisionKind::Start, uid, nl_tx).await,
+        "STOP"          => handle_mgmt(&cmd, MgmtCtlKind::Stop, DecisionKind::Stop, uid, nl_tx).await,
+        
+        // 【署名なしの管理・特権操作（直接チェック＆実行へ流す）】
+        "POLICY_UPDATE" => check_initiator_and_handle(MgmtCtlKind::PolicyUpdate, &mgmt, uid, nl_tx).await,
+        "FLUSH"         => check_initiator_and_handle(MgmtCtlKind::Flush, &mgmt, uid, nl_tx).await,
+
         _ => ("ERR unknown cmd\n".to_string(), None),
     };
 
@@ -86,23 +94,21 @@ async fn handle_admin_connection(mut stream: tokio::net::UnixStream, nl_tx: &NlW
 // --- 各コマンドの入り口 ---
 async fn handle_list(_cmd: &str, _uid: u32) -> (String, Option<InternalEvent>) {
     // 1. ロックを取得し、必要なデータだけを「スナップショット」として手元にコピーする
-    let (drafts, pending_start, pending_stop, pending_requests) = {
+    let (drafts, pending_ctl, pending_requests) = {
         let lock = app_state().lock().await; // ロック取得
 
         // 空判定（早期リターン）
         if lock.fast.drafts.is_empty() 
             && lock.slow.pending_requests.is_empty() 
-            && lock.slow.pending_start.is_none()
-            && lock.slow.pending_stop.is_none() 
+            && lock.slow.pending_ctl.is_none() 
         {
             return ("No pending requests.\n".to_string(), None); // ここでロック自動解除
         }
 
-        // 必要なデータをクローン（メモリのコピーだけなのでフォーマット処理より遥かに高速）
+        // 必要なデータをクローン
         (
             lock.fast.drafts.clone(),
-            lock.slow.pending_start.clone(),
-            lock.slow.pending_stop.clone(),
+            lock.slow.pending_ctl.clone(),
             lock.slow.pending_requests.clone(),
         )
     }; // スコープを抜けてここで即座にロック解除！
@@ -115,20 +121,28 @@ async fn handle_list(_cmd: &str, _uid: u32) -> (String, Option<InternalEvent>) {
 
     // クローンしたデータを使って、安全に文字列を生成する
     for (id, draft) in &drafts {
-        s.push_str(&format!("DRAFT ID: {} | Rule-ID: {} | Status: {} | MPA: {}/{} | Roles: {:?} | timeout_minutes: {} | max_uses = {}\n",            
+        s.push_str(&format!("DRAFT ID: {} | Rule-ID: {} | Status: {} | MPA: {}/{} | Roles: {:?} | timeout_minutes: {} | max_uses = {}\n",         
             id, draft.rule_id, draft.mpa_state.is_fulfilled(), draft.mpa_state.approvals.len(), draft.mpa_state.threshold, draft.mpa_state.required_roles, draft.ttl_sec, draft.max_uses,
         ));
     }
 
-    if let Some(start) = &pending_start {
-        s.push_str(&format!("ID: START | UID: {} | Status: {} | MPA: {}/{} | Roles: {:?} | timeout_minutes: {}\n",
-            start.initiator_uid, start.mpa_state.is_fulfilled(), start.mpa_state.approvals.len(), start.mpa_state.threshold, start.mpa_state.required_roles, start.timeout_minutes,
-        ));
-    }
+    // 集約された pending_ctl のハンドリング (kindに応じて表示ラベルを切り替え)
+    if let Some(ctl) = &pending_ctl {
+        let label = match ctl.kind {
+            MgmtCtlKind::Start        => "START",
+            MgmtCtlKind::Stop         => "STOP",
+            MgmtCtlKind::PolicyUpdate => "POLICY_UPDATE",
+            MgmtCtlKind::Flush        => "FLUSH",
+        };
 
-    if let Some(stop) = &pending_stop {
-        s.push_str(&format!("ID: STOP | UID: {} | Status: {} | MPA: {}/{} | Roles: {:?} | timeout_minutes: {}\n",
-            stop.initiator_uid, stop.mpa_state.is_fulfilled(), stop.mpa_state.approvals.len(), stop.mpa_state.threshold, stop.mpa_state.required_roles, stop.timeout_minutes,
+        s.push_str(&format!("ID: {} | UID: {} | Status: {} | MPA: {}/{} | Roles: {:?} | timeout_minutes: {}\n",
+            label, 
+            ctl.initiator_uid, 
+            ctl.mpa_state.is_fulfilled(), 
+            ctl.mpa_state.approvals.len(), 
+            ctl.mpa_state.threshold, 
+            ctl.mpa_state.required_roles, 
+            ctl.timeout_minutes,
         ));
     }
 
@@ -427,8 +441,8 @@ async fn process_approve_ctl(args: &SignedCmdArgs) -> Result<bool, String> {
 async fn finalize_ctl_approval(
     nl_tx: &NlWriter,
 ) -> Option<InternalEvent> {
-    // 1. まず所有権を取り出す
-    let pending_ctl = {
+    // 1. まず所有権を取り出す (try_aggregate で内部状態を変更するため mut を付与)
+    let mut pending_ctl = {
         let mut st = app_state().lock().await;
         st.slow.pending_ctl.take()?
     };
@@ -437,14 +451,15 @@ async fn finalize_ctl_approval(
     let uid = pending_ctl.initiator_uid;
 
     // 2. 暗号計算 (BLS集約) はロック外で実行
-    let mut pending_ctl = tokio::task::spawn_blocking(move || {
+    // (受け取る側はその後可変操作を行わないため mut は不要)
+    let pending_ctl = tokio::task::spawn_blocking(move || {
         let _ = pending_ctl.mpa_state.try_aggregate();
         pending_ctl
     })
     .await
     .ok()?;
 
-    // 3. kind に応じた実行ロジックへ委約 (引数 _mgmt を削除して呼び出し)
+    // 3. kind に応じた実行ロジックへ委約
     execute_mgmt_ctl(kind, uid, nl_tx).await;
 
     // 4. 承認イベントを返す
@@ -728,20 +743,26 @@ async fn check_initiator_and_handle(
     uid: u32,
     nl_tx: &NlWriter,
 ) -> (String, Option<InternalEvent>) {
-    // 1. kind に応じて該当操作の initiator_uids を取得
-    let initiator_uids = match kind {
-        MgmtCtlKind::Start        => &mgmt.controls.start.initiator_uids,
-        MgmtCtlKind::Stop         => &mgmt.controls.stop.initiator_uids,
-        MgmtCtlKind::PolicyUpdate => &mgmt.controls.reload.initiator_uids, // JSONスキーマ上はreload
-        MgmtCtlKind::Flush        => &mgmt.controls.flush.initiator_uids,
+    // 1. kind に応じて該当操作の control (Option) を取得
+    let control_opt = match kind {
+        MgmtCtlKind::Start        => Some(&mgmt.controls.start),
+        MgmtCtlKind::Stop         => Some(&mgmt.controls.stop),
+        MgmtCtlKind::PolicyUpdate => mgmt.controls.policy_update.as_ref(),
+        MgmtCtlKind::Flush        => mgmt.controls.flush.as_ref(),
     };
 
-    // 2. initiator 権限チェック
-    if !initiator_uids.contains(&uid) {
+    // 2. コントロール自体がポリシーに定義されていない（None）場合は、
+    //    「その操作は許可されていない（Fail-Safe）」として安全に拒否する
+    let Some(control) = control_opt else {
+        return (format!("ERR {} control is not configured in policy\n", kind.as_str()), None);
+    };
+
+    // 3. initiator 権限チェック
+    if !control.initiator_uids.contains(&uid) {
         return (format!("ERR not permitted to {}\n", kind.as_str()), None);
     }
 
-    // 3. 権限OKなら、前回作成した handle_mgmt_cmd へ委約
+    // 4. 権限OKなら、handle_mgmt_cmd へ委約
     handle_mgmt_cmd(kind, mgmt, uid, nl_tx).await
 }
 
@@ -752,19 +773,24 @@ async fn handle_mgmt_cmd(
     uid: u32,
     nl_tx: &NlWriter,
 ) -> (String, Option<InternalEvent>) {
-    // 1. kind に応じて、management.json 内の該当MPA設定を引っ張ってくる
-    let mpa_config = match kind {
-        MgmtCtlKind::Start        => &mgmt.controls.start.mpa,
-        MgmtCtlKind::Stop         => &mgmt.controls.stop.mpa,
-        MgmtCtlKind::PolicyUpdate => &mgmt.controls.reload.mpa, // JSONのキー名はreloadのまま
-        MgmtCtlKind::Flush        => &mgmt.controls.flush.mpa,
+    // 1. kind に応じて該当操作の Control (Option含む) を取得
+    let control_opt = match kind {
+        MgmtCtlKind::Start        => Some(&mgmt.controls.start),
+        MgmtCtlKind::Stop         => Some(&mgmt.controls.stop),
+        MgmtCtlKind::PolicyUpdate => mgmt.controls.policy_update.as_ref(),
+        MgmtCtlKind::Flush        => mgmt.controls.flush.as_ref(),
     };
 
-    // 2. MPAが有効か無効かで分岐し、先ほど作った共通関数へ投げるだけ！
+    // 2. コントロールが存在し、かつ MPA が Enabled になっているか判定
+    let mpa_config = control_opt
+        .map(|ctrl| &ctrl.mpa)
+        .unwrap_or(&CompiledMgmtMpa::Disabled); // コントロール未定義なら MPA 不要 (Disabled) 扱い
+
+    // 3. MPAの有効/無効に応じて処理を分岐
     match mpa_config {
         CompiledMgmtMpa::Disabled => {
             // MPA不要: 即時実行
-            execute_mgmt_ctl(kind, mgmt, uid, nl_tx).await
+            execute_mgmt_ctl(kind, uid, nl_tx).await
         }
         CompiledMgmtMpa::Enabled(mpa) => {
             // MPA必要: 承認待ち状態を作成
@@ -923,7 +949,7 @@ fn clear_ephemeral_state_for_enforce(state: &mut AppState) {
     state.fast.drafts.clear();
     state.fast.tickets.clear();
     state.slow.pending_requests.clear();
-    state.slow.pending_start = None;
+    state.slow.pending_ctl = None;
 }
 
 // --- ヘルパー関数 ---
