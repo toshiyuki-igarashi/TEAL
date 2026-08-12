@@ -339,11 +339,26 @@ fn json_path_contains(kept: &str, target: &str) -> bool {
     if kept == target {
         return true; // 完全一致
     }
+
     if kept.starts_with("prefix:") {
         let base_prefix = kept.trim_start_matches("prefix:");
         let target_clean = target.trim_start_matches("prefix:").trim_start_matches("glob:");
-        return target_clean.starts_with(base_prefix); // プレフィックス前方一致
+
+        // そもそも文字列のプレフィックスすら一致しない場合は除外
+        if !target_clean.starts_with(base_prefix) {
+            return false;
+        }
+
+        // 1. base_prefix が末尾に '/' を持っている場合 (例: "/usr/lib/")
+        // 2. 長さが完全一致する場合 (例: "/usr/lib" と "/usr/lib")
+        if base_prefix.ends_with('/') || target_clean.len() == base_prefix.len() {
+            return true;
+        }
+
+        // 3. base_prefix の直後の文字が '/' であるかチェック (例: "/usr/lib" に対する "/usr/lib/ext")
+        return target_clean[base_prefix.len()..].starts_with('/');
     }
+
     false
 }
 
