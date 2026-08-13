@@ -7,6 +7,7 @@
 use std::sync::{Arc, OnceLock};
 use anyhow::{Context, Result};
 use serde_json::Value;
+use arc_swap::ArcSwapOption;
 
 use crate::roles::load_roles;
 use crate::policy::load_policies_listed_in_bundle;
@@ -35,16 +36,19 @@ fn bundle_schema_value() -> &'static Value {
 
 // teald 側（バイナリクレート）例
 
-pub static BUNDLE: OnceLock<Arc<CompiledBundle>> = OnceLock::new();
+pub static BUNDLE: ArcSwapOption<CompiledBundle> = ArcSwapOption::const_empty();
 
-pub fn init_bundle(bundle: CompiledBundle) -> Result<(), &'static str> {
-    BUNDLE
-        .set(Arc::new(bundle))
-        .map_err(|_| "BUNDLE already initialized")
+/// バンドルの初期化および更新（POLICY_UPDATE等から何度でも安全に呼び出し可能）
+pub fn init_bundle(bundle: CompiledBundle) -> Result<()> {
+    BUNDLE.store(Some(Arc::new(bundle)));
+    Ok(())
 }
 
+/// 現在有効なポリシーバンドルを取得 (Wait-Freeで参照を取得)
 pub fn bundle() -> Arc<CompiledBundle> {
-    BUNDLE.get().expect("BUNDLE not initialized").clone()
+    BUNDLE
+        .load_full()
+        .expect("BUNDLE not initialized")
 }
 
 pub fn load_from_bundle() -> Result<()> {
@@ -79,7 +83,8 @@ pub fn load_from_bundle() -> Result<()> {
         warnings,
     };
 
-    init_bundle(compiled).map_err(|e| anyhow::anyhow!(e))?;
+    // 起動時・リロード時ともに、アトミックに差し替え実行
+    init_bundle(compiled)?;
 
     Ok(())
 }

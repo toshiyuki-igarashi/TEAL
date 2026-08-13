@@ -50,3 +50,4 @@ quick-xml = "0.31"          # Alloy XMLの高速パース用
 glob = "0.3"                # Rust側でのパスパターン解決用
 colored = "2.1"             # レポートの装飾用
 tempfile = "3.8"            # 一時的な .als / .xml ファイル管理用
+arc-swap = "1.9.2"
