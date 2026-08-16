@@ -16,6 +16,7 @@ use crate::types::{
 use crate::bundle::bundle;
 use crate::decide::request_to_ctx;
 use crate::netlink::{TealNetlinkMessage, NlWriter};
+use crate::types::{next_audit_ticket_id, ACTIVE_TICKETS};
 
 use teal_policy_engine::types::Action;
 use teal_policy_engine::ir::{CompiledRule, Decision};
@@ -170,13 +171,10 @@ async fn apply_matched_rule(r: &CompiledRule, req: &Request, current_epoch: u32)
     match decision_kind {
         PolicyDecision::Allow if r.pre_approval.ttl_sec > 0 => {
             // チケット発行に必要な「次のシーケンス番号」だけを、一瞬のロックで取得
-            let ticket_seq = {
-                let mut state = app_state().lock().await;
-                state.generate_next_ticket_seq()
-            }; // ロックを即解放
+            let ticket_id = next_audit_ticket_id();
 
             // AppStateへの参照を渡さず、値だけを渡して純粋な関数として処理
-            let ticket = generate_allow_ticket(r, req, ticket_seq, current_epoch);
+            let ticket = generate_allow_ticket(r, req, ticket_id, current_epoch);
 
             PolicyResult {
                 decision: decision_kind,
@@ -204,13 +202,12 @@ async fn apply_matched_rule(r: &CompiledRule, req: &Request, current_epoch: u32)
 fn generate_allow_ticket(
     r: &CompiledRule, 
     req: &Request, 
-    ticket_seq: u64, 
+    ticket_seq: String, 
     current_epoch: u32
 ) -> TicketPayload {
-    let formatted_id = format!("T-{:09}", ticket_seq);
 
     TicketPayload {
-        ticket_id: formatted_id,
+        ticket_id: ticket_seq,
         uid: req.uid,
         op: r.action_match.to_u32(),
         prog_dev: req.prog_dev,
@@ -250,7 +247,7 @@ async fn process_need_approval(r: &CompiledRule, req: &Request, current_epoch: u
         if let Some(ticket_id) = target_ticket_id {
             // 2. 見つかった場合: JIT Hydration (approved から tickets へ移動)
             if let Some(approved) = state.fast.approved.remove(&ticket_id) {
-                state.fast.tickets.insert(approved.ticket_id.clone(), approved.clone());
+                ACTIVE_TICKETS.insert(approved.ticket_id.clone(), approved.clone());
                 Some(approved) // 成功したチケット情報をコピーして返す
             } else {
                 None
@@ -317,8 +314,7 @@ async fn reply_to_kernel(nl_tx: &NlWriter, req: &Request, policy_result: &mut Po
                 nl_tx.send_ticket_add(ticket).await?;
 
                 if let Some(approved) = ApprovedTicket::from_result(policy_result) {
-                    let mut lock = app_state().lock().await;
-                    lock.fast.tickets.insert(approved.ticket_id.clone(), approved);
+                    ACTIVE_TICKETS.insert(approved.ticket_id.clone(), approved);
                 }
                 Ok(())
             } else {
@@ -350,11 +346,7 @@ async fn reply_to_kernel(nl_tx: &NlWriter, req: &Request, policy_result: &mut Po
             }
 
             approved.op_mask = Action::parse(&req.raw_action).unwrap_or(Action::Unknown).to_mask();
-
-            {
-                let mut state = app_state().lock().await;
-                state.fast.tickets.insert(approved.ticket_id.clone(), approved.clone());
-            }
+            ACTIVE_TICKETS.insert(approved.ticket_id.clone(), approved.clone());
 
             if let Some(ticket) = policy_result.ticket.take() {
                 let _ = nl_tx.send_approve(req.id).await;

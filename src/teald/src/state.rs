@@ -27,8 +27,6 @@ pub async fn init_state() {
             fast: FastState {
                 drafts: HashMap::new(),
                 approved: HashMap::new(),
-                tickets: HashMap::new(),
-                next_draft_seq: 0,
             },
             slow: SlowState {
                 pending_requests: HashMap::new(),

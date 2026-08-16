@@ -10,6 +10,7 @@ use std::fs;
 
 use crate::state::app_state;
 use crate::types::{Request, InternalEvent, PolicyDecision, PendingEntry, KernelEventLog, TicketPayload, EntityId, ApprovedTicket};
+use crate::types::{next_audit_ticket_id, ACTIVE_TICKETS};
 use crate::bundle::bundle;
 use crate::decide::request_to_ctx;
 use crate::evidence::EvidenceManager;
@@ -180,7 +181,7 @@ async fn evaluate_audit_request(req: &Request) -> AuditEvalResult {
                 && r.ticket_profile.flags != 0 
                 && r.pre_approval.ttl_sec > 0 
             {
-                let ticket_id = generate_audit_ticket_id().await;
+                let ticket_id = next_audit_ticket_id();
                 issued_ticket_id = ticket_id.clone();
 
                 let (target_dev, target_ino) = if r.rule_type == RuleType::SubjectOnly {
@@ -249,8 +250,7 @@ async fn evaluate_audit_request(req: &Request) -> AuditEvalResult {
                     max_uses: r.max_uses,
                 };
 
-                let mut state = app_state().lock().await;
-                state.fast.tickets.insert(ticket_id, approved_ticket);
+                ACTIVE_TICKETS.insert(ticket_id, approved_ticket);
             }
 
             (eff, Some(r.id.clone()))
@@ -316,22 +316,14 @@ fn create_not_managed_ticket(req: &Request) -> TicketPayload {
     }
 }
 
-/// AUDITモード用の新規チケットIDを生成する
-async fn generate_audit_ticket_id() -> String {
-    let mut state = app_state().lock().await;
-    let seq = state.generate_next_ticket_seq();
-    format!("T-{:09}", seq)
-}
-
 /// Fast Path（カーネルキャッシュ）で消費・期限切れになったチケットの情報を処理する
 pub async fn handle_kernel_info(info: TealInfo) -> Result<()> {
     let ticket_id = format!("T-{:09}", info.ticket_id);
     let event_name = if info.is_expired { "EXPIRED" } else { "CONSUMED" };
 
-    // 1. ロックを取ってチケットをクローンし、必要なら即座に削除（超高速・ブロックなし）
+    // 1. チケットをクローンし、必要なら即座に削除（超高速・ブロックなし）
     let target_ticket = {
-        let mut lock = app_state().lock().await;
-        if let Some(ticket) = lock.fast.tickets.get(&ticket_id) {
+        if let Some(ticket) = ACTIVE_TICKETS.get(&ticket_id) {
             let t_clone = ticket.clone(); 
             
             // 削除条件の判定: 期限切れ、または使用回数が0になったら削除
@@ -341,7 +333,7 @@ pub async fn handle_kernel_info(info: TealInfo) -> Result<()> {
                 _ => false,
             };
             if should_remove {
-                lock.fast.tickets.remove(&ticket_id);
+                ACTIVE_TICKETS.remove(&ticket_id);
             }
             
             Some(t_clone)

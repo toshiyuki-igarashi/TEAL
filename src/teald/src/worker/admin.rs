@@ -16,6 +16,7 @@ use crate::bundle::bundle;
 use crate::management::management;
 use crate::common::DecisionKind;
 use crate::types::{InternalEvent, MgmtPendingCtl, MgmtCtlKind, MpaState, AppState, SignedCmdArgs, ApprovedTicket};
+use crate::types::ACTIVE_TICKETS;
 use crate::ticket::{is_ticketable, draft_from_rule};
 use crate::netlink::NlWriter;
 
@@ -656,7 +657,7 @@ async fn process_deny_draft(id: &str, uid: u32) -> (String, Option<InternalEvent
         
         // draft が存在していれば削除し、紐づく ticket も削除する
         if let Some(draft) = lock.fast.drafts.remove(id) {
-            let ticket = lock.fast.tickets.remove(id).unwrap_or_default();
+            let ticket = ACTIVE_TICKETS.remove(id).map(|(_, ticket)| ticket).unwrap_or_default();
             event = Some(InternalEvent::DraftDenied { draft, ticket, denier_uid: uid });
             true
         } else {
@@ -905,7 +906,7 @@ async fn execute_mgmt_ctl(
                 st.current_epoch = st.current_epoch.wrapping_add(1);
                 st.fast.drafts.clear();
                 st.fast.approved.clear();
-                st.fast.tickets.clear();
+                ACTIVE_TICKETS.clear();
             }
             MgmtCtlKind::Flush => {
                 st.is_flushed = true;
@@ -947,7 +948,7 @@ async fn execute_mgmt_ctl(
 
 fn clear_ephemeral_state_for_enforce(state: &mut AppState) {
     state.fast.drafts.clear();
-    state.fast.tickets.clear();
+    ACTIVE_TICKETS.clear();
     state.slow.pending_requests.clear();
     state.slow.pending_ctl = None;
 }

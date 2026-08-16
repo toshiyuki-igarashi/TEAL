@@ -21,8 +21,8 @@ use std::collections::HashMap;
 use anyhow::Result;
 use uuid::Uuid;
 
-use crate::state::app_state;
 use crate::types::{PreApprovalDraft, PendingEntry, EntityId, ApprovedTicket, MpaState};
+use crate::types::next_audit_ticket_id;
 
 use teal_policy_engine::types::RuleType;
 use teal_policy_engine::ir::{CompiledRule, ActionMatcher};
@@ -73,18 +73,6 @@ pub fn is_ticketable(rule: &CompiledRule) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn make_draft_id() -> String {
-    let state = app_state();
-
-    let seq = {
-        let mut guard = state.lock().await;
-        guard.fast.next_draft_seq += 1;
-        guard.fast.next_draft_seq
-    }; 
-
-    format!("T-{:09}", seq)
-}
-
 /// rule_id を起点に Draft を作る。inodeの事前取得は行わない (Lazy Binding)
 pub async fn draft_from_rule(rule: &CompiledRule, uid: u32) -> Result<PreApprovalDraft> {
     let op_mask = rule.action_match.to_u32();
@@ -97,7 +85,7 @@ pub async fn draft_from_rule(rule: &CompiledRule, uid: u32) -> Result<PreApprova
         None
     };
 
-    let draft_id = make_draft_id().await;
+    let draft_id = next_audit_ticket_id();
 
     Ok(
         PreApprovalDraft {
@@ -155,7 +143,7 @@ pub async fn ticket_from_entry(rule: &CompiledRule, entry: &PendingEntry) -> App
         None
     };
 
-    let draft_id = make_draft_id().await;
+    let draft_id = next_audit_ticket_id();
 
     ApprovedTicket {
         ticket_id: draft_id,

@@ -8,6 +8,10 @@ use tokio::fs::File;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
 
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
@@ -22,9 +26,27 @@ use teal_policy_engine::types::{Effect, RuleType};
 use crate::evidence;
 use crate::state::app_state;
 use crate::bundle::bundle;
-use crate::ticket::{is_ticketable, make_draft_id, ticket_from_entry};
+use crate::ticket::{is_ticketable, ticket_from_entry};
 use crate::netlink::TealReq;
 use crate::worker::admin::find_rule;
+
+// ==============================================================
+// 1. ロックフリーなチケットIDジェネレーター（アトミック操作）
+// ==============================================================
+static TICKET_SEQ: AtomicU64 = AtomicU64::new(1);
+
+#[inline]
+pub fn next_audit_ticket_id() -> String {
+    // 順番待ちせず、ナノ秒で一意の番号を取得
+    let seq = TICKET_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("T-{:09}", seq)
+}
+
+// ==============================================================
+// 2. 全体ロックから完全に分離された、特急レーン専用のチケット台帳
+// ==============================================================
+pub static ACTIVE_TICKETS: Lazy<DashMap<String, ApprovedTicket>> = Lazy::new(|| DashMap::new());
+
 
 #[derive(Debug, Clone)]
 pub struct Request {
@@ -117,20 +139,6 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// 次のチケットID（シーケンス番号）を生成する
-    pub fn generate_next_ticket_seq(&mut self) -> u64 {
-        // wrapping_add により、u64::MAX の次はパニックせず 0 に戻る
-        let mut next = self.fast.next_draft_seq.wrapping_add(1);
-        
-        // 0 は NotManaged 用の予約値なので、万が一 0 になった場合は 1 にスキップする
-        if next == 0 {
-            next = 1;
-        }
-        
-        self.fast.next_draft_seq = next;
-        next
-    }
-
     /// 指定されたTTYとUIDが、PAMで認証済みの正規セッションか厳密に検証し、成功すればセッション情報を返す
     pub fn check_registered_session(&self, tty: &str, uid: u32, request_user: Option<&str>) -> Option<RegisteredSession> {
         // TTYが空、またはプレースホルダーの場合は未登録とみなす（バックグラウンドプロセス等）
@@ -170,8 +178,6 @@ impl AppState {
 pub struct FastState {
     pub drafts: HashMap<String, PreApprovalDraft>,
     pub approved: HashMap<String, ApprovedTicket>, // 承認されたticket
-    pub tickets: HashMap<String, ApprovedTicket>,    // ログ表示用 denyされた時、あるいはticket消費時に削除
-    pub next_draft_seq: u64,
 }
 
 impl FastState {
@@ -417,13 +423,13 @@ impl ApprovedTicket {
         };
 
         Some(ApprovedTicket {
-            ticket_id: make_draft_id().await,
+            ticket_id: next_audit_ticket_id(),
             rule_id,
             
             origin_program: entry.subject.program_path.clone(),
             origin_script: entry.subject.script_path.clone(),
             object: entry.object.path.clone(),
-            new_object: entry.object.new_path.clone(), // ★追加
+            new_object: entry.object.new_path.clone(),
             
             uid: entry.subject.uid,
             origin_program_id,
@@ -692,12 +698,13 @@ impl PendingEntry {
             let ticket = ticket_from_entry(rule, self).await;
 
             {
-                let mut state = app_state().lock().await;
+                let state = app_state().lock().await;
                 if state.fast.has_draft_for_rule(&rule.id)  {
                     return Err(format!("ticket is already in waiting list for approval (id= {})", rule.id));
                 }
-                state.fast.tickets.insert(ticket.ticket_id.clone(), ticket.clone());
             }
+
+            ACTIVE_TICKETS.insert(ticket.ticket_id.clone(), ticket.clone());
 
             // スクリプトパスが無い場合は dev/ino を 0 にする
             let (script_dev, script_ino) = if self.subject.script_path.is_some() {
