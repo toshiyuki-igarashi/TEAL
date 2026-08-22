@@ -360,6 +360,7 @@ After=network.target
 Type=simple
 ExecStart=/usr/local/sbin/teald
 Restart=always
+Nice=-20
 RestartSec=2
 User=root
 Group=root
