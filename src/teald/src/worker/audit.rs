@@ -154,11 +154,10 @@ async fn evaluate_audit_request(req: &Request) -> AuditEvalResult {
 
     // 2. ロックを取得し、瞬時に判定を行う
     let state = app_state().lock().await;
-    
     let session_info = state.check_registered_session(&req.session_tty, req.uid, request_user.as_deref());
+    drop(state); 
     
     let ctx = request_to_ctx(req, &compiled.roles, session_info);
-    drop(state); 
 
     let (effect, rule_id) = match evaluate(&compiled.policy, &ctx) {
         Decision::Pass => {
