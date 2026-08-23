@@ -1,0 +1,34 @@
+[package]
+name = "teal-cli"
+version = "0.5.0"
+edition = "2021"
+
+[[bin]]
+name = "teal-cli"
+path = "src/main.rs"
+
+[dependencies]
+# 基本・エラーハンドリング
+anyhow = "1.0"
+clap = { version = "4.4", features = ["derive"] }
+colored = "2.1"
+
+# 暗号・ハッシュ・署名
+blst = { version = "0.3", features = ["portable"] }
+sha2 = "0.10"
+hex = { version = "0.4", features = ["serde"] }
+rand = "=0.8.5"
+
+# シリアライズ / スキーマ
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# 形式検証 (Alloy) 関連
+quick-xml = "0.31"
+tempfile = "3.8"
+glob = "0.3"                # Rust側でのパスパターン解決用
+
+# TEAL 内部クレート
+teal_policy_engine = { path = "../teal_policy_engine" }
+teald = { path = "../teald" }

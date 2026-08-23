@@ -2030,6 +2030,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
+name = "teal-cli"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "blst",
+ "clap",
+ "colored",
+ "glob",
+ "hex",
+ "quick-xml",
+ "rand",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "teal_policy_engine",
+ "teald",
+ "tempfile",
+]
+
+[[package]]
 name = "teal_policy_engine"
 version = "0.5.0"
 dependencies = [

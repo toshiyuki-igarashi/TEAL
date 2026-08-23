@@ -8,10 +8,6 @@ name = "teald"
 path = "src/main.rs"
 
 [[bin]]
-name = "teal-cli"
-path = "src/cli.rs"
-
-[[bin]]
 name = "teal-logview"
 path = "src/logview.rs"
 

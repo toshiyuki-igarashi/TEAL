@@ -4,24 +4,30 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
+
 use anyhow::{Context, Result};
 use std::env;
+use std::fs;
 use std::io::{Read, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
-use std::os::unix::fs::PermissionsExt; // Unix用
-use std::{fs, path::{Path, PathBuf}};
-use blst::min_pk::SecretKey; // min_pk モードを選択
-use rand::{RngCore, thread_rng};
-use colored::Colorize;
-use clap::{Parser, Subcommand};
+use std::path::{Path, PathBuf};
 
+use blst::min_pk::SecretKey;
+use clap::{Parser, Subcommand};
+use colored::Colorize;
+use rand::{thread_rng, RngCore};
+
+// Policy Engine からのインポート
 use teal_policy_engine::load::load_json_file;
 use teal_policy_engine::raw::RawPolicyV14;
-use crate::common::DecisionKind;
-use crate::verify::ast::TealIrModel;
 
-mod common;
+// teald クレートから共通型をインポート
+use teald::common::DecisionKind;
+
+// teal-cli 内部に移した verify モジュール
 mod verify;
+use verify::ast::TealIrModel;
 
 // ==========================================
 // 1. CLI引数の構造体定義 (clap)

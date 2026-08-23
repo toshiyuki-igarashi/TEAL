@@ -3,6 +3,7 @@ members = [
   "teald",
   "teal_policy_engine",
   "pam_teal",
+  "teal-cli",
 ]  
 resolver = "2"
 
