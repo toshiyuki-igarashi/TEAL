@@ -4,7 +4,8 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
-use std::path::PathBuf;
+
+use std::path::Path;
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
@@ -31,26 +32,29 @@ fn roles_schema_value() -> &'static Value {
 
 /// roles.json を読み込み、schema validate → RawRolesV1 deserialize → compile を行い
 /// (CompiledRoles, CompileWarnings) を返す。
-pub fn load_roles(path: &str) -> Result<(CompiledRoles, CompileWarnings)> {
+pub fn load_roles<P: AsRef<Path>>(path: P) -> Result<(CompiledRoles, CompileWarnings)> {
+    let p = path.as_ref();
+    
     // 1) file -> Value
-    let v = load_json_file(path).with_context(|| format!("load roles json: {}", path))?;
+    let v = load_json_file(p)
+        .with_context(|| format!("load roles json: {}", p.display()))?;
 
-    // 2) schema validate（構文）
+    // 2) schema validate
     validate_against_schema(&v, roles_schema_value())
-        .with_context(|| format!("roles schema validation failed: {}", path))?;
+        .with_context(|| format!("roles schema validation failed: {}", p.display()))?;
 
-    // 3) Value -> Raw（構造体）
+    // 3) Value -> RawRolesV1
     let raw: RawRolesV1 = serde_json::from_value(v)
-        .with_context(|| format!("deserialize roles raw struct failed: {}", path))?;
+        .with_context(|| format!("deserialize roles raw struct failed: {}", p.display()))?;
 
-    // 4) compile（意味解釈 + 正規化）
+    // 4) compile
     let (core, warnings) = compile_roles_v1(raw)
-        .with_context(|| format!("compile roles failed: {}", path))?;
+        .with_context(|| format!("compile roles failed: {}", p.display()))?;
 
     let compiled = CompiledRoles {
-        roles_file: PathBuf::from(path),
-        deny_if_role_unknown: core.defaults.deny_if_role_unknown, // または raw.defaults から
-        known_roles: core.roles.known_roles.clone(),              // または core が持っている
+        roles_file: p.to_path_buf(),
+        deny_if_role_unknown: true,
+        known_roles: core.roles.known_roles.clone(), // ★ core.roles.known_roles を参照
         core,
     };
 

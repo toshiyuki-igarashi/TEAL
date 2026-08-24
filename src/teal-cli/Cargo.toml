@@ -11,7 +11,6 @@ path = "src/main.rs"
 # 基本・エラーハンドリング
 anyhow = "1.0"
 clap = { version = "4.4", features = ["derive"] }
-colored = "2.1"
 
 # 暗号・ハッシュ・署名
 blst = { version = "0.3", features = ["portable"] }
@@ -32,3 +31,5 @@ glob = "0.3"                # Rust側でのパスパターン解決用
 # TEAL 内部クレート
 teal_policy_engine = { path = "../teal_policy_engine" }
 teald = { path = "../teald" }
+colored = "3.1.1"
+fs2 = "0.4.3"

@@ -9,8 +9,6 @@ use std::path::Path;
 use std::sync::OnceLock;
 use serde_json::Value;
 
-use crate::bundle::POLICIES_DIR;
-
 use teal_policy_engine::errors::CompileWarnings;
 use teal_policy_engine::load::load_json_file;
 use teal_policy_engine::schema::validate_against_schema;
@@ -30,28 +28,30 @@ fn policy_schema_value() -> &'static Value {
     })
 }
 
-pub fn load_policy(
-    path: &str,
+pub fn load_policy<P: AsRef<Path>>(
+    path: P,
     roles: &CompiledRoles,
 ) -> Result<(CompiledPolicy, CompileWarnings)> {
-    // 1) file -> Value
-    let mut v = load_json_file(path)
-        .with_context(|| format!("load policy json: {}", path))?;
+    let p = path.as_ref();
+
+    // 1) file -> Value (後で書き換えるため mut が必須)
+    let mut v = load_json_file(p)
+        .with_context(|| format!("load policy json: {}", p.display()))?;
 
     // スキーマ検証の前に、Value内の ops 配列にある文字列をすべて大文字に変換
     uppercase_ops_in_value(&mut v);
 
     // 2) schema validate（構文検証）
     validate_against_schema(&v, policy_schema_value())
-        .with_context(|| format!("policy schema validation failed: {}", path))?;
+        .with_context(|| format!("policy schema validation failed: {}", p.display()))?;
 
     // 3) Value -> Raw（構造体化）
     let raw: RawPolicyV14 = serde_json::from_value(v)
-        .with_context(|| format!("deserialize policy raw struct failed: {}", path))?;
+        .with_context(|| format!("deserialize policy raw struct failed: {}", p.display()))?;
 
     // 4) compile（意味解釈 + 正規化）
     let (compiled, warnings) = compile_policy_v14(raw, roles)
-        .with_context(|| format!("compile policy failed: {}", path))?;
+        .with_context(|| format!("compile policy failed: {}", p.display()))?;
 
     Ok((compiled, warnings))
 }
@@ -89,18 +89,17 @@ fn uppercase_ops_in_value(value: &mut serde_json::Value) {
 pub fn load_policies_listed_in_bundle(
     bundle: &RawBundleV1,
     roles: &CompiledRoles,
+    policies_dir: &Path,
 ) -> Result<(CompiledPolicy, CompileWarnings)> {
     let mut warnings = CompileWarnings::default();
-
     let mut merged: Option<CompiledPolicy> = None;
 
     for name in &bundle.policy_files {
-        // basename-only: "/" を含んだら拒否（相対パス禁止と同等以上に強い）
         if name.contains('/') || name == "." || name == ".." || name.is_empty() {
             anyhow::bail!("invalid policy name in bundle: {}", name);
         }
 
-        let path = Path::new(POLICIES_DIR).join(name);
+        let path = policies_dir.join(name);
         let path_s = path.to_string_lossy().to_string();
 
         let (cp, w) = load_policy(&path_s, roles)
@@ -109,7 +108,6 @@ pub fn load_policies_listed_in_bundle(
 
         merged = Some(match merged {
             None => cp,
-            // acc を mut として受け取る
             Some(mut acc) => {
                 acc.merge(cp, &mut warnings)
                     .with_context(|| format!("merge policies failed at: {}", path_s))?;
@@ -119,9 +117,5 @@ pub fn load_policies_listed_in_bundle(
     }
 
     let policy = merged.ok_or_else(|| anyhow::anyhow!("bundle.policies is empty"))?;
-
-    // 必要なら最終整合チェック（compile中に unknown-role を落としてるなら省略可）
-    // check_roles_consistency(&policy, roles);
-
     Ok((policy, warnings))
 }
