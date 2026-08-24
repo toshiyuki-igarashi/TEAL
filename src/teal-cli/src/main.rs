@@ -9,14 +9,12 @@ use anyhow::{Context, Result};
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use blst::min_pk::SecretKey;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use rand::{thread_rng, RngCore};
 
 // Policy Engine からのインポート
 use teal_policy_engine::load::load_json_file;
@@ -28,6 +26,8 @@ use teald::common::DecisionKind;
 // teal-cli 内部に移した verify モジュール
 mod verify;
 use verify::ast::TealIrModel;
+
+mod cmd;
 
 // ==========================================
 // 1. CLI引数の構造体定義 (clap)
@@ -105,10 +105,10 @@ fn main() -> Result<()> {
 
     match &cli.command {
         Commands::Keygen => {
-            generate_user_key()?;
+            cmd::keygen::run()?;
         }
         Commands::Register => {
-            let dir = teal_key_dir()?;
+            let dir = cmd::keygen::teal_key_dir()?;
             let pub_path = dir.join("id_bls.pub");
 
             if !pub_path.exists() {
@@ -217,20 +217,10 @@ fn run_verify(
 // 署名と検証で共通のドメイン分離タグ (DST)
 const TEAL_DST: &[u8] = b"TEAL_SYSTEM_V1_MPA_SIG";
 
-/// 秘密鍵のパスを取得 (エラー時はResultを返す)
-fn teal_private_key_path() -> Result<PathBuf> {
-    let home = env::var("HOME")
-        .context("Environment variable $HOME not set")?;
-    
-    Ok(Path::new(&home)
-        .join(".teal")
-        .join("id_bls"))
-}
-
 // 署名付きの決定コマンドを送る共通関数（user なし）
 fn run_signed_decision(kind: DecisionKind, id: &str) -> Result<()> {
     // パス解決 (エラーならここでreturn)
-    let key_path = teal_private_key_path()?;
+    let key_path = cmd::keygen::teal_private_key_path()?;
 
     if !key_path.exists() {
         anyhow::bail!("TEAL identity not found. Please run 'teal-cli keygen' first.\nPath: {}", key_path.display());
@@ -263,86 +253,6 @@ fn run_signed_decision(kind: DecisionKind, id: &str) -> Result<()> {
     Ok(())
 }
 
-fn teal_key_dir() -> Result<PathBuf> {
-    let home = env::var("HOME").context("$HOME not set")?;
-    Ok(PathBuf::from(home).join(".teal"))
-}
-
-fn generate_user_key() -> Result<()> {
-    let dir = teal_key_dir()?;
-    
-    // ディレクトリ作成
-    if !dir.exists() {
-        fs::create_dir_all(&dir)?;
-    }
-
-    // ディレクトリ権限設定: 0700 (rwx------)
-    // これにより、このディレクトリ内のファイル一覧すら他人には見えなくなります
-    #[cfg(unix)]
-    {
-        let metadata = fs::metadata(&dir)?;
-        let mut perms = metadata.permissions();
-        perms.set_mode(0o700);
-        fs::set_permissions(&dir, perms)?;
-    }
-
-    let sk_path = dir.join("id_bls");
-    let pk_path = dir.join("id_bls.pub");
-    
-    // ---------------------------------------------------------
-    // 1. 鍵生成 (Key Generation)
-    // ---------------------------------------------------------
-    let mut rng = thread_rng();
-    let mut ikm = [0u8; 32];
-    rng.fill_bytes(&mut ikm);
-
-    // BLS秘密鍵の生成 (IKMから)
-    let sk = SecretKey::key_gen(&ikm, &[])
-        .map_err(|e| anyhow::anyhow!("Key gen failed: {:?}", e))?;
-
-    // 対応する公開鍵の導出
-    let pk = sk.sk_to_pk();
-
-    // ---------------------------------------------------------
-    // 2. 秘密鍵の保存 (Secret Key)
-    // ---------------------------------------------------------
-    let sk_bytes = sk.to_bytes(); 
-    std::fs::write(&sk_path, sk_bytes)?;
-
-    // 【重要】ファイル権限設定: 0600 (rw-------)
-    // 他人からの読み取りを完全にブロックします
-    #[cfg(unix)]
-    {
-        let metadata = fs::metadata(&sk_path)?;
-        let mut perms = metadata.permissions();
-        perms.set_mode(0o600);
-        fs::set_permissions(&sk_path, perms)?;
-    }
-
-    // ---------------------------------------------------------
-    // 3. 公開鍵の保存 (Public Key)
-    // ---------------------------------------------------------
-    // 設定ファイル(YAML/TOML)にコピペしやすいよう、Hex文字列で保存するのが一般的です
-    let pk_bytes = pk.to_bytes();
-    let pk_hex = hex::encode(pk_bytes);
-    std::fs::write(&pk_path, &pk_hex)?;
-    
-    // 公開鍵は公開して問題ないので、権限は 644 でOK
-    #[cfg(unix)]
-    {
-        let metadata = fs::metadata(&pk_path)?;
-        let mut perms = metadata.permissions();
-        perms.set_mode(0o644);
-        fs::set_permissions(&pk_path, perms)?;
-    }
-
-    println!("Success!");
-    println!("Private Key: {} (Permissions secured)", sk_path.display());
-    println!("Public Key : {} (Share this with admin)", pk_path.display());
-    println!("\nYour Public Key (Hex): {}", pk_hex);
-
-    Ok(())
-}
 
 fn send_command(cmd: &str) -> Result<()> {
     let socket_path = "/tmp/teald.sock";
