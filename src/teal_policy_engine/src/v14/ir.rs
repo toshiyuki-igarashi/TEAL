@@ -465,8 +465,11 @@ pub enum ObjectKind {
 #[derive(Debug, Clone)]
 pub enum PathMatcher {
     Exact(std::path::PathBuf),
-    Prefix(std::path::PathBuf), // "/etc/teal.d/" 配下、など
-    Glob { pattern: String, matcher: globset::GlobMatcher }, // "**/*.key" など
+    Prefix(std::path::PathBuf),
+    Glob {
+        pattern: String,
+        matcher: globset::GlobMatcher,
+    },
 }
 
 impl PathMatcher {
@@ -515,6 +518,23 @@ impl PathMatcher {
             Ok(PathMatcher::Exact(PathBuf::from(input)))
         }
     }
+}
+
+impl PartialEq for PathMatcher {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (PathMatcher::Exact(a), PathMatcher::Exact(b)) => a == b,
+            (PathMatcher::Prefix(a), PathMatcher::Prefix(b)) => a == b,
+            (
+                PathMatcher::Glob { pattern: pa, .. },
+                PathMatcher::Glob { pattern: pb, .. },
+            ) => pa == pb,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for PathMatcher {
 }
 
 impl fmt::Display for PathMatcher {

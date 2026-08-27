@@ -19,6 +19,7 @@ use colored::Colorize;
 use fs2::FileExt; // flock用
 
 use teald::bundle::load_bundle_from_dir;
+use teal_policy_engine::ir::CompiledRule;
 use self::rule_diff::compare_policies;
 use self::html::generate_html_report;
 
@@ -115,20 +116,78 @@ fn collect_policy_files(dir: &Path, file_list: &mut Vec<PathBuf>) -> Result<()> 
 }
 
 /// セキュリティ影響度
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecurityImpact {
     Hardened, // 🟢 強化 (制限追加・権限縮小)
     Relaxed,  // 🔴 弱化 (制限解除・権限拡張)
     Neutral,  // ⚪ ニュートラル
 }
 
-/// 差分項目
+/// 個別ルールの差分項目
 #[derive(Debug, Clone)]
-pub struct RuleDiffItem {
-    pub rule_id: String,
-    pub change_kind: String, // "ADDED", "REMOVED", "MODIFIED", "UNCHANGED"
-    pub impact: SecurityImpact,
-    pub details: Vec<String>,
+pub enum RuleDiffItem {
+    Unchanged {
+        id: String,
+    },
+    Added {
+        rule: CompiledRule,
+        impact: SecurityImpact,
+    },
+    Removed {
+        rule: CompiledRule,
+        impact: SecurityImpact,
+    },
+    Modified {
+        id: String,
+        impact: SecurityImpact,
+        details: Vec<String>,
+    },
+}
+
+impl RuleDiffItem {
+    pub fn rule_id(&self) -> &str {
+        match self {
+            RuleDiffItem::Unchanged { id } => id,
+            RuleDiffItem::Added { rule, .. } => &rule.id,
+            RuleDiffItem::Removed { rule, .. } => &rule.id,
+            RuleDiffItem::Modified { id, .. } => id,
+        }
+    }
+
+    pub fn change_kind(&self) -> &'static str {
+        match self {
+            RuleDiffItem::Unchanged { .. } => "UNCHANGED",
+            RuleDiffItem::Added { .. } => "ADDED",
+            RuleDiffItem::Removed { .. } => "REMOVED",
+            RuleDiffItem::Modified { .. } => "MODIFIED",
+        }
+    }
+
+    pub fn impact(&self) -> SecurityImpact {
+        match self {
+            RuleDiffItem::Unchanged { .. } => SecurityImpact::Neutral,
+            RuleDiffItem::Added { impact, .. } => *impact,
+            RuleDiffItem::Removed { impact, .. } => *impact,
+            RuleDiffItem::Modified { impact, .. } => *impact,
+        }
+    }
+
+    pub fn details(&self) -> &[String] {
+        match self {
+            RuleDiffItem::Modified { details, .. } => details.as_slice(),
+            _ => &[],
+        }
+    }
+}
+
+/// グローバル設定（ポリシーメタデータ）の個別差分
+#[derive(Debug, Clone)]
+pub struct GlobalDiffItem {
+    pub key: String,            // 例: "system_type", "default_effect", "pre_approval_defaults.ttl_sec_default"
+    pub old_value: String,      // 例: "Server", "Deny", "600s"
+    pub new_value: String,      // 例: "Workstation", "Allow", "1200s"
+    pub impact: SecurityImpact, // Relaxed / Hardened / Neutral
+    pub description: String,    // 承認者向けの説明メッセージ
 }
 
 /// 差分レポート全体の構造体
@@ -136,22 +195,56 @@ pub struct RuleDiffItem {
 pub struct PolicyDiffReport {
     pub current_hash: String,
     pub new_hash: String,
-    pub items: Vec<RuleDiffItem>,
+    pub global_diffs: Vec<GlobalDiffItem>, 	// グローバル設定の差分リスト
+    pub rule_diffs: Vec<RuleDiffItem>,          // ルールごとの差分リスト
 }
 
 impl PolicyDiffReport {
     /// ターミナルへ ANSI カラー付きで出力
     pub fn render_terminal(&self) {
         println!("{}", "================ Policy Diff Summary ================".bold());
-        for item in &self.items {
-            let tag = match item.impact {
-                SecurityImpact::Relaxed => "🔴 RELAXED".red().bold(),
-                SecurityImpact::Hardened => "🟢 HARDENED".green().bold(),
-                SecurityImpact::Neutral => "⚪ NEUTRAL".white(),
-            };
-            println!("  [{}] {} ({})", tag, item.rule_id.cyan(), item.change_kind);
-            for d in &item.details {
-                println!("      {}", d);
+        println!("  • Current Hash : {}", self.current_hash.yellow());
+        println!("  • Staged Hash  : {}", self.new_hash.green());
+        println!();
+
+        // -------------------------------------------------------------
+        // 1. Global Configurations Diff (ルール全体の前提設定)
+        // -------------------------------------------------------------
+        println!("{}", "─── Global Configurations ───────────────────────────".bright_black());
+        if self.global_diffs.is_empty() {
+            println!("  {}", "No global configuration changes.".dimmed());
+        } else {
+            for g in &self.global_diffs {
+                let tag = match g.impact {
+                    SecurityImpact::Relaxed => "🔴 RELAXED".red().bold(),
+                    SecurityImpact::Hardened => "🟢 HARDENED".green().bold(),
+                    SecurityImpact::Neutral => "⚪ NEUTRAL".white(),
+                };
+                println!("  [{}] {}: {} ➔ {}", tag, g.key.cyan().bold(), g.old_value.yellow(), g.new_value.green());
+                if !g.description.is_empty() {
+                    println!("      {}", g.description.dimmed());
+                }
+            }
+        }
+        println!();
+
+        // -------------------------------------------------------------
+        // 2. Rule Diffs (個別ルール)
+        // -------------------------------------------------------------
+        println!("{}", "─── Rule Changes ────────────────────────────────────".bright_black());
+        if self.rule_diffs.is_empty() {
+            println!("  {}", "No rule changes.".dimmed());
+        } else {
+            for item in &self.rule_diffs {
+                let tag = match item.impact() {
+                    SecurityImpact::Relaxed => "🔴 RELAXED".red().bold(),
+                    SecurityImpact::Hardened => "🟢 HARDENED".green().bold(),
+                    SecurityImpact::Neutral => "⚪ NEUTRAL".white(),
+                };
+                println!("  [{}] {} ({})", tag, item.rule_id().cyan(), item.change_kind());
+                for d in item.details() {
+                    println!("      {}", d);
+                }
             }
         }
         println!("{}", "=====================================================".bold());
@@ -165,7 +258,7 @@ pub fn execute_diff<P: AsRef<Path>>(
     new_hash: &str,
     html_path: Option<&Path>,
 ) -> Result<()> {
-    let current_bundle = teald::bundle::load_bundle_from_dir("/etc/teal.d")
+    let current_bundle = load_bundle_from_dir("/etc/teal.d")
         .context("Failed to load current policy bundle")?;
 
     let stage_bundle = load_bundle_from_dir("/etc/teal.d/new")
