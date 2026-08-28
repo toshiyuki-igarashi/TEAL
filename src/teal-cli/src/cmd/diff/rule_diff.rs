@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 /*
- * TEAL Policy Engine (teal_policy_engine)
- *
+ * TEAL CLI (teal-cli)
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
@@ -10,7 +9,7 @@ use std::collections::HashSet;
 use anyhow::Result;
 
 use teal_policy_engine::ir::{CompiledBundle, CompiledPolicy, CompiledRule, ActionMatcher};
-use teal_policy_engine::types::{Action, AuditLevel, Effect, SystemType};
+use teal_policy_engine::types::{AuditLevel, Effect, SystemType};
 use super::{PolicyDiffReport, RuleDiffItem, GlobalDiffItem, SecurityImpact};
 
 /// 2つの CompiledBundle を比較して PolicyDiffReport を構築
@@ -166,7 +165,7 @@ pub fn compare_global_configs(
 }
 
 /// ルール差分の分類と構築
-fn diff_rules(
+pub fn diff_rules(
     current_rules: &[CompiledRule],
     stage_rules: &[CompiledRule],
 ) -> Vec<RuleDiffItem> {
@@ -180,22 +179,52 @@ fn diff_rules(
 
     // 2. stage 側を走査（Added / Modified / Unchanged の判定）
     for stage_rule in stage_rules {
+        let stage_file = stage_rule
+            .source_file
+            .as_deref()
+            .unwrap_or("unknown.json");
+
         if let Some(curr_rule) = current_map.remove(stage_rule.id.as_str()) {
-            // current にも存在していた場合 -> 内容の比較
-            if is_rule_equal(curr_rule, stage_rule) {
+            let curr_file = curr_rule
+                .source_file
+                .as_deref()
+                .unwrap_or("unknown.json");
+
+            let is_same_file = curr_file == stage_file;
+            let is_same_content = is_rule_equal(curr_rule, stage_rule);
+
+            // ファイルも内容も全く同じ ➔ Unchanged
+            if is_same_file && is_same_content {
                 items.push(RuleDiffItem::Unchanged {
                     id: stage_rule.id.clone(),
+                    source_file: stage_file.to_string(),
                 });
             } else {
-                let (impact, details) = inspect_rule_modification(curr_rule, stage_rule);
+                let (mut impact, mut details) = if !is_same_content {
+                    inspect_rule_modification(curr_rule, stage_rule)
+                } else {
+                    (SecurityImpact::Neutral, Vec::new())
+                };
+
+                // ファイル間を移動した場合は注記を追加
+                if !is_same_file {
+                    details.push(format!("file moved: {} ➔ {}", curr_file, stage_file));
+                    if impact == SecurityImpact::Neutral {
+                        impact = SecurityImpact::Neutral;
+                    }
+                }
+
                 items.push(RuleDiffItem::Modified {
                     id: stage_rule.id.clone(),
                     impact,
                     details,
+                    source_file: stage_file.to_string(),
+                    // old_rule: Some(curr_rule.clone()),
+                    // new_rule: Some(stage_rule.clone()),
                 });
             }
         } else {
-            // current に存在しない場合 -> Added
+            // current に存在しない場合 ➔ Added[cite: 1]
             items.push(RuleDiffItem::Added {
                 rule: stage_rule.clone(),
                 impact: evaluate_added_rule_impact(stage_rule),
@@ -203,7 +232,7 @@ fn diff_rules(
         }
     }
 
-    // 3. current_map に残っている要素 -> stage で消去されたもの（Removed）
+    // 3. current_map に残っている要素 ➔ stage で削除されたもの（Removed）[cite: 1]
     for (_, removed_rule) in current_map {
         items.push(RuleDiffItem::Removed {
             rule: removed_rule.clone(),

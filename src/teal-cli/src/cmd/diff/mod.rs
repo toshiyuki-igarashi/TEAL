@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MIT
 /*
- * TEAL Policy Engine (teal_policy_engine)
- *
+ * TEAL CLI (teal-cli)
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
-
 
 pub mod rule_diff;
 pub mod html;
@@ -14,9 +12,6 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use colored::Colorize;
-
-#[cfg(unix)]
-use fs2::FileExt; // flock用
 
 use teald::bundle::load_bundle_from_dir;
 use teal_policy_engine::ir::CompiledRule;
@@ -64,8 +59,6 @@ pub fn run(html: Option<PathBuf>) -> Result<()> {
     // -------------------------------------------------------------
     // teal_policy_engine 側で構文検証・差分抽出・セキュリティ強度判定を実行
     execute_diff(
-        CURRENT_DIR,
-        STAGE_DIR,
         &current_hash,
         &new_hash,
         html.as_deref(), // None なら標準出力、Some(path) なら HTML 書き出し
@@ -128,6 +121,7 @@ pub enum SecurityImpact {
 pub enum RuleDiffItem {
     Unchanged {
         id: String,
+        source_file: String,
     },
     Added {
         rule: CompiledRule,
@@ -141,13 +135,25 @@ pub enum RuleDiffItem {
         id: String,
         impact: SecurityImpact,
         details: Vec<String>,
+        source_file: String,
+        // old_rule: Option<CompiledRule>, // 必要に応じて旧定義の全文プレビュー用
+        // new_rule: Option<CompiledRule>, // 必要に応じて新定義の全文プレビュー用
     },
 }
 
 impl RuleDiffItem {
+    pub fn source_file(&self) -> &str {
+        match self {
+            RuleDiffItem::Unchanged { source_file, .. } => source_file.as_str(),
+            RuleDiffItem::Added { rule, .. } => rule.source_file.as_deref().unwrap_or("unknown.json"),
+            RuleDiffItem::Removed { rule, .. } => rule.source_file.as_deref().unwrap_or("unknown.json"),
+            RuleDiffItem::Modified { source_file, .. } => source_file.as_str(),
+        }
+    }
+
     pub fn rule_id(&self) -> &str {
         match self {
-            RuleDiffItem::Unchanged { id } => id,
+            RuleDiffItem::Unchanged { id, .. } => id,
             RuleDiffItem::Added { rule, .. } => &rule.id,
             RuleDiffItem::Removed { rule, .. } => &rule.id,
             RuleDiffItem::Modified { id, .. } => id,
@@ -251,9 +257,7 @@ impl PolicyDiffReport {
     }
 }
 
-pub fn execute_diff<P: AsRef<Path>>(
-    current_dir: P,
-    stage_dir: P,
+pub fn execute_diff (
     current_hash: &str,
     new_hash: &str,
     html_path: Option<&Path>,

@@ -50,8 +50,18 @@ pub fn load_policy<P: AsRef<Path>>(
         .with_context(|| format!("deserialize policy raw struct failed: {}", p.display()))?;
 
     // 4) compile（意味解釈 + 正規化）
-    let (compiled, warnings) = compile_policy_v14(raw, roles)
+    let (mut compiled, warnings) = compile_policy_v14(raw, roles)
         .with_context(|| format!("compile policy failed: {}", p.display()))?;
+
+    // 5) レポート表示用のファイル名 (例: "01-base.json") を各ルールに設定
+    let file_name = p
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_else(|| p.display().to_string());
+
+    for rule in &mut compiled.rules {
+        rule.source_file = Some(file_name.clone());
+    }
 
     Ok((compiled, warnings))
 }

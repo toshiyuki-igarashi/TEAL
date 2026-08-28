@@ -282,6 +282,7 @@ pub enum Specificity {
 #[derive(Debug, Clone)]
 pub struct CompiledRule {
     pub id: String,
+    pub source_file: Option<String>,
     pub description: Option<String>,
     pub rule_type: RuleType, 
     pub effect: Effect,
@@ -304,6 +305,7 @@ impl CompiledRule {
     pub fn default_with_reason(effect: Effect, reason: &str) -> Self {
         Self {
             id: "default_rule".to_string(),
+            source_file: None,
             description: None,
             rule_type: RuleType::Standard,
             effect,

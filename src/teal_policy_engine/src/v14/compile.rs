@@ -654,6 +654,7 @@ pub fn compile_rule_v14(
 
     Ok(CompiledRule {
         id: rule.id.clone(),
+        source_file: None,
         description: rule.description.clone(),
         rule_type: rule.rule_type,
         effect: rule.effect,
