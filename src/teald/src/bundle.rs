@@ -5,11 +5,13 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use anyhow::{Context, Result};
 use arc_swap::ArcSwapOption;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::roles::load_roles;
 use crate::policy::load_policies_listed_in_bundle;
@@ -20,7 +22,10 @@ use teal_policy_engine::raw::RawBundleV1;
 use teal_policy_engine::ir::CompiledBundle;
 use teal_policy_engine::util::ktime_prefix;
 
+// --- ディレクトリ・ファイルパス定数の共通定義 ---
 pub const DEFAULT_TEAL_DIR: &str = "/etc/teal.d";
+pub const STAGE_TEAL_DIR: &str   = "/etc/teal.d/new";
+pub const STAGE_LOCK_PATH: &str  = "/etc/teal.d/.stage.lock";
 const BUNDLE_SCHEMA_JSON: &str = include_str!("../../schema/bundle_v1_0.schema.json");
 
 static SCHEMA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
@@ -92,3 +97,48 @@ pub fn load_from_bundle() -> Result<()> {
     init_bundle(compiled)?;
     Ok(())
 }
+
+/// 指定ディレクトリ配下のポリシー定義ファイル群をソート順に連結して SHA-256 を計算
+pub fn compute_directory_hash<P: AsRef<Path>>(dir: P) -> Result<String> {
+    let mut files = Vec::new();
+    collect_policy_files(dir.as_ref(), &mut files)?;
+
+    // 決定性を担保するためファイルパスでソート
+    files.sort();
+
+    let mut hasher = Sha256::new();
+    for path in files {
+        let content = fs::read(&path)
+            .with_context(|| format!("Failed to read policy file: {}", path.display()))?;
+        hasher.update(&content);
+    }
+
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// ポリシーファイル (.json 等) の再帰/階層探索
+pub fn collect_policy_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(dir).with_context(|| format!("Failed to read dir: {}", dir.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        // 隠しファイル（.stage.lock 等）を除外
+        if path.file_name().and_then(|n| n.to_str()).map_or(false, |n| n.starts_with('.')) {
+            continue;
+        }
+
+        if path.is_file() {
+            if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+                files.push(path);
+            }
+        } else if path.is_dir() {
+            collect_policy_files(&path, files)?;
+        }
+    }
+    Ok(())
+}
+

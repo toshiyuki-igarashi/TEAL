@@ -147,14 +147,10 @@ fn main() -> Result<()> {
             run_signed_decision(DecisionKind::Stop, "")?;
         }
         Commands::Diff { html } => {
-            // Option<PathBuf> を期待している場合は clone() を渡す
-            // （または run 側の引数を Option<&Path> にする）
             cmd::diff::run(html.clone())?;
         }
         Commands::PolicyUpdate => {
-            // 現フェーズ（スタブ）ではこのままデーモンへ通知してOK
-            // 将来的に cmd::update::run()? へ置き換え
-            send_command("POLICY_UPDATE")?;
+            cmd::update::run()?;
         }
         Commands::Flush => {
             send_command("FLUSH")?;

@@ -11,6 +11,7 @@ pub enum DecisionKind {
     Ticket,
     Start,
     Stop,
+    PolicyUpdate,
 }
 
 impl DecisionKind {
@@ -21,6 +22,7 @@ impl DecisionKind {
             DecisionKind::Ticket => "TICKET",
             DecisionKind::Start => "START",
             DecisionKind::Stop => "STOP",
+            DecisionKind::PolicyUpdate => "POLICY_UPDATE",
         }
     }
 }

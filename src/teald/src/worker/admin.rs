@@ -323,6 +323,10 @@ async fn apply_decision(
             let mgmt = management();
             check_initiator_and_handle(MgmtCtlKind::Stop, &mgmt, args.uid, nl_tx.unwrap()).await
         }
+        DecisionKind::PolicyUpdate => {
+            let mgmt = management();
+            check_initiator_and_handle(MgmtCtlKind::PolicyUpdate, &mgmt, args.uid, nl_tx.unwrap()).await
+        }
     }
 }
 

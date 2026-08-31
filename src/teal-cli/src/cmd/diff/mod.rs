@@ -8,20 +8,17 @@ pub mod rule_diff;
 pub mod html;
 
 use anyhow::{Context, Result};
-use sha2::{Digest, Sha256};
-use std::fs::{self, File};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use colored::Colorize;
 
 use teald::bundle::load_bundle_from_dir;
+use teald::bundle::{
+    compute_directory_hash, DEFAULT_TEAL_DIR, STAGE_TEAL_DIR, STAGE_LOCK_PATH,
+};
 use teal_policy_engine::ir::CompiledRule;
 use self::rule_diff::compare_policies;
 use self::html::generate_html_report;
-
-
-const CURRENT_DIR: &str = "/etc/teal.d";
-const STAGE_DIR: &str = "/etc/teal.d/new";
-const LOCK_FILE_PATH: &str = "/etc/teal.d/.stage.lock";
 
 /// `teal-cli diff` コマンドの実体ハンドラ
 pub fn run(html: Option<PathBuf>) -> Result<()> {
@@ -29,8 +26,8 @@ pub fn run(html: Option<PathBuf>) -> Result<()> {
     // 1. ロック取得 (LOCK_SH: 共有ロック)
     // -------------------------------------------------------------
     // ディレクトリが存在しない場合は自動作成
-    if !Path::new(STAGE_DIR).exists() {
-        anyhow::bail!("Staging directory '{}' does not exist.", STAGE_DIR);
+    if !Path::new(STAGE_TEAL_DIR).exists() {
+        anyhow::bail!("Staging directory '{}' does not exist.", STAGE_TEAL_DIR);
     }
 
     // ロックファイルを開いて共有ロックを取得（スコープを抜けると自動解放）
@@ -38,7 +35,7 @@ pub fn run(html: Option<PathBuf>) -> Result<()> {
         .read(true)
         .write(true)
         .create(true)
-        .open(LOCK_FILE_PATH)
+        .open(STAGE_LOCK_PATH)
         .context("Failed to open staging lock file")?;
 
     #[cfg(unix)]
@@ -47,8 +44,8 @@ pub fn run(html: Option<PathBuf>) -> Result<()> {
     // -------------------------------------------------------------
     // 2. ディレクトリ内のファイルをソート順に一括ロード & ハッシュ計算
     // -------------------------------------------------------------
-    let current_hash = compute_directory_hash(CURRENT_DIR)?;
-    let new_hash = compute_directory_hash(STAGE_DIR)?;
+    let current_hash = compute_directory_hash(DEFAULT_TEAL_DIR)?;
+    let new_hash = compute_directory_hash(STAGE_TEAL_DIR)?;
 
     println!("{}", "🔍 Comparing TEAL Security Policies...".cyan().bold());
     println!("  • Current Policy Hash : {}", current_hash.yellow());
@@ -67,44 +64,6 @@ pub fn run(html: Option<PathBuf>) -> Result<()> {
     #[cfg(unix)]
     let _ = lock_file.unlock();
 
-    Ok(())
-}
-
-/// 指定ディレクトリ配下のポリシー定義ファイル群をソート順に連結して SHA-256 を計算
-fn compute_directory_hash<P: AsRef<Path>>(dir: P) -> Result<String> {
-    let mut files = Vec::new();
-    collect_policy_files(dir.as_ref(), &mut files)?;
-
-    // 決定性を担保するためファイルパス（相対パス）でソート
-    files.sort();
-
-    let mut hasher = Sha256::new();
-    for path in files {
-        let content = fs::read(&path)
-            .with_context(|| format!("Failed to read policy file: {}", path.display()))?;
-        hasher.update(&content);
-    }
-
-    Ok(hex::encode(hasher.finalize()))
-}
-
-/// 再帰的に JSON ファイルを収集
-fn collect_policy_files(dir: &Path, file_list: &mut Vec<PathBuf>) -> Result<()> {
-    if !dir.exists() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            // "new" ディレクトリ自身を再帰処理しないように除外
-            if path.file_name().and_then(|s| s.to_str()) != Some("new") {
-                collect_policy_files(&path, file_list)?;
-            }
-        } else if path.extension().and_then(|s| s.to_str()) == Some("json") {
-            file_list.push(path);
-        }
-    }
     Ok(())
 }
 
