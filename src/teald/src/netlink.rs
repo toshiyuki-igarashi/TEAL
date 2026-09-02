@@ -36,6 +36,7 @@ pub enum TealCmd {
     Deny = 5,
     TicketAdd = 6,
     ModeSwitch = 7,
+    PolicyUpdate = 8,
 }
 impl Cmd for TealCmd {}
 
@@ -148,6 +149,7 @@ pub enum NetlinkSendRequest {
     Deny(u64),
     TicketAdd(TicketPayload),
     ModeSwitch(u32),
+    SyncEpoch(u32),
 }
 
 // --- [構造体] 軽量化された NlWriter ---
@@ -176,6 +178,11 @@ impl NlWriter {
     pub async fn send_mode_switch(&self, mode: u32) -> Result<()> {
         self.tx.send(NetlinkSendRequest::ModeSwitch(mode)).await
             .map_err(|_| anyhow::anyhow!("Failed to queue MODE_SWITCH"))
+    }
+
+    pub async fn send_sync_epoch(&self, epoch: u32) -> Result<()> {
+        self.tx.send(NetlinkSendRequest::SyncEpoch(epoch)).await
+            .map_err(|_| anyhow::anyhow!("Failed to queue SYNC_EPOCH"))
     }
 }
 
@@ -380,6 +387,7 @@ pub async fn netlink_send_worker_loop(
             NetlinkSendRequest::Deny(id) => sock.send(build_deny(family_id, id).unwrap()),
             NetlinkSendRequest::TicketAdd(ticket) => sock.send(build_ticket_add(family_id, &ticket).unwrap()),
             NetlinkSendRequest::ModeSwitch(mode) => sock.send(build_mode_switch_packet(family_id, mode).unwrap()),
+            NetlinkSendRequest::SyncEpoch(epoch) => sock.send(build_sync_epoch_packet(family_id, epoch).unwrap()),
         };
 
         if let Err(e) = nl_res {
@@ -456,5 +464,12 @@ fn build_mode_switch_packet(family_id: u16, mode: u32) -> Result<Nlmsghdr<u16, G
     let mut attrs = GenlBuffer::new();
     attrs.push(Nlattr::new(false, false, TealAttr::Flags, mode.to_ne_bytes().as_ref())?);
     let genlhdr = Genlmsghdr::new(TealCmd::ModeSwitch, 1, attrs);
+    Ok(Nlmsghdr::new(None, family_id, NlmFFlags::new(&[NlmF::Request]), None, None, NlPayload::Payload(genlhdr)))
+}
+
+fn build_sync_epoch_packet(family_id: u16, epoch: u32) -> Result<Nlmsghdr<u16, Genlmsghdr<TealCmd, TealAttr>>> {
+    let mut attrs = GenlBuffer::new();
+    attrs.push(Nlattr::new(false, false, TealAttr::Epoch, epoch.to_ne_bytes().as_ref())?);
+    let genlhdr = Genlmsghdr::new(TealCmd::PolicyUpdate, 1, attrs);
     Ok(Nlmsghdr::new(None, family_id, NlmFFlags::new(&[NlmF::Request]), None, None, NlPayload::Payload(genlhdr)))
 }

@@ -465,7 +465,7 @@ async fn finalize_ctl_approval(
     .ok()?;
 
     // 3. kind に応じた実行ロジックへ委約
-    execute_mgmt_ctl(kind, uid, "", nl_tx).await;
+    execute_mgmt_ctl(kind, uid, &pending_ctl.target_hash, nl_tx).await;
 
     // 4. 承認イベントを返す
     Some(InternalEvent::CtlApproved { pending_ctl })
