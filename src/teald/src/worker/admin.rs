@@ -12,7 +12,7 @@ use blst::min_pk::{PublicKey, Signature};
 use blst::BLST_ERROR;
 
 use crate::state::app_state;
-use crate::bundle::bundle;
+use crate::bundle::{bundle, compute_directory_hash, DEFAULT_TEAL_DIR, STAGE_TEAL_DIR};
 use crate::management::management;
 use crate::common::DecisionKind;
 use crate::types::{InternalEvent, MgmtPendingCtl, MgmtCtlKind, MpaState, AppState, SignedCmdArgs, ApprovedTicket};
@@ -860,12 +860,52 @@ async fn execute_mgmt_ctl(
     target_hash: &str,
     nl_tx: &NlWriter,
 ) -> (String, Option<InternalEvent>) {
-    // 1. ロック前に重い処理（名前解決・UUID生成）を実行
-    let initiator_user_str = tokio::task::spawn_blocking(move || {
-        uid_to_name(uid).unwrap_or_else(|_| "".to_string())
-    })
-    .await
-    .unwrap_or_default();
+    let target_hash_owned = target_hash.to_string();
+    let kind_clone = kind.clone();
+
+    // 世代退避ディレクトリ名を作るため、ロックを取って現在のエポックだけ先に取得しておく
+    let current_epoch = app_state().lock().await.current_epoch;
+
+    // 1. ロック前に重い処理（ファイルI/O・TOCTOU検証・ロールバック制御）を実行
+    // 戻り値: (実行ユーザー名, 成功フラグ, エラーメッセージ)
+    let (initiator_user_str, toctou_ok, err_msg) = tokio::task::spawn_blocking(move || {
+        let user = uid_to_name(uid).unwrap_or_default();
+
+        if kind_clone == MgmtCtlKind::PolicyUpdate {
+            // [c] TOCTOU検証
+            let actual_hash = compute_directory_hash(STAGE_TEAL_DIR).unwrap_or_default();
+            if actual_hash != target_hash_owned {
+                return (user, false, "ERR TOCTOU validation failed: hash mismatch\n".to_string());
+            }
+
+            let backup_dir = format!("/var/lib/teal/epochs/epoch_{}", current_epoch);
+            let moved_stage_dir = format!("{}/new", backup_dir);            		// 移動後のステージングディレクトリのパスを計算
+
+            // [d] 世代退避 (WORM)
+            if let Err(e) = std::fs::rename(DEFAULT_TEAL_DIR, &backup_dir) {
+                // まだ何も壊れていないので、そのままエラーで弾く
+                return (user, false, format!("ERR failed to backup current policy: {}\n", e));
+            }
+
+            // [e] ステージング反映
+            if let Err(e) = std::fs::rename(&moved_stage_dir, DEFAULT_TEAL_DIR) {
+                // 【重要】退避には成功したが、反映に失敗した（/etc/teal.d が消失した状態）
+                // 直ちにロールバック（退避したディレクトリを元の位置に戻す）を実行する
+                if let Err(rollback_err) = std::fs::rename(&backup_dir, DEFAULT_TEAL_DIR) {
+                    // ロールバックすら失敗した場合はクリティカルエラー（ファイルシステム異常など）
+                    eprintln!("{}[FATAL] Policy rollback failed! System is in inconsistent state: {}", ktime_prefix(), rollback_err);
+                }
+
+                return (user, false, format!("ERR failed to apply new policy (rolled back): {}\n", e));
+            }
+        }
+        (user, true, "".to_string())
+    }).await.unwrap_or_default();
+
+    // 失敗時はここで安全にAbort（後続のインメモリ更新やカーネル同期は一切走らない）
+    if !toctou_ok {
+        return (err_msg, None);
+    }
 
     let generated_audit_id = Uuid::new_v4().to_string();
 
@@ -877,7 +917,7 @@ async fn execute_mgmt_ctl(
         audit_id: generated_audit_id,
         target_hash: target_hash.to_string(),
         
-        mpa_state: MpaState::default(), // MpaState::default() を使用
+        mpa_state: MpaState::default(),
         timeout_minutes: 0,
     };
     let event = Some(InternalEvent::CtlApproved {
