@@ -215,6 +215,7 @@ pub struct MgmtPendingCtl {
     pub initiator_uid: u32,
     pub initiator_user: String,
     pub audit_id: String,       // 監査用ID (UUID v7推奨)
+    pub target_hash: String,	// update-policy用
     pub mpa_state: MpaState,    // MPAの承認状態
     pub timeout_minutes: u32,
 }

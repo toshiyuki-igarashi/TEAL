@@ -347,7 +347,7 @@ impl EvidenceManager {
         let (action_str, object_path, arg_str) = match pending_ctl.kind {
             MgmtCtlKind::Start      => ("enable enforce mode", "system:mode/enforce", "start"),
             MgmtCtlKind::Stop       => ("disable enforce mode", "system:mode/audit", "stop"),
-            MgmtCtlKind::PolicyUpdate => ("update policies", "system:policy/reload", "reload"),
+            MgmtCtlKind::PolicyUpdate => ("update policies", "system:policy/update", "policy-update"),
             MgmtCtlKind::Flush      => ("flush caches and lockdown", "system:network/lockdown", "flush"),
         };
 

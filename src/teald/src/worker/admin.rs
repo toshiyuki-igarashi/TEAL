@@ -810,7 +810,7 @@ async fn handle_mgmt_cmd(
 async fn create_mgmt_pending(
     kind: MgmtCtlKind,
     uid: u32,
-    _target_hash: &str,
+    target_hash: &str,
     mpa: &CompiledMgmtMpaEnabled
 ) -> (String, Option<InternalEvent>) {
     // 1. 事前準備：重い処理（名前解決とUUID生成）をロックの外で完全に終わらせる
@@ -837,6 +837,7 @@ async fn create_mgmt_pending(
                 initiator_uid: uid,
                 initiator_user,
                 audit_id,
+                target_hash: target_hash.to_string(),
                 mpa_state: MpaState {
                     threshold: mpa.threshold,
                     approver_roles: mpa.approver_roles.clone(),
@@ -856,7 +857,7 @@ async fn create_mgmt_pending(
 async fn execute_mgmt_ctl(
     kind: MgmtCtlKind,
     uid: u32,
-    _target_hash: &str,
+    target_hash: &str,
     nl_tx: &NlWriter,
 ) -> (String, Option<InternalEvent>) {
     // 1. ロック前に重い処理（名前解決・UUID生成）を実行
@@ -874,6 +875,8 @@ async fn execute_mgmt_ctl(
         initiator_uid: uid,
         initiator_user: initiator_user_str,
         audit_id: generated_audit_id,
+        target_hash: target_hash.to_string(),
+        
         mpa_state: MpaState::default(), // MpaState::default() を使用
         timeout_minutes: 0,
     };
