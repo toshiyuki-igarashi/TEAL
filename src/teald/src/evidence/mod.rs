@@ -345,10 +345,10 @@ impl EvidenceManager {
 
         // MgmtCtlKind に応じて、ログに出力する文字列を動的に切り替える
         let (action_str, object_path, arg_str) = match pending_ctl.kind {
-            MgmtCtlKind::Start      => ("enable enforce mode", "system:mode/enforce", "start"),
-            MgmtCtlKind::Stop       => ("disable enforce mode", "system:mode/audit", "stop"),
-            MgmtCtlKind::PolicyUpdate => ("update policies", "system:policy/update", "policy-update"),
-            MgmtCtlKind::Flush      => ("flush caches and lockdown", "system:network/lockdown", "flush"),
+            MgmtCtlKind::Start      => ("enable enforce mode", "system:mode/enforce", "start".to_string()),
+            MgmtCtlKind::Stop       => ("disable enforce mode", "system:mode/audit", "stop".to_string()),
+            MgmtCtlKind::PolicyUpdate => ("update policies", "system:policy/update", format!("policy-update {}", pending_ctl.target_hash)),
+            MgmtCtlKind::Flush      => ("flush caches and lockdown", "system:network/lockdown", "flush".to_string()),
         };
 
         let entry = AuditLogEntry {
@@ -367,7 +367,7 @@ impl EvidenceManager {
                     hash,
                     applet: None,
                     script_path: None,
-                    args: Some(arg_str.to_string()),
+                    args: Some(arg_str),
                     session_tty: None,
                 },
                 object: ObjectInfo {
