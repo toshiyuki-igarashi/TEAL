@@ -82,8 +82,8 @@ async fn handle_admin_connection(mut stream: tokio::net::UnixStream, nl_tx: &NlW
         "STOP"          => handle_mgmt(&cmd, MgmtCtlKind::Stop, DecisionKind::Stop, uid, nl_tx).await,
         
         // 【署名なしの管理・特権操作（直接チェック＆実行へ流す）】
-        "POLICY_UPDATE" => check_initiator_and_handle(MgmtCtlKind::PolicyUpdate, &mgmt, uid, nl_tx).await,
-        "FLUSH"         => check_initiator_and_handle(MgmtCtlKind::Flush, &mgmt, uid, nl_tx).await,
+        "POLICY_UPDATE" => handle_mgmt(&cmd, MgmtCtlKind::PolicyUpdate, DecisionKind::PolicyUpdate, uid, nl_tx).await,
+        "FLUSH"         => check_initiator_and_handle(MgmtCtlKind::Flush, &mgmt, uid, "", nl_tx).await,
 
         _ => ("ERR unknown cmd\n".to_string(), None),
     };
@@ -230,7 +230,7 @@ fn parse_args(cmd: &str, kind: DecisionKind, uid: u32) -> Result<SignedCmdArgs, 
     if head != kind.as_str() { return Err(format!("ERR bad cmd head (expected {})\n", kind.as_str())); }
 
     let id: String = match kind {
-        DecisionKind::Approve | DecisionKind::Deny | DecisionKind::Ticket => {
+        DecisionKind::Approve | DecisionKind::Deny | DecisionKind::Ticket | DecisionKind::PolicyUpdate => {
             it.next().ok_or("ERR missing/invalid id\n")?.to_string()
         }
         _ => "".to_string(),
@@ -317,15 +317,15 @@ async fn apply_decision(
         
         DecisionKind::Start => {
             let mgmt = management();
-            check_initiator_and_handle(MgmtCtlKind::Start, &mgmt, args.uid, nl_tx.unwrap()).await
+            check_initiator_and_handle(MgmtCtlKind::Start, &mgmt, args.uid, "", nl_tx.unwrap()).await
         }
         DecisionKind::Stop => {
             let mgmt = management();
-            check_initiator_and_handle(MgmtCtlKind::Stop, &mgmt, args.uid, nl_tx.unwrap()).await
+            check_initiator_and_handle(MgmtCtlKind::Stop, &mgmt, args.uid, "", nl_tx.unwrap()).await
         }
         DecisionKind::PolicyUpdate => {
             let mgmt = management();
-            check_initiator_and_handle(MgmtCtlKind::PolicyUpdate, &mgmt, args.uid, nl_tx.unwrap()).await
+            check_initiator_and_handle(MgmtCtlKind::PolicyUpdate, &mgmt, args.uid, &args.id, nl_tx.unwrap()).await
         }
     }
 }
@@ -465,7 +465,7 @@ async fn finalize_ctl_approval(
     .ok()?;
 
     // 3. kind に応じた実行ロジックへ委約
-    execute_mgmt_ctl(kind, uid, nl_tx).await;
+    execute_mgmt_ctl(kind, uid, "", nl_tx).await;
 
     // 4. 承認イベントを返す
     Some(InternalEvent::CtlApproved { pending_ctl })
@@ -746,6 +746,7 @@ async fn check_initiator_and_handle(
     kind: MgmtCtlKind,
     mgmt: &CompiledManagement,
     uid: u32,
+    target_hash: &str,
     nl_tx: &NlWriter,
 ) -> (String, Option<InternalEvent>) {
     // 1. kind に応じて該当操作の control (Option) を取得
@@ -768,7 +769,7 @@ async fn check_initiator_and_handle(
     }
 
     // 4. 権限OKなら、handle_mgmt_cmd へ委約
-    handle_mgmt_cmd(kind, mgmt, uid, nl_tx).await
+    handle_mgmt_cmd(kind, mgmt, uid, target_hash, nl_tx).await
 }
 
 /// 管理コマンドの受付共通処理 (Start/Stop/PolicyUpdate/Flush)
@@ -776,6 +777,7 @@ async fn handle_mgmt_cmd(
     kind: MgmtCtlKind,
     mgmt: &CompiledManagement,
     uid: u32,
+    target_hash: &str,
     nl_tx: &NlWriter,
 ) -> (String, Option<InternalEvent>) {
     // 1. kind に応じて該当操作の Control (Option含む) を取得
@@ -795,11 +797,11 @@ async fn handle_mgmt_cmd(
     match mpa_config {
         CompiledMgmtMpa::Disabled => {
             // MPA不要: 即時実行
-            execute_mgmt_ctl(kind, uid, nl_tx).await
+            execute_mgmt_ctl(kind, uid, target_hash, nl_tx).await
         }
         CompiledMgmtMpa::Enabled(mpa) => {
             // MPA必要: 承認待ち状態を作成
-            create_mgmt_pending(kind, uid, mpa).await
+            create_mgmt_pending(kind, uid, target_hash, mpa).await
         }
     }
 }
@@ -808,6 +810,7 @@ async fn handle_mgmt_cmd(
 async fn create_mgmt_pending(
     kind: MgmtCtlKind,
     uid: u32,
+    _target_hash: &str,
     mpa: &CompiledMgmtMpaEnabled
 ) -> (String, Option<InternalEvent>) {
     // 1. 事前準備：重い処理（名前解決とUUID生成）をロックの外で完全に終わらせる
@@ -853,6 +856,7 @@ async fn create_mgmt_pending(
 async fn execute_mgmt_ctl(
     kind: MgmtCtlKind,
     uid: u32,
+    _target_hash: &str,
     nl_tx: &NlWriter,
 ) -> (String, Option<InternalEvent>) {
     // 1. ロック前に重い処理（名前解決・UUID生成）を実行
