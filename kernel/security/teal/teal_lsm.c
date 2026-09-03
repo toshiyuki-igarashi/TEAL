@@ -71,13 +71,14 @@
  */
 enum teal_nl_commands {
     TEAL_CMD_UNSPEC = 0,
-    TEAL_CMD_REGISTER,      // User -> Kernel: tealdのアタッチ（AUDITモード開始）
-    TEAL_CMD_REQ,           // Kernel -> User: 承認要求 (Slow Path)
-    TEAL_CMD_INFO,          // Kernel -> User: 状態通知 (Fast Path)
-    TEAL_CMD_APPROVE,       // User -> Kernel: 許可
-    TEAL_CMD_DENY,          // User -> Kernel: 拒否
-    TEAL_CMD_TICKET_ADD,    // User -> Kernel: キャッシュ登録
-    TEAL_CMD_MODE_SWITCH,   // User -> Kernel: AUDIT <-> ENFORCE 切替 (START/STOP)
+    TEAL_CMD_REGISTER,      // 1: User -> Kernel: tealdのアタッチ（AUDITモード開始）
+    TEAL_CMD_REQ,           // 2: Kernel -> User: 承認要求 (Slow Path)
+    TEAL_CMD_INFO,          // 3: Kernel -> User: 状態通知 (Fast Path)
+    TEAL_CMD_APPROVE,       // 4: User -> Kernel: 許可
+    TEAL_CMD_DENY,          // 5: User -> Kernel: 拒否
+    TEAL_CMD_TICKET_ADD,    // 6: User -> Kernel: キャッシュ登録
+    TEAL_CMD_MODE_SWITCH,   // 7: User -> Kernel: AUDIT <-> ENFORCE 切替 (START/STOP)
+    TEAL_CMD_POLICY_UPDATE, // 8: User -> Kernel: Epoch同期とキャッシュフラッシュ
     __TEAL_CMD_MAX,
 };
 #define TEAL_CMD_MAX (__TEAL_CMD_MAX - 1)
@@ -195,6 +196,7 @@ static int teal_nl_recv_approve(struct sk_buff *skb, struct genl_info *info);
 static int teal_nl_recv_deny(struct sk_buff *skb, struct genl_info *info);
 static int teal_nl_recv_ticket_add(struct sk_buff *skb, struct genl_info *info);
 static int teal_nl_recv_mode_switch(struct sk_buff *skb, struct genl_info *info);
+static int teal_nl_recv_policy_update(struct sk_buff *skb, struct genl_info *info);
 static int teal_genl_send_req(struct teal_request *req, u8 teal_mode);
 
 /*
@@ -228,6 +230,12 @@ static const struct genl_ops teal_nl_ops[] = {
         .cmd = TEAL_CMD_MODE_SWITCH,
         .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
         .doit = teal_nl_recv_mode_switch,
+        .policy = teal_nl_policy,
+    },
+    {
+        .cmd = TEAL_CMD_POLICY_UPDATE,
+        .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
+        .doit = teal_nl_recv_policy_update,
         .policy = teal_nl_policy,
     },
 };
@@ -1050,6 +1058,29 @@ static int teal_nl_recv_mode_switch(struct sk_buff *skb, struct genl_info *info)
     } else {
         pr_warn("TEAL: Mode switch requested, but no configurator registered.\n");
     }
+
+    return 0;
+}
+
+/*
+ * コマンド: TEAL_CMD_POLICY_UPDATE
+ * teald から新しい Epoch を受け取り、カーネル内のチケットキャッシュおよび
+ * 保留中リクエストキューを一括フラッシュして Fast Path を初期化する。
+ */
+ static int teal_nl_recv_policy_update(struct sk_buff *skb, struct genl_info *info) {
+    u32 new_epoch = 0;
+
+    // 1. 送られてきた新しい Epoch 番号を取得 (主に監査ログ・デバッグ出力用)
+    if (info->attrs[TEAL_ATTR_EPOCH]) {
+        new_epoch = nla_get_u32(info->attrs[TEAL_ATTR_EPOCH]);
+    }
+
+    pr_info("TEAL: Received POLICY_UPDATE (Epoch: %u). Flushing all caches...\n", new_epoch);
+
+    // 2. 既存のフラッシュ関数を呼び出す
+    // これにより、teal_ctl_list (判定待ち) と teal_ticket_ht (キャッシュ) が
+    // ロックとRCUの安全性を保ったまま完全に初期化・破棄される
+    teal_flush_all_queues();
 
     return 0;
 }
