@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 /*
- * TEAL Daemon (teald)
- *
+ * TEAL CLI (teal-cli)
+ * 
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
@@ -72,6 +72,12 @@ enum Commands {
     Diff {
         #[arg(long)]
         html: Option<std::path::PathBuf>,
+    },
+    /// Initialize staging directory by copying current policies
+    StageInit {
+        /// Force overwrite even if the staging directory already exists
+        #[arg(short, long)]
+        force: bool,
     },
     /// Update policies and increment Epoch
     PolicyUpdate,
@@ -148,6 +154,9 @@ fn main() -> Result<()> {
         }
         Commands::Diff { html } => {
             cmd::diff::run(html.clone())?;
+        }
+        Commands::StageInit { force } => {
+            cmd::stage_init::run(*force)?;
         }
         Commands::PolicyUpdate => {
             cmd::update::run()?;

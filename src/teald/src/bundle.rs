@@ -56,7 +56,7 @@ pub fn bundle() -> Arc<CompiledBundle> {
 pub fn load_bundle_from_dir<P: AsRef<Path>>(dir: P) -> Result<CompiledBundle> {
     let base = dir.as_ref();
     let bundle_path = base.join("bundle.json");
-    let roles_path = base.join("roles/roles.json");
+    let roles_path = base.join("roles.json");
     let policies_dir = base.join("policies");
 
     // 1) bundle.json -> Value

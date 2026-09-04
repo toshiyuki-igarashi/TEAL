@@ -186,7 +186,6 @@ Before starting the daemon, the required configuration paths and fixed skeleton 
 ```bash
 # Create the structural hierarchy
 sudo mkdir -p /etc/teal.d/policies
-sudo mkdir -p /etc/teal.d/roles
 sudo mkdir -p /var/log/teal
 
 # 1. Deploy Management Policy (Enforces teal-cli start/stop & MPA conditions)
@@ -238,7 +237,7 @@ sudo tee /etc/teal.d/bundle.json >/dev/null <<'EOF'
 EOF
 
 # 3. Initialize Roles Map Definition (Conforms to roles_v1_0.schema.json)
-sudo tee /etc/teal.d/roles/roles.json >/dev/null <<'EOF'
+sudo tee /etc/teal.d/roles.json >/dev/null <<'EOF'
 {
   "schema_version": "1.0",
   "roles": [
@@ -335,8 +334,7 @@ TEAL processes rules using a structured, multi-layered directory design. Except 
 ├── management.json      # FIXED: Management Governance Policy (Governs teal-cli start/stop & MPA)
 ├── policies/            # FIXED: Target storage directory for granular policy rules
 │   └── 00-base.json     # DYNAMIC: Arbitrary policy file specified inside bundle.json array [schema v1.4]
-└── roles/               # FIXED: Target storage directory for system user roles mapping
-    └── roles.json       # FIXED: Standard role assignments registry file [schema v1.0]
+└── roles.json           # FIXED: Standard role assignments registry file [schema v1.0]
 ```
 
 ##### Configuration Component Definitions
@@ -344,7 +342,7 @@ TEAL processes rules using a structured, multi-layered directory design. Except 
 * **`bundle.json` (Fixed Name):** The foundational configuration loader validation profile. It specifies the schema version tracking metadata along with an array list of target JSON files stored within the `policies/` directory that must be dynamically interpreted and locked into the engine state.
 * **`management.json` (Fixed Name):** **The Management Governance Policy.** This crucial file controls the execution authorization for administrative commands (`teal-cli start` and `teal-cli stop`). It explicitly defines which system UIDs map to administrative management roles, who can initiate state changes, and what Multi-Party Authorization (MPA) thresholds (e.g., specific approver roles and quorum size) are required to execute them.
 * **`policies/` Directory:** Holds your granular runtime interception domain logic. Files here use arbitrary string names matching the schema constraints (e.g., `00-base.json`), specified by their direct names within the `bundle.json` targets tracking array.
-* **`roles/roles.json` (Fixed Path & Name):** Defines administrative Subject-to-Role mappings, system assignment constraints, default roles for unmapped system entities, and fallback enforcement modes.
+* **`roles.json` (Fixed Path & Name):** Defines administrative Subject-to-Role mappings, system assignment constraints, default roles for unmapped system entities, and fallback enforcement modes.
 
 #### Create a systemd Service for `teald`
 

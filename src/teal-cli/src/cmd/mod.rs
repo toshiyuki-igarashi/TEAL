@@ -6,5 +6,6 @@
  */
 
 pub mod diff;
-pub mod update;
 pub mod keygen;
+pub mod stage_init;
+pub mod update;
