@@ -206,8 +206,12 @@ impl EvidenceManager {
                     hash,
                     applet: pending.subject.applet_name.clone(),
                     script_path: pending.subject.script_path.clone(),
-                    args: None,
-                    session_tty: Some(pending.subject.session_tty.clone()),
+                    args: pending.subject.cmd_args.clone(),
+                    session_tty: if pending.subject.session_tty.is_empty() {
+                        None
+                    } else {
+                        Some(pending.subject.session_tty.clone())
+                    },
                 },
                 object: ObjectInfo {
                     kind: "unknown".to_string(),

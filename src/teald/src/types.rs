@@ -765,11 +765,11 @@ pub struct SubjectContext {
     pub session_id: u32,
 
     // Execution Paths
-    pub prog_dev: u64,      // 追加: 実行バイナリのデバイス番号
-    pub prog_ino: u64,      // 追加: 実行バイナリのinode番号
+    pub prog_dev: u64,      // 実行バイナリのデバイス番号
+    pub prog_ino: u64,      // 実行バイナリのinode番号
     pub program_path: String,
-    pub script_dev: u64,    // 追加: スクリプトのデバイス番号
-    pub script_ino: u64,    // 追加: スクリプトのinode番号
+    pub script_dev: u64,    // スクリプトのデバイス番号
+    pub script_ino: u64,    // スクリプトのinode番号
     pub script_path: Option<String>, // "none" の場合は None
     pub applet_name: Option<String>, // Busybox等の実名
 
