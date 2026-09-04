@@ -10,7 +10,7 @@ use anyhow::Result;
 
 use teal_policy_engine::ir::{CompiledBundle, CompiledPolicy, CompiledRule, ActionMatcher};
 use teal_policy_engine::types::{AuditLevel, Effect, SystemType};
-use super::{PolicyDiffReport, RuleDiffItem, GlobalDiffItem, SecurityImpact};
+use super::{BundleDiffReport, RuleDiffItem, GlobalDiffItem, SecurityImpact};
 
 /// 2つの CompiledBundle を比較して PolicyDiffReport を構築
 pub fn compare_policies(
@@ -18,7 +18,7 @@ pub fn compare_policies(
     stage: &CompiledBundle,
     current_hash: &str,
     new_hash: &str,
-) -> Result<PolicyDiffReport> {
+) -> Result<BundleDiffReport> {
     // 1. グローバル設定 / メタデータの差分抽出
     let global_diffs = compare_global_configs(&current.policy, &stage.policy);
 
@@ -28,9 +28,10 @@ pub fn compare_policies(
     // 3. (必要に応じて) ロール定義・割り当ての差分抽出
     // let role_diffs = diff_roles(&current.roles, &stage.roles);
 
-    Ok(PolicyDiffReport {
+    Ok(BundleDiffReport {
         current_hash: current_hash.to_string(),
         new_hash: new_hash.to_string(),
+        config_diff: None,
         global_diffs,
         rule_diffs,
     })

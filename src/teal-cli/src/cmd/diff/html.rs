@@ -9,21 +9,21 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::Local;
 
-use super::{PolicyDiffReport, RuleDiffItem, SecurityImpact};
+use super::bundle_diff::{SecurityImpact as MgmtImpact};
+use super::{BundleDiffReport, RuleDiffItem, SecurityImpact};
 
 /// HTML レポートを生成してファイル出力
-pub fn generate_html_report(report: &PolicyDiffReport, output_path: &Path) -> Result<()> {
+pub fn generate_html_report(report: &BundleDiffReport, output_path: &Path) -> Result<()> {
     let html_content = render_html(report);
     fs::write(output_path, html_content)
         .with_context(|| format!("Failed to write HTML diff report: {}", output_path.display()))?;
     Ok(())
 }
 
-fn render_html(report: &PolicyDiffReport) -> String {
+fn render_html(report: &BundleDiffReport) -> String {
     let generated_time = Local::now().format("%Y-%m-%d %H:%M:%S %Z").to_string();
 
     // 統計集計
-    // let total_rules = report.rule_diffs.len();
     let added_count = report.rule_diffs.iter().filter(|r| matches!(r, RuleDiffItem::Added { .. })).count();
     let removed_count = report.rule_diffs.iter().filter(|r| matches!(r, RuleDiffItem::Removed { .. })).count();
     let modified_count = report.rule_diffs.iter().filter(|r| matches!(r, RuleDiffItem::Modified { .. })).count();
@@ -82,7 +82,6 @@ fn render_html(report: &PolicyDiffReport) -> String {
   .header h1 { margin: 0 0 8px 0; font-size: 22px; display: flex; align-items: center; gap: 8px; }
   .header .meta { color: var(--text-muted); font-size: 13px; font-family: monospace; }
   
-  /* サマリーバッジ */
   .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -103,7 +102,6 @@ fn render_html(report: &PolicyDiffReport) -> String {
   .text-added { color: #60a5fa; }
   .text-removed { color: #9ca3af; }
 
-  /* グローバル設定テーブル */
   .section-title { font-size: 18px; margin: 24px 0 12px 0; border-bottom: 2px solid var(--card-border); padding-bottom: 6px; }
   table.diff-table {
     width: 100%;
@@ -120,8 +118,15 @@ fn render_html(report: &PolicyDiffReport) -> String {
     border-bottom: 1px solid var(--card-border);
   }
   table.diff-table th { background: #111827; color: var(--text-muted); }
+
+  .card-block {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
   
-  /* アコーディオン・ファイルツリー */
   .file-group {
     background: var(--card-bg);
     border: 1px solid var(--card-border);
@@ -142,7 +147,6 @@ fn render_html(report: &PolicyDiffReport) -> String {
   .file-header:hover { background: #334155; }
   .file-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
 
-  /* ルールカード */
   .rule-card {
     border-radius: 6px;
     border: 1px solid;
@@ -228,7 +232,143 @@ fn render_html(report: &PolicyDiffReport) -> String {
         modified_count
     ));
 
-    // 1. Global Configurations 差分
+    // 1. バンドル設定差分 (FullConfigDiff: management / roles / bundle)
+    if let Some(ref config) = report.config_diff {
+        out.push_str(r#"<div class="section-title">🏛️ バンドル構成・ガバナンス設定の差分</div>"#);
+
+         // (1) Management Governance Policy
+        if let Some(ref mgmt) = config.mgmt_diff {
+            out.push_str(r#"<div class="card-block"><h3 style="margin-top:0;">Management Governance (MPA)</h3>"#);
+            if mgmt.control_changes.is_empty() && mgmt.role_changes.is_empty() {
+                out.push_str(r#"<p style="color:var(--text-muted);font-size:13px;">管理ポリシーに変更はありません。</p>"#);
+            } else {
+                // A. 管理ロールの UID 割り当て変更
+                if !mgmt.role_changes.is_empty() {
+                    out.push_str(r#"<h4 style="margin: 12px 0 6px 0; font-size: 14px;">管理ロール・メンバー変更</h4>"#);
+                    out.push_str(r#"<table class="diff-table"><thead><tr><th>ロール名</th><th>追加UID</th><th>削除UID</th></tr></thead><tbody>"#);
+                    for r in &mgmt.role_changes {
+                        out.push_str(&format!(r#"
+                        <tr>
+                          <td><code>{}</code></td>
+                          <td style="color:#86efac;">{}</td>
+                          <td style="color:#fca5a5;">{}</td>
+                        </tr>
+                        "#,
+                            escape_html(&r.role_name),
+                            if r.added_uids.is_empty() { "-".into() } else { format!("{:?}", r.added_uids) },
+                            if r.removed_uids.is_empty() { "-".into() } else { format!("{:?}", r.removed_uids) }
+                        ));
+                    }
+                    out.push_str("</tbody></table>");
+                }
+
+                // B. コマンド制御 (MPA & 起案権限) の変更
+                if !mgmt.control_changes.is_empty() {
+                    out.push_str(r#"<h4 style="margin: 16px 0 6px 0; font-size: 14px;">コマンド制御・MPA設定変更</h4>"#);
+                    out.push_str(r#"<table class="diff-table"><thead><tr><th>コマンド</th><th>影響度</th><th>変更内容</th></tr></thead><tbody>"#);
+                    for c in &mgmt.control_changes {
+                        let (badge_class, badge_label) = match c.impact {
+                            MgmtImpact::Critical => ("badge-relaxed", "🚨 CRITICAL (MPA弱化)"),
+                            MgmtImpact::Warning  => ("badge-relaxed", "⚠️ WARNING (ロール変更)"),
+                            MgmtImpact::Stricter => ("badge-hardened", "🛡️ STRICTER (強化)"),
+                            MgmtImpact::Neutral  => ("badge-neutral", "⚪ NEUTRAL"),
+                        };
+                        let mut details = Vec::new();
+                        if let Some((old_t, new_t)) = c.threshold_change {
+                            details.push(format!("Threshold: {} ➔ {}", old_t, new_t));
+                        }
+                        if let Some((old_e, new_e)) = c.mpa_enabled_change {
+                            details.push(format!("MPA Enabled: {} ➔ {}", old_e, new_e));
+                        }
+                        // 起案可能ロール (initiator)
+                        if !c.added_initiator_roles.is_empty() {
+                            details.push(format!("追加された起案ロール: {:?}", c.added_initiator_roles));
+                        }
+                        if !c.removed_initiator_roles.is_empty() {
+                            details.push(format!("削除された起案ロール: {:?}", c.removed_initiator_roles));
+                        }
+                        // 承認可能ロール (approver)
+                        if !c.added_approver_roles.is_empty() {
+                            details.push(format!("追加された承認ロール: {:?}", c.added_approver_roles));
+                        }
+                        if !c.removed_approver_roles.is_empty() {
+                            details.push(format!("削除された承認ロール: {:?}", c.removed_approver_roles));
+                        }
+
+                        out.push_str(&format!(r#"
+                        <tr>
+                          <td><code>{}</code></td>
+                          <td><span class="badge {}">{}</span></td>
+                          <td>{}</td>
+                        </tr>
+                        "#, escape_html(&c.command), badge_class, badge_label, escape_html(&details.join(" / "))));
+                    }
+                    out.push_str("</tbody></table>");
+                }
+            }
+            out.push_str("</div>");
+        }
+
+        // (2) Roles & Assignments
+        if let Some(ref roles) = config.roles_diff {
+            out.push_str(r#"<div class="card-block"><h3 style="margin-top:0;">Role & Subject Assignments</h3>"#);
+
+            // ロール自体の定義追加・削除
+            if !roles.added_roles.is_empty() || !roles.removed_roles.is_empty() {
+                out.push_str(r#"<div style="margin-bottom: 12px;"><ul class="details-list">"#);
+                for r in &roles.added_roles {
+                    out.push_str(&format!(r#"<li style="color:#86efac;">+ 新規ロール定義: <code>{}</code></li>"#, escape_html(r)));
+                }
+                for r in &roles.removed_roles {
+                    out.push_str(&format!(r#"<li style="color:#fca5a5;">- 削除されたロール定義: <code>{}</code></li>"#, escape_html(r)));
+                }
+                out.push_str("</ul></div>");
+            }
+
+            // 割り当て変更テーブル
+            if !roles.assignment_changes.is_empty() || roles.default_roles_changed.is_some() {
+                out.push_str(r#"<table class="diff-table"><thead><tr><th>対象</th><th>付与ロール (Granted)</th><th>剥奪ロール (Revoked)</th></tr></thead><tbody>"#);
+                for a in &roles.assignment_changes {
+                    out.push_str(&format!(r#"
+                    <tr>
+                      <td><b>{}</b></td>
+                      <td style="color:#86efac;">{}</td>
+                      <td style="color:#fca5a5;">{}</td>
+                    </tr>
+                    "#,
+                        escape_html(&a.target),
+                        if a.added.is_empty() { "-".into() } else { escape_html(&a.added.join(", ")) },
+                        if a.removed.is_empty() { "-".into() } else { escape_html(&a.removed.join(", ")) }
+                    ));
+                }
+                if let Some((old_d, new_d)) = &roles.default_roles_changed {
+                    out.push_str(&format!(r#"
+                    <tr>
+                      <td><b>未知ユーザー (Defaults)</b></td>
+                      <td colspan="2">旧: {:?} ➔ 新: {:?}</td>
+                    </tr>
+                    "#, old_d, new_d));
+                }
+                out.push_str("</tbody></table>");
+            }
+
+            out.push_str("</div>");
+        }
+
+        // (3) Bundle Files
+        if let Some(ref bundle) = config.bundle_diff {
+            out.push_str(r#"<div class="card-block"><h3 style="margin-top:0;">Bundle Policy Files</h3><ul class="details-list">"#);
+            for f in &bundle.added_policies {
+                out.push_str(&format!(r#"<li style="color:#86efac;">+ 追加ファイル: {}</li>"#, escape_html(f)));
+            }
+            for f in &bundle.removed_policies {
+                out.push_str(&format!(r#"<li style="color:#fca5a5;">- 削除ファイル: {}</li>"#, escape_html(f)));
+            }
+            out.push_str("</ul></div>");
+        }
+    }
+
+    // 2. Global Configurations 差分
     out.push_str(r#"<div class="section-title">⚙️ グローバルポリシー設定の差分</div>"#);
     if report.global_diffs.is_empty() {
         out.push_str(r#"<p style="color: var(--text-muted); font-size: 13px;">グローバル設定に変更はありません。</p>"#);
@@ -272,7 +412,7 @@ fn render_html(report: &PolicyDiffReport) -> String {
         out.push_str("</tbody></table>");
     }
 
-    // 2. ルール差分（ファイル別グループ表示）
+    // 3. ルール差分（ファイル別グループ表示）
     out.push_str(r#"<div class="section-title">📜 個別ルールの差分詳細</div>"#);
     if file_groups.is_empty() {
         out.push_str(r#"<p style="color: var(--text-muted); font-size: 13px;">ルールに変更はありません。</p>"#);
@@ -325,7 +465,7 @@ fn render_html(report: &PolicyDiffReport) -> String {
         </div>
 "#,
                             escape_html(&rule.id),
-                            escape_html(&format!("{:#?}", rule)) // または serde_json::to_string_pretty
+                            escape_html(&format!("{:#?}", rule))
                         ));
                     }
                     RuleDiffItem::Removed { rule, .. } => {
@@ -343,9 +483,7 @@ fn render_html(report: &PolicyDiffReport) -> String {
                             escape_html(&format!("{:#?}", rule))
                         ));
                     }
-                    RuleDiffItem::Unchanged { .. } => {
-                        // 通常レポートでは Unchanged は省略または折りたたみ
-                    }
+                    RuleDiffItem::Unchanged { .. } => {}
                 }
             }
 
@@ -357,9 +495,10 @@ fn render_html(report: &PolicyDiffReport) -> String {
     out.push_str(r#"
 </div>
 <script>
-  // 折りたたみ制御用の補助スクリプト
   document.querySelectorAll('.file-header').forEach(header => {
     header.addEventListener('click', () => {
+      const body = header.nextElementSibling;
+      body.style.display = body.style.display === 'none' ? 'flex' : 'none';
       const arrow = header.querySelector('span:last-child');
       arrow.textContent = arrow.textContent === '▼' ? '▶' : '▼';
     });
