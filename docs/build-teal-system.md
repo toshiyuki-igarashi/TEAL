@@ -187,6 +187,7 @@ Before starting the daemon, the required configuration paths and fixed skeleton 
 # Create the structural hierarchy
 sudo mkdir -p /etc/teal.d/policies
 sudo mkdir -p /var/log/teal
+sudo mkdir -p /var/lib/teal/epochs
 
 # 1. Deploy Management Policy (Enforces teal-cli start/stop & MPA conditions)
 sudo tee /etc/teal.d/management.json >/dev/null <<'EOF'
