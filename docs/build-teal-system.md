@@ -139,7 +139,7 @@ Save your changes and exit the interface. When executing the build, ensure that 
 
 ```bash
 # Final build using LLVM 17
-make LLVM=-17 O=../kernel_build_v6.8 -j$(nproc)
+LIBCLANG_PATH=/usr/lib/llvm-17/lib make LLVM=-17 O=../kernel_build_v6.8 -j$(nproc)
 ```
 
 #### Install Kernel and Modules

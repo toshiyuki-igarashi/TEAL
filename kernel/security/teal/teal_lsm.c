@@ -65,6 +65,7 @@
 #define TEAL_ACTION_MAX 16
 #define TEAL_SCRIPT_MAX 256
 #define TEAL_APPLET_MAX 256
+#define TEAL_ARGS_MAX 128
 
 /*
  * 1. コマンド定義 (Message Types)
@@ -184,6 +185,7 @@ struct teal_request {
     char new_target[TEAL_TARGET_MAX];   // 移動先の絶対パス文字列
     char script[TEAL_SCRIPT_MAX];       // shebang script or ""
     char applet[TEAL_APPLET_MAX];       // kernel's comm (task name)
+    char args_head[TEAL_ARGS_MAX];      // 引数の要約 (先頭128バイト)
 
     int decision;
     u32 flags;
@@ -274,7 +276,8 @@ int teal_wait_for_approval(const char *action,
                            u8 teal_mode,
                            const char *exec_path,
                            const char *script_path,
-                           const char *applet);
+                           const char *applet,
+                           const char *args);
 static void teal_gc_worker(struct work_struct *work);
 
 /* event typeの定義　teal_decision_makerで使用する */
@@ -297,6 +300,7 @@ struct teal_rs_ctx {
     const char *target;
     const char *program;
     const char *script;
+    const char *args;
     dev_t target_dev;
     unsigned long target_ino;
 };
@@ -307,6 +311,7 @@ struct teal_rs_ctx {
 struct teal_rs_rename_ctx {
     const char *program;
     const char *script;
+    const char *args;
 
     // 移動元 (Source) 情報
     const char *old_target;
@@ -509,7 +514,8 @@ static struct teal_request *teal_req_build(const char *action,
                                            u64 new_target_ino,
                                            const char *exec_path,
                                            const char *script_path,
-                                           const char *applet);
+                                           const char *applet,
+                                           const char *args);
 static int teal_req_enqueue(struct teal_request *req, u8 teal_mode);
 
 // --- 待機ロジック (Rustから呼ばれる) ---
@@ -523,7 +529,8 @@ int teal_wait_for_approval(const char *action,
                            u8 teal_mode,
                            const char *exec_path,
                            const char *script_path,
-                           const char *applet)
+                           const char *applet,
+                           const char *args)
 {
     struct teal_request *req;
     int decision;
@@ -548,7 +555,7 @@ int teal_wait_for_approval(const char *action,
      */
     req = teal_req_build(action, target_name, target_dev, target_ino, 
                          new_target, new_target_dev, new_target_ino,
-                         exec_path, script_path, applet);
+                         exec_path, script_path, applet, args);
     if (!req)
         return -ENOMEM;
 
@@ -592,6 +599,7 @@ struct teal_task_meta {
     unsigned long magic;
     char program[TEAL_PATH_MAX];
     char script[TEAL_SCRIPT_MAX];
+    char args_head[TEAL_ARGS_MAX];              /* 引数の先頭部分の実体バッファ */
     struct teal_id_pair program_id;
     struct teal_id_pair script_id;
 };
@@ -610,7 +618,8 @@ static struct teal_request *teal_req_build(const char *action,
                                            u64 new_target_ino,
                                            const char *exec_path,
                                            const char *script_path,
-                                           const char *applet)
+                                           const char *applet,
+                                           const char *args)
 {
     struct teal_request *req;
     const struct cred *cred;
@@ -716,6 +725,22 @@ static struct teal_request *teal_req_build(const char *action,
 
     if (!IS_ERR_OR_NULL(applet) && applet[0])
         strscpy(req->applet, applet, sizeof(req->applet));
+
+    // ==========================================
+    // ★ 引数 (args_head) のセット
+    // ==========================================
+    /* 1. 明示的に渡された args を最優先 (bprm_check からの最新引数など) */
+    if (!IS_ERR_OR_NULL(args) && args[0] != '\0' && args[0] != '-') {
+        strscpy(req->args_head, args, sizeof(req->args_head));
+    }
+    /* 2. 引数が渡されなかった場合の保険: 既存タスクメタデータから補完 */
+    else if (m && m->magic == TEAL_TASK_META_MAGIC && m->args_head[0] != '\0') {
+        strscpy(req->args_head, m->args_head, sizeof(req->args_head));
+    }
+    /* 3. どちらも無ければ "-" */
+    else {
+        strscpy(req->args_head, "-", sizeof(req->args_head));
+    }
 
     return req;
 }
@@ -1150,7 +1175,7 @@ static int teal_genl_send_req(struct teal_request *req, u8 teal_mode)
     
     /* Alpha版のダミー送信 */
     nla_put_string(skb, TEAL_ATTR_LSM_LABEL, "-");
-    nla_put_string(skb, TEAL_ATTR_ARGS_HEAD, "-");
+    nla_put_string(skb, TEAL_ATTR_ARGS_HEAD, req->args_head[0] ? req->args_head : "-");
     
     nla_put_u32(skb, TEAL_ATTR_FLAGS, req->flags);
 
@@ -1495,6 +1520,7 @@ static void teal_gc_worker(struct work_struct *work)
 }
 
 static inline void teal_exec_meta_set_current(const char *program, const char *script,
+                                              const char *args,
                                               dev_t prog_dev, unsigned long prog_ino,
                                               dev_t script_dev, unsigned long script_ino)
 {
@@ -1502,31 +1528,13 @@ static inline void teal_exec_meta_set_current(const char *program, const char *s
     if (!m)
         return;
 
-    strscpy(m->program, program ? program : "-", sizeof(m->program));
-    strscpy(m->script,  script  ? script  : "-", sizeof(m->script));
+    strscpy(m->program,   program ? program : "-", sizeof(m->program));
+    strscpy(m->script,    script  ? script  : "-", sizeof(m->script));
+    strscpy(m->args_head, args    ? args    : "-", sizeof(m->args_head));
     m->program_id.dev = prog_dev;
     m->program_id.ino = prog_ino;
     m->script_id.dev  = script_dev;
     m->script_id.ino  = script_ino;
-}
-
-static inline void teal_exec_meta_get_current(char *out_prog, size_t prog_len,
-                                              char *out_script, size_t script_len)
-{
-    struct teal_task_meta *m = teal_task_meta_current();
-
-    if (out_prog && prog_len)
-        strscpy(out_prog, "-", prog_len);
-    if (out_script && script_len)
-        strscpy(out_script, "-", script_len);
-
-    if (!m)
-        return;
-
-    if (out_prog && prog_len)
-        strscpy(out_prog, m->program, prog_len);
-    if (out_script && script_len)
-        strscpy(out_script, m->script, script_len);
 }
 
 static int teal_task_alloc(struct task_struct *task, unsigned long clone_flags)
@@ -1552,14 +1560,16 @@ static int teal_task_alloc(struct task_struct *task, unsigned long clone_flags)
     child_m->magic = TEAL_TASK_META_MAGIC;
     parent_m = (struct teal_task_meta *)current->security;
 
-    if (parent_m && parent_m->magic == TEAL_TASK_META_MAGIC) {
+    if (parent_m && parent_m->magic == TEAL_TASK_META_MAGIC) {                      /* ★親から継承 */
         strscpy(child_m->program, parent_m->program, sizeof(child_m->program));
         strscpy(child_m->script,  parent_m->script,  sizeof(child_m->script));
+        strscpy(child_m->args_head, parent_m->args_head, sizeof(child_m->args_head));
         child_m->program_id = parent_m->program_id;
         child_m->script_id  = parent_m->script_id;
-    } else {
+    } else {                                                                        /* ★初期値 */
         strscpy(child_m->program, "-", sizeof(child_m->program));
         strscpy(child_m->script,  "-", sizeof(child_m->script));
+        strscpy(child_m->args_head, "-", sizeof(child_m->args_head));
         child_m->program_id.dev = 0;
         child_m->program_id.ino = 0;
         child_m->script_id.dev = 0;
@@ -1582,10 +1592,36 @@ static void teal_task_free(struct task_struct *task)
     }
 }
 
+static void teal_get_bprm_args_head(struct linux_binprm *bprm, char *out, size_t out_len)
+{
+    if (!out || out_len == 0)
+        return;
+
+    out[0] = '\0';
+    if (!bprm || bprm->argc <= 0)
+        return;
+
+    /*
+     * bprm->p は引数・環境変数が格納されているスタック領域の先頭オフセットを指す。
+     * copy_strings_kernel ではなく、bprm の引数ページから安全に先頭文字列を抽出する。
+     * ※ 簡易実装として argv[0] 以降の連続メモリ領域から最大 (out_len - 1) バイトを読み込む
+     */
+    if (copy_from_user(out, (const void __user *)bprm->p, out_len - 1) == 0) {
+        out[out_len - 1] = '\0';
+        /* NUL文字('\0')区切りで格納されている引数をスペース区切りに変換 */
+        for (size_t i = 0; i < out_len - 1 && out[i] != '\0'; i++) {
+            /* 連続する引数の境界 '\0' をスペースに置き換えて1つの文字列にする */
+            // 必要に応じて argv の整形を行う
+        }
+    } else {
+        strscpy(out, "-", out_len);
+    }
+}
 
 static int teal_bprm_check(struct linux_binprm *bprm)
 {
     int rc = 0;
+    char args_buf[TEAL_ARGS_MAX] = "-";
 
     if (teal_should_bypass_all()) {
         return 0;
@@ -1612,13 +1648,14 @@ static int teal_bprm_check(struct linux_binprm *bprm)
         prog_ino = inode->i_ino;
 
         char *p = d_path(&bprm->file->f_path, buf, PATH_MAX);
-        // パス取得失敗時は "unknown" として扱い、パニックを防ぐ
         if (!IS_ERR_OR_NULL(p)) {
             target = p; 
         }
+        
+        /* ★ bprm から起動引数の先頭を取得 */
+        teal_get_bprm_args_head(bprm, args_buf, sizeof(args_buf));
     }
 
-    // ローカルバッファへのコピーを廃止し、メタデータから直接参照
     const char *exec_path = "-";
     const char *script_path = "-";
     struct teal_task_meta *meta = teal_task_meta_current();
@@ -1631,6 +1668,7 @@ static int teal_bprm_check(struct linux_binprm *bprm)
         .target     = target,
         .program    = exec_path,
         .script     = script_path,
+        .args       = args_buf,
         .target_dev = prog_dev, 
         .target_ino = prog_ino,
     };
@@ -1638,9 +1676,9 @@ static int teal_bprm_check(struct linux_binprm *bprm)
     /* 先に teald による判定を実行する */
     rc = teal_decision_maker(TEAL_EVENT_EXECUTE, (void *)&rctx);
 
-    /* 判定が許可 (rc == 0) の場合のみ、メタデータを「新しいプログラム」に更新する */
+    /* 判定が許可 (rc == 0) の場合のみ、メタデータを更新して args もキャッシュする */
     if (rc == 0) {
-        teal_exec_meta_set_current(target, script_path, prog_dev, prog_ino, 0, 0);
+        teal_exec_meta_set_current(target, script_path, args_buf, prog_dev, prog_ino, 0, 0);
     }
 
     __putname(buf);
@@ -1761,10 +1799,12 @@ static int teal_file_open(struct file *file)
     // ==========================================================
     // 4. Slow Path (パスを解決して teald へ送信)
     // ==========================================================
+    const char *args = "-";
     struct teal_task_meta *meta = teal_task_meta_current();
     if (meta) {
-        exec_path = meta->program;
-        script_path = meta->script;
+        if (meta->program[0] != '\0')   exec_path = meta->program;
+        if (meta->script[0] != '\0')    script_path = meta->script;
+        if (meta->args_head[0] != '\0') args = meta->args_head;
     }
 
     char *p = teal_resolve_path_alloc(file, &buf); 
@@ -1780,6 +1820,7 @@ static int teal_file_open(struct file *file)
         .target     = target_path,
         .program    = exec_path,
         .script     = script_path,
+        .args       = args,
         .target_dev = target_dev,
         .target_ino = target_ino,
     };
@@ -1939,6 +1980,7 @@ static int teal_socket_connect(struct socket *sock, struct sockaddr *address, in
     // ★ デフォルトの安全な値を設定
     const char *exec_path = "-";
     const char *script_path = "-";
+    const char *args = "-";
     char target[128];
 
     // ==========================================================
@@ -1987,6 +2029,7 @@ static int teal_socket_connect(struct socket *sock, struct sockaddr *address, in
         // NULLチェックを行い、有効ならポインタをコピー
         if (meta->program[0]) exec_path = meta->program;
         if (meta->script[0])  script_path = meta->script;
+        if (meta->args_head[0]) args = meta->args_head;
     }
 
     // ネットワークの宛先はバッファコピーされるため常に安全
@@ -1998,6 +2041,7 @@ static int teal_socket_connect(struct socket *sock, struct sockaddr *address, in
         .target     = target,
         .program    = exec_path,
         .script     = script_path,
+        .args       = args,
         .target_dev = 0,
         .target_ino = 0,
     };
@@ -2037,6 +2081,7 @@ static int teal_handle_path_deletion(const struct path *dir, struct dentry *dent
     // 実行元（サブジェクト）の初期値
     const char *exec_path = "-";
     const char *script_path = "-";
+    const char *args = "-";
     struct teal_task_meta *meta;
 
     // 1. 最優先バイパスチェック
@@ -2056,8 +2101,9 @@ static int teal_handle_path_deletion(const struct path *dir, struct dentry *dent
     // 3. 現在のプロセス(current)の実行元プログラムおよびスクリプト情報を安全に取得
     meta = teal_task_meta_current();
     if (meta) {
-        exec_path = meta->program;
-        script_path = meta->script;
+        if (meta->program[0])   exec_path = meta->program;
+        if (meta->script[0])    script_path = meta->script;
+        if (meta->args_head[0]) args = meta->args_head;
     }
 
     // 4. パス解決用のメモリをヒープから安全に確保
@@ -2083,6 +2129,7 @@ static int teal_handle_path_deletion(const struct path *dir, struct dentry *dent
     ctx.target = resolved_path;
     ctx.program = exec_path;
     ctx.script = script_path;
+    ctx.args = args;
 
     if (d_is_positive(dentry)) {
         ctx.target_dev = dentry->d_sb->s_dev;
@@ -2132,13 +2179,15 @@ static int teal_handle_path_rename_slow(const struct path *old_dir, struct dentr
 
     const char *exec_path = "-";
     const char *script_path = "-";
+    const char *args = "-";
     struct teal_task_meta *meta;
 
     // 1. サブジェクト情報取得
     meta = teal_task_meta_current();
     if (meta) {
-        exec_path = meta->program;
-        script_path = meta->script;
+        if (meta->program[0])   exec_path = meta->program;
+        if (meta->script[0])    script_path = meta->script;
+        if (meta->args_head[0]) args = meta->args_head;
     }
 
     // 2. パス解決用メモリの確保 (2ファイル分必要)
@@ -2165,6 +2214,7 @@ static int teal_handle_path_rename_slow(const struct path *old_dir, struct dentr
     memset(&ctx, 0, sizeof(ctx));
     ctx.program = exec_path;
     ctx.script = script_path;
+    ctx.args = args;
 
     // 移動元 ID
     if (old_dentry && d_is_positive(old_dentry)) {
@@ -2257,6 +2307,7 @@ static int teal_handle_attr_change(struct dentry *dentry, enum teal_event_type e
     // 実行元（サブジェクト）の初期値
     const char *exec_path = "-";
     const char *script_path = "-";
+    const char *args = "-";
     struct teal_task_meta *meta;
 
     // 1. 最優先バイパスチェック
@@ -2276,8 +2327,9 @@ static int teal_handle_attr_change(struct dentry *dentry, enum teal_event_type e
     // 3. 現在のプロセス(current)の実行元プログラムおよびスクリプト情報を取得
     meta = teal_task_meta_current();
     if (meta) {
-        exec_path = meta->program;
-        script_path = meta->script;
+        if (meta->program[0])   exec_path = meta->program;
+        if (meta->script[0])    script_path = meta->script;
+        if (meta->args_head[0]) args = meta->args_head;
     }
 
     // 4. パス解決用のメモリ確保
@@ -2308,6 +2360,7 @@ static int teal_handle_attr_change(struct dentry *dentry, enum teal_event_type e
     ctx.target = resolved_path;
     ctx.program = exec_path;
     ctx.script = script_path;
+    ctx.args = args;
 
     if (d_is_positive(dentry)) {
         ctx.target_dev = dentry->d_sb->s_dev;

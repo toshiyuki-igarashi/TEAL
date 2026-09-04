@@ -49,6 +49,7 @@ extern "C" {
         exec_path: *const core::ffi::c_char,
         script_path: *const core::ffi::c_char,
         applet: *const core::ffi::c_char,
+        args: *const core::ffi::c_char,
     ) -> i32;
 
     /// 決定ロジックのコールバックをC言語側のLSMに登録します。
@@ -114,6 +115,9 @@ pub struct teal_rs_ctx {
     /// Script path, if applicable (may be NULL).
     pub script: *const core::ffi::c_char,
 
+    /// Command arguments summary/head (may be NULL).
+    pub args: *const core::ffi::c_char, // ★追加: C言語側と並び順を完全一致させる
+
     /// Target device ID (major/minor combined).
     pub target_dev: u64,
 
@@ -125,6 +129,7 @@ pub struct teal_rs_ctx {
 struct teal_rs_rename_ctx {
     program: *const c_char,
     script: *const c_char,
+    args: *const c_char,
     old_target: *const c_char,
     old_target_dev: u64,
     old_target_ino: u64,
@@ -171,7 +176,8 @@ fn request_approval_ex(
     new_target_ino: u64,
     program: &str, 
     script: &str, 
-    applet: &str
+    applet: &str,
+    args: &str
 ) -> i32 {
     let teal_mode: u8 = (!ENFORCING_MODE.load(Ordering::Relaxed)) as u8;
 
@@ -194,6 +200,7 @@ fn request_approval_ex(
     let program_c    = try_cstring!(program);
     let script_c     = try_cstring!(script);
     let applet_c     = try_cstring!(applet);
+    let args_c       = try_cstring!(args);
 
     unsafe {
         // C側のカーネル関数を呼び出す
@@ -206,9 +213,10 @@ fn request_approval_ex(
             new_target_dev        as _,
             new_target_ino        as _,
             teal_mode,               
-            program_c.as_ptr()    as *const core::ffi::c_char, 
-            script_c.as_ptr()     as *const core::ffi::c_char,  
-            applet_c.as_ptr()     as *const core::ffi::c_char,  
+            program_c.as_ptr()    as *const core::ffi::c_char,
+            script_c.as_ptr()     as *const core::ffi::c_char,
+            applet_c.as_ptr()     as *const core::ffi::c_char,
+            args_c.as_ptr()       as *const core::ffi::c_char,
         )
     }
 }
@@ -287,6 +295,7 @@ struct TealContext<'a> {
     target: &'a str,
     program: &'a str,
     script: &'a str,
+    args: &'a str,
     target_dev: u64,
     target_ino: u64,
 }
@@ -300,17 +309,20 @@ unsafe fn parse_teal_ctx<'a>(ctx: *mut c_void) -> Option<TealContext<'a>> {
     let t  = unsafe { read_unaligned(addr_of!((*p).target)) };
     let pr = unsafe { read_unaligned(addr_of!((*p).program)) };
     let sc = unsafe { read_unaligned(addr_of!((*p).script)) };
+    let ar = unsafe { read_unaligned(addr_of!((*p).args)) };
     let target_dev = unsafe { read_unaligned(addr_of!((*p).target_dev)) };
     let target_ino = unsafe { read_unaligned(addr_of!((*p).target_ino)) };
 
     let target  = cstr_to_str_lossy::<'a>(t);
     let program = cstr_to_str_lossy::<'a>(pr);
     let script  = cstr_to_str_lossy::<'a>(sc);
+    let args    = cstr_to_str_lossy::<'a>(ar);
 
     Some(TealContext { 
         target, 
         program, 
         script, 
+        args,
         target_dev, 
         target_ino 
     })
@@ -340,7 +352,8 @@ unsafe fn handle_file_event(event_type: i32, ctx: *mut c_void) -> i32 {
         0,
         tctx.program, 
         tctx.script, 
-        comm_str
+        comm_str,
+        tctx.args
     )
 }
 
@@ -370,7 +383,8 @@ unsafe fn handle_dentry_event(event_type: i32, ctx: *mut c_void) -> i32 {
         0,
         tctx.program, 
         tctx.script, 
-        comm_str
+        comm_str,
+        tctx.args
     )
 }
 
@@ -386,6 +400,7 @@ unsafe fn handle_connect_event(ctx: *mut c_void) -> i32 {
     // program と script が空文字 "" の場合に確実に "-" に変換する
     let prog = if tctx.program.is_empty() { "-" } else { tctx.program };
     let scpt = if tctx.script.is_empty() { "-" } else { tctx.script };
+    let args = if tctx.args.is_empty() { "-" } else { tctx.args };
 
     request_approval_ex(
         "CONNECT", 
@@ -397,7 +412,8 @@ unsafe fn handle_connect_event(ctx: *mut c_void) -> i32 {
         0,
         prog,            // 確実に "-" 以上を渡す
         scpt,            // 確実に "-" 以上を渡す
-        comm_str
+        comm_str,
+        args,
     )
 }
 
@@ -405,6 +421,7 @@ unsafe fn handle_connect_event(ctx: *mut c_void) -> i32 {
 struct TealRenameContext<'a> {
     program: &'a str,
     script: &'a str,
+    args: &'a str,
     old_target: &'a str,
     old_target_dev: u64,
     old_target_ino: u64,
@@ -420,6 +437,7 @@ unsafe fn parse_teal_rename_ctx<'a>(ctx: *mut c_void) -> Option<TealRenameContex
     // 非アライメントリードでCの構造体から安全に値を引き出す
     let pr = unsafe { read_unaligned(addr_of!((*p).program)) };
     let sc = unsafe { read_unaligned(addr_of!((*p).script)) };
+    let ar = unsafe { read_unaligned(addr_of!((*p).args)) };
     let ot = unsafe { read_unaligned(addr_of!((*p).old_target)) };
     let old_target_dev = unsafe { read_unaligned(addr_of!((*p).old_target_dev)) };
     let old_target_ino = unsafe { read_unaligned(addr_of!((*p).old_target_ino)) };
@@ -430,6 +448,7 @@ unsafe fn parse_teal_rename_ctx<'a>(ctx: *mut c_void) -> Option<TealRenameContex
     Some(TealRenameContext {
         program: cstr_to_str_lossy::<'a>(pr),
         script: cstr_to_str_lossy::<'a>(sc),
+        args: cstr_to_str_lossy::<'a>(ar),
         old_target: cstr_to_str_lossy::<'a>(ot),
         old_target_dev,
         old_target_ino,
@@ -460,7 +479,8 @@ unsafe fn handle_rename_event(ctx: *mut c_void) -> i32 {
         tctx.new_target_ino, // 移動先ino
         tctx.program, 
         tctx.script, 
-        comm_str
+        comm_str,
+        tctx.args
     )
 }
 
