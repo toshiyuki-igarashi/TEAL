@@ -3,7 +3,7 @@
   "system_type": "workstation",
   "default_effect": "allow",
   "default_reason": "No matching rule; default allow.",
-  "ttl_minutes": 10,
+  "ttl_minutes": 60,
   "sweep_minutes": 5,
   "pre_approval_defaults": {
     "ttl_sec_default": 600,
@@ -31,7 +31,8 @@
       "audit_level": "standard",
       "max_uses": 1,
       "pre_approval": {
-        "enabled": false
+        "enabled": false,
+        "ttl_sec": 3600
       },
       "reason": "Auto-generated allow draft",
       "ticket_profile": {
@@ -60,7 +61,8 @@
       "audit_level": "standard",
       "max_uses": 1,
       "pre_approval": {
-        "enabled": false
+        "enabled": false,
+        "ttl_sec": 3600
       },
       "reason": "Auto-generated allow draft",
       "ticket_profile": {
@@ -90,7 +92,8 @@
       "audit_level": "standard",
       "max_uses": 1,
       "pre_approval": {
-        "enabled": false
+        "enabled": false,
+        "ttl_sec": 3600
       },
       "reason": "Auto-generated allow draft",
       "ticket_profile": {
@@ -119,7 +122,8 @@
       "audit_level": "standard",
       "max_uses": 1,
       "pre_approval": {
-        "enabled": false
+        "enabled": false,
+        "ttl_sec": 3600
       },
       "reason": "Auto-generated allow draft",
       "ticket_profile": {
@@ -149,12 +153,42 @@
       "audit_level": "silent",
       "max_uses": 10000,
       "pre_approval": {
-        "enabled": false
+        "enabled": false,
+        "ttl_sec": 86400
       },
       "reason": "Auto-generated suppress rule (count: 1081)",
       "ticket_profile": {
         "silent_io": true,
         "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_updatedb.plocate_ops_20",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/sbin/updatedb.plocate",
+        "origin_applet": "updatedb.plocat"
+      },
+      "object": {
+        "path": "/home/toshiyuki/.teal"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
         "allow_nameless_ipc": false
       }
     }

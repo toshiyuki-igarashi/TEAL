@@ -3,13 +3,45 @@
   "system_type": "workstation",
   "default_effect": "allow",
   "default_reason": "No matching rule; default allow.",
-  "ttl_minutes": 10,
+  "ttl_minutes": 60,
   "sweep_minutes": 5,
   "pre_approval_defaults": {
     "ttl_sec_default": 600,
     "ttl_sec_max": 900
   },
   "rules": [
+    {
+      "id": "allow_teal_keys",
+      "rule_type": "standard",
+      "subject": {
+        "roles": [
+          "admin",
+          "security_officer"
+        ],
+        "login_context": {
+          "require_interactive_tty": true,
+          "bind_registered_session": true
+        }
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.teal"
+      },
+      "action": {
+        "ops": [
+          "READ",
+          "WRITE"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "reason": "protect the key files for teal control",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
     {
       "id": "allow_teal_cli_access",
       "rule_type": "standard",
@@ -38,7 +70,8 @@
       "audit_level": "standard",
       "max_uses": 1,
       "pre_approval": {
-        "enabled": false
+        "enabled": false,
+        "ttl_sec": 3600
       },
       "reason": "control teal-cli command run",
       "ticket_profile": {
@@ -74,7 +107,8 @@
       "audit_level": "standard",
       "max_uses": 1,
       "pre_approval": {
-        "enabled": false
+        "enabled": false,
+        "ttl_sec": 3600
       },
       "reason": "Auto-generated allow draft",
       "ticket_profile": {
@@ -110,7 +144,78 @@
       "audit_level": "standard",
       "max_uses": 1,
       "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_teal-cli_ops_0",
+      "rule_type": "standard",
+      "subject": {
+        "roles": [
+          "admin",
+          "security_officer"
+        ],
+        "origin_program": "/usr/local/bin/teal-cli",
+        "origin_applet": "teal-cli",
+        "login_context": {
+          "require_interactive_tty": true,
+          "bind_registered_session": true
+        }
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
         "enabled": false
+      },
+      "reason": "Auto-generated allow draft",
+      "ticket_profile": {
+        "silent_io": false,
+        "inherit": false,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_allow_teal-cli_ops_72",
+      "rule_type": "standard",
+      "subject": {
+        "user": "toshiyuki",
+        "origin_program": "/usr/local/bin/teal-cli",
+        "origin_applet": "teal-cli",
+        "login_context": {
+          "require_interactive_tty": true,
+          "bind_registered_session": true
+        }
+      },
+      "object": {
+        "path": "prefix:/home/toshiyuki/.teal"
+      },
+      "action": {
+        "ops": [
+          "FILE_CHMOD"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "standard",
+      "max_uses": 1,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 3600
       },
       "reason": "Auto-generated allow draft",
       "ticket_profile": {

@@ -4,6 +4,7 @@
   "policy_files": [
     "00-base.json",
     "01-ubuntu.json",
+    "02-anti-storm.json",
     "02-ubuntu.json",
     "03-toshiyuki.json"
   ]

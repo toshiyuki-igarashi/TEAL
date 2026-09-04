@@ -31,13 +31,7 @@
           "WRITE"
         ]
       },
-      "effect": "need_approval",
-      "mpa": {
-        "threshold": 1,
-        "approver_roles": [
-          "security_officer"
-        ]
-      },
+      "effect": "allow",
       "audit_level": "standard",
       "max_uses": 1,
       "reason": "Reading /etc/shadow requires explicit approval.",
@@ -70,11 +64,18 @@
           "FILE_RENAME"
         ]
       },
-      "effect": "allow",
+      "effect": "need_approval",
+      "mpa": {
+        "threshold": 1,
+        "approver_roles": [
+          "security_officer"
+        ]
+      },
       "audit_level": "standard",
       "max_uses": 1,
       "pre_approval": {
-        "enabled": false
+        "enabled": false,
+        "ttl_sec": 3600
       },
       "reason": "Auto-generated allow draft",
       "ticket_profile": {

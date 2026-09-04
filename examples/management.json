@@ -28,6 +28,16 @@
         "approver_roles": ["security_officer"],
         "timeout_minutes": 30
       }
+    },
+    "policy_update": {
+      "description": "Update TEAL policy rules, control rules",
+      "initiator_roles": ["admin"],
+      "mpa": {
+        "enabled": true,
+        "threshold": 1,
+        "approver_roles": ["security_officer"],
+        "timeout_minutes": 30
+      }
     }
   }
 }

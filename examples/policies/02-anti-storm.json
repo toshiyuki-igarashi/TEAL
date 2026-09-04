@@ -1,0 +1,137 @@
+{
+  "version": "1.4",
+  "system_type": "workstation",
+  "default_effect": "allow",
+  "default_reason": "No matching rule; default allow.",
+  "ttl_minutes": 60,
+  "sweep_minutes": 5,
+  "pre_approval_defaults": {
+    "ttl_sec_default": 600,
+    "ttl_sec_max": 900
+  },
+  "rules": [
+    {
+      "id": "auto_suppress_dpkg_ops_0",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/dpkg",
+        "origin_applet": "dpkg"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "silent",
+      "max_uses": 10000,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 86400
+      },
+      "reason": "Auto-generated suppress rule (count: 3036)",
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_suppress_dpkg_ops_2",
+      "rule_type": "standard",
+      "subject": {
+        "user": "root",
+        "origin_program": "/usr/bin/dpkg",
+        "origin_applet": "dpkg"
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "silent",
+      "max_uses": 10000,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 86400
+      },
+      "reason": "Auto-generated suppress rule (count: 3036)",
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_suppress_polkitd_ops_1",
+      "rule_type": "standard",
+      "subject": {
+        "user": "polkitd",
+        "origin_program": "/usr/lib/polkit-1/polkitd",
+        "origin_applet": "polkitd"
+      },
+      "object": {
+        "path": "/etc/group"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "silent",
+      "max_uses": 10000,
+      "pre_approval": {
+        "enabled": false,
+        "ttl_sec": 86400
+      },
+      "reason": "Auto-generated suppress rule (count: 1145)",
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    },
+    {
+      "id": "auto_suppress_polkitd_ops_0",
+      "rule_type": "standard",
+      "subject": {
+        "user": "polkitd",
+        "origin_program": "/usr/lib/polkit-1/polkitd",
+        "origin_applet": "polkitd",
+        "login_context": {
+          "require_interactive_tty": false,
+          "bind_registered_session": true
+        }
+      },
+      "object": {
+        "path": "/etc/passwd"
+      },
+      "action": {
+        "ops": [
+          "READ"
+        ]
+      },
+      "effect": "allow",
+      "audit_level": "silent",
+      "max_uses": 10000,
+      "pre_approval": {
+        "enabled": false
+      },
+      "reason": "Auto-generated suppress rule (count: 1014)",
+      "ticket_profile": {
+        "silent_io": true,
+        "inherit": true,
+        "allow_nameless_ipc": false
+      }
+    }
+  ]
+}
