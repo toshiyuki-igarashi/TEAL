@@ -1175,7 +1175,7 @@ static int teal_genl_send_req(struct teal_request *req, u8 teal_mode)
     
     /* Alpha版のダミー送信 */
     nla_put_string(skb, TEAL_ATTR_LSM_LABEL, "-");
-    nla_put_string(skb, TEAL_ATTR_ARGS_HEAD, req->args_head[0] ? req->args_head : "-");
+    nla_put_string(skb, TEAL_ATTR_ARGS_HEAD, req->args_head[0] ? req->args_head : "");
     
     nla_put_u32(skb, TEAL_ATTR_FLAGS, req->flags);
 
@@ -1594,28 +1594,48 @@ static void teal_task_free(struct task_struct *task)
 
 static void teal_get_bprm_args_head(struct linux_binprm *bprm, char *out, size_t out_len)
 {
+    int ret;
+    int argc;
+    size_t i;
+
     if (!out || out_len == 0)
         return;
 
     out[0] = '\0';
-    if (!bprm || bprm->argc <= 0)
+    if (!bprm || bprm->argc <= 0 || !bprm->mm) {
+        strscpy(out, "-", out_len);
         return;
+    }
 
     /*
-     * bprm->p は引数・環境変数が格納されているスタック領域の先頭オフセットを指す。
-     * copy_strings_kernel ではなく、bprm の引数ページから安全に先頭文字列を抽出する。
-     * ※ 簡易実装として argv[0] 以降の連続メモリ領域から最大 (out_len - 1) バイトを読み込む
+     * bprm_check 時点の current->mm は親プロセス (bash 等) のままなので、
+     * copy_from_user ではなく、新プロセスの bprm->mm を直接読み出せる access_remote_vm を使う。
      */
-    if (copy_from_user(out, (const void __user *)bprm->p, out_len - 1) == 0) {
-        out[out_len - 1] = '\0';
-        /* NUL文字('\0')区切りで格納されている引数をスペース区切りに変換 */
-        for (size_t i = 0; i < out_len - 1 && out[i] != '\0'; i++) {
-            /* 連続する引数の境界 '\0' をスペースに置き換えて1つの文字列にする */
-            // 必要に応じて argv の整形を行う
-        }
-    } else {
+    ret = access_remote_vm(bprm->mm, bprm->p, out, out_len - 1, 0);
+    if (ret <= 0) {
         strscpy(out, "-", out_len);
+        return;
     }
+
+    out[ret] = '\0';
+
+    /*
+     * スタック上の引数は "arg0\0arg1\0arg2\0..." と連続して格納されている。
+     * argc 個分の境界 '\0' をスペース ' ' に置き換えて 1 つの引数文字列に整形する。
+     */
+    argc = bprm->argc;
+    for (i = 0; i < (size_t)ret - 1; i++) {
+        if (out[i] == '\0') {
+            argc--;
+            if (argc <= 0) {
+                /* 全引数の終端に到達（環境変数領域まで巻き込まないようにここで打ち切る） */
+                out[i] = '\0';
+                break;
+            }
+            out[i] = ' ';
+        }
+    }
+    out[out_len - 1] = '\0';
 }
 
 static int teal_bprm_check(struct linux_binprm *bprm)

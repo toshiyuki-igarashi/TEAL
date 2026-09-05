@@ -637,7 +637,7 @@ fn build_raw_rule(
             mpa: None,
             audit_level: AuditLevel::Standard,
             max_uses: 1,
-            pre_approval: Some(RawPreApproval { enabled: false, ttl_sec: None }),
+            pre_approval: Some(RawPreApproval { enabled: false, ttl_sec: Some(600) }),
             ticket_profile: RawTicketProfile {
                 silent_io: false,
                 inherit: false,
@@ -657,7 +657,7 @@ fn build_raw_rule(
             mpa: None,
             audit_level: AuditLevel::Silent,
             max_uses: 10000,
-            pre_approval: Some(RawPreApproval { enabled: false, ttl_sec: None }),
+            pre_approval: Some(RawPreApproval { enabled: false, ttl_sec: Some(600) }),
             ticket_profile: RawTicketProfile {
                 silent_io: true,
                 inherit: true,
