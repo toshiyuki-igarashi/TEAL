@@ -878,24 +878,27 @@ async fn execute_mgmt_ctl(
                 return (user, false, "ERR TOCTOU validation failed: hash mismatch\n".to_string());
             }
 
-            let backup_dir = format!("/var/lib/teal/epochs/epoch_{}", current_epoch);
-            let moved_stage_dir = format!("{}/new", backup_dir);            		// 移動後のステージングディレクトリのパスを計算
+            // タイムスタンプ（UTC）を取得してディレクトリ名に組み込む
+            // 例: epoch_0_20260905_173000
+            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+            let backup_dir = format!("/var/lib/teal/epochs/epoch_{}_{}", current_epoch, timestamp);
+            let moved_stage_dir = format!("{}/new", backup_dir);
+
+            // 親ディレクトリが無ければ作成
+            if let Err(e) = std::fs::create_dir_all("/var/lib/teal/epochs") {
+                return (user, false, format!("ERR failed to create epochs dir: {}\n", e));
+            }
 
             // [d] 世代退避 (WORM)
             if let Err(e) = std::fs::rename(DEFAULT_TEAL_DIR, &backup_dir) {
-                // まだ何も壊れていないので、そのままエラーで弾く
                 return (user, false, format!("ERR failed to backup current policy: {}\n", e));
             }
 
             // [e] ステージング反映
             if let Err(e) = std::fs::rename(&moved_stage_dir, DEFAULT_TEAL_DIR) {
-                // 【重要】退避には成功したが、反映に失敗した（/etc/teal.d が消失した状態）
-                // 直ちにロールバック（退避したディレクトリを元の位置に戻す）を実行する
                 if let Err(rollback_err) = std::fs::rename(&backup_dir, DEFAULT_TEAL_DIR) {
-                    // ロールバックすら失敗した場合はクリティカルエラー（ファイルシステム異常など）
                     eprintln!("{}[FATAL] Policy rollback failed! System is in inconsistent state: {}", ktime_prefix(), rollback_err);
                 }
-
                 return (user, false, format!("ERR failed to apply new policy (rolled back): {}\n", e));
             }
         }
@@ -952,8 +955,6 @@ async fn execute_mgmt_ctl(
                 clear_ephemeral_state_for_enforce(&mut st);
             }
             MgmtCtlKind::PolicyUpdate => {
-                // TODO: 今後の本実装で、新 bundle.json の検証・コンパイル・アトミック差し替えを行う。
-                // 現在はEpochの更新とキャッシュクリアのみを行うスタブ（骨組み）として動作。
                 st.current_epoch = st.current_epoch.wrapping_add(1);
                 st.fast.drafts.clear();
                 st.fast.approved.clear();
@@ -982,8 +983,7 @@ async fn execute_mgmt_ctl(
             let _ = nl_tx.send_mode_switch(0).await;
         }
         MgmtCtlKind::PolicyUpdate => {
-            // TODO: カーネルへ Epoch 更新メッセージを送る本実装時に有効化
-            // let _ = nl_tx.send_sync_epoch(current_epoch).await;
+            let _ = nl_tx.send_sync_epoch(current_epoch).await;
         }
         MgmtCtlKind::Flush => {
             // TODO: カーネルへ Epoch 更新メッセージを送る本実装時に有効化
