@@ -14,11 +14,12 @@ use blst::BLST_ERROR;
 use crate::state::app_state;
 use crate::bundle::{bundle, compute_directory_hash, DEFAULT_TEAL_DIR, STAGE_TEAL_DIR};
 use crate::management::management;
-use crate::common::DecisionKind;
+use crate::common::{DecisionKind, TealStatus, NetlinkStatus, QueueStatus};
 use crate::types::{InternalEvent, MgmtPendingCtl, MgmtCtlKind, MpaState, AppState, SignedCmdArgs, ApprovedTicket};
 use crate::types::ACTIVE_TICKETS;
 use crate::ticket::{is_ticketable, draft_from_rule};
 use crate::netlink::NlWriter;
+use crate::netlink::get_netlink_socket_metrics;
 
 use teal_policy_engine::util::{uid_to_name, ktime_prefix};
 use teal_policy_engine::management::{CompiledManagement, CompiledMgmtMpa, CompiledMgmtMpaEnabled};
@@ -71,6 +72,7 @@ async fn handle_admin_connection(mut stream: tokio::net::UnixStream, nl_tx: &NlW
 
     // Netlinkの送信が必要なコマンドには nl_tx を渡す
     let (response, event) = match cmd_name {
+        "STATUS"        => handle_status().await,
         "LIST"          => handle_list(&cmd, uid).await,
         "REGISTER"      => handle_register(&cmd, uid).await,
         "TICKET"        => handle_ticket(&cmd, uid).await,
@@ -93,6 +95,54 @@ async fn handle_admin_connection(mut stream: tokio::net::UnixStream, nl_tx: &NlW
 }
 
 // --- 各コマンドの入り口 ---
+
+/// ログストーム（バッファ高負荷）と判定する Netlink 受信バッファ使用率のしきい値 (%)
+const LOG_STORM_BUFFER_USAGE_THRESHOLD_PCT: f64 = 50.0;
+
+async fn handle_status() -> (String, Option<InternalEvent>) {
+    // 1. AppState からインメモリ状態をスナップショット取得（ロックは即時解放）
+    let (is_enforce, is_flushed, current_epoch, pending_len) = {
+        let st = app_state().lock().await;
+        (
+            st.is_enforce,
+            st.is_flushed,
+            st.current_epoch,
+            st.slow.pending_requests.len(),
+        )
+    };
+
+    // 2. Netlink バッファ使用状況とパケット破棄数の取得（/proc/net/netlink 等から）
+    // ※ 取得ロジックはヘルパー関数化
+    let (buffer_usage_pct, drops) = get_netlink_socket_metrics();
+
+    // 3. 判定ロジック
+    // バッファ使用率がしきい値を超過、またはパケット破棄が発生している場合にストームと判定
+    let is_storming = buffer_usage_pct > LOG_STORM_BUFFER_USAGE_THRESHOLD_PCT || drops > 0;
+
+    let status_obj = TealStatus {
+        status: "ok".to_string(),
+        is_enforce,
+        is_flushed,
+        current_epoch,
+        netlink: NetlinkStatus {
+            buffer_usage_pct,
+            drops,
+            recv_rate_per_sec: 0, // レート集計がある場合は反映
+        },
+        queues: QueueStatus {
+            decision_channel_len: 0, // チャネルの残量やキャパシティ
+            audit_channel_len: 0,
+            pending_requests_len: pending_len,
+        },
+        is_storming,
+    };
+
+    match serde_json::to_string_pretty(&status_obj) {
+        Ok(json) => (format!("{}\n", json), None),
+        Err(e) => (format!("ERR failed to serialize status: {}\n", e), None),
+    }
+}
+
 async fn handle_list(_cmd: &str, _uid: u32) -> (String, Option<InternalEvent>) {
     // 1. ロックを取得し、必要なデータだけを「スナップショット」として手元にコピーする
     let (drafts, pending_ctl, pending_requests) = {

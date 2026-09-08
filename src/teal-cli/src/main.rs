@@ -88,6 +88,20 @@ enum Commands {
         /// Emergency token
         token: String,
     },
+    /// Show TEAL daemon status and queue health
+    Status {
+        /// Wait until log storm and queues settle before exiting
+        #[arg(long)]
+        wait_settle: bool,
+
+        /// Timeout in seconds when waiting for settle (default: 120)
+        #[arg(long, default_value_t = 120)]
+        timeout: u64,
+
+        /// Output status in JSON format
+        #[arg(long)]
+        json: bool,
+    },
     /// Verify policy rules
     Verify {
         /// Policy JSON file path
@@ -132,10 +146,10 @@ fn main() -> Result<()> {
             let hex_key = fs::read_to_string(&pub_path)
                 .with_context(|| format!("read public key {}", pub_path.display()))?;
 
-            send_command(&format!("REGISTER {}", hex_key.trim()))?;
+            send_command(&format!("REGISTER {}", hex_key.trim()), true)?;
         }
         Commands::List => {
-            send_command("LIST")?;
+            send_command("LIST", true)?;
         }
         Commands::Approve { id } => {
             run_signed_decision(DecisionKind::Approve, id)?;
@@ -162,10 +176,13 @@ fn main() -> Result<()> {
             cmd::update::run()?;
         }
         Commands::Flush => {
-            send_command("FLUSH")?;
+            send_command("FLUSH", true)?;
         }
         Commands::Emergency { token } => {
-            send_command(&format!("EMERGENCY {}", token))?;
+            send_command(&format!("EMERGENCY {}", token), true)?;
+        }
+        Commands::Status { wait_settle, timeout, json } => {
+            cmd::status::run(*wait_settle, *timeout, *json)?;
         }
         Commands::Verify {
             policy_file,
@@ -264,21 +281,33 @@ fn run_signed_decision(kind: DecisionKind, id: &str) -> Result<()> {
     let cmd = format!("{} {} {}", kind.as_str(), id, sig_hex);
 
     // 実際の送信処理 (実装済みと仮定)
-    send_command(&cmd)?;
+    send_command(&cmd, true)?;
     
     println!("Decision '{}' sent for request '{}'.", kind.as_str(), id);
     Ok(())
 }
 
 
-fn send_command(cmd: &str) -> Result<()> {
+/// teald の管理ソケットにコマンドを送信する共通関数
+/// print_resp が true の場合は画面に出力し、いずれの場合もレスポンス文字列を返す
+pub fn send_command(cmd: &str, print_resp: bool) -> Result<String> {
     let socket_path = "/tmp/teald.sock";
     let mut stream = UnixStream::connect(socket_path)
         .with_context(|| format!("Failed to connect to teald at {}", socket_path))?;
     
-    stream.write_all(cmd.as_bytes())?;
+    // コマンド末尾に改行がない場合は付与して送信
+    if !cmd.ends_with('\n') {
+        stream.write_all(format!("{}\n", cmd).as_bytes())?;
+    } else {
+        stream.write_all(cmd.as_bytes())?;
+    }
+
     let mut response = String::new();
     stream.read_to_string(&mut response)?;
-    println!("{}", response);
-    Ok(())
+
+    if print_resp {
+        print!("{}", response); // サーバー応答末尾に \n が含まれるため print! を推奨
+    }
+
+    Ok(response)
 }

@@ -4,6 +4,7 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
+
 use anyhow::Result;
 use neli::consts::genl::{Cmd, NlAttrType};
 use neli::consts::nl::{NlmF, NlmFFlags};
@@ -18,6 +19,8 @@ use std::thread;
 use std::sync::Arc;
 use std::os::fd::AsRawFd;
 use tokio::sync::{mpsc, Mutex};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 
 use teal_policy_engine::util::ktime_prefix;
 use crate::types::TicketPayload;
@@ -472,4 +475,39 @@ fn build_sync_epoch_packet(family_id: u16, epoch: u32) -> Result<Nlmsghdr<u16, G
     attrs.push(Nlattr::new(false, false, TealAttr::Epoch, epoch.to_ne_bytes().as_ref())?);
     let genlhdr = Genlmsghdr::new(TealCmd::PolicyUpdate, 1, attrs);
     Ok(Nlmsghdr::new(None, family_id, NlmFFlags::new(&[NlmF::Request]), None, None, NlPayload::Payload(genlhdr)))
+}
+
+/// 設定された受信バッファサイズ (4MB) に対するカーネル内部の実割り当てサイズ (8MB)
+const NETLINK_EFFECTIVE_RCVBUF_BYTES: f64 = 8.0 * 1024.0 * 1024.0;
+
+/// Netlink 受信ソケットの (バッファ使用率%, ドロップ数) を取得する
+pub fn get_netlink_socket_metrics() -> (f64, u64) {
+    let file = match File::open("/proc/net/netlink") {
+        Ok(f) => f,
+        Err(_) => return (0.0, 0),
+    };
+
+    let reader = BufReader::new(file);
+
+    for line in reader.lines().flatten() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        // /proc/net/netlink のフォーマット:
+        // sk Eth Pid Groups Rmem Wmem Dump Locks Drops Inode
+        // 0  1   2   3      4    5    6    7     8     9
+        if fields.len() < 9 || fields[0] == "sk" {
+            continue;
+        }
+
+        // 自プロセスの PID と一致するソケットを検索
+        let pid_val: u32 = fields[2].parse().unwrap_or(0);
+        if pid_val == std::process::id() {
+            let rmem: f64 = fields[4].parse().unwrap_or(0.0);
+            let drops: u64 = fields[8].parse().unwrap_or(0);
+
+            let usage_pct = (rmem / NETLINK_EFFECTIVE_RCVBUF_BYTES) * 100.0;
+            return (usage_pct.min(100.0), drops);
+        }
+    }
+
+    (0.0, 0)
 }

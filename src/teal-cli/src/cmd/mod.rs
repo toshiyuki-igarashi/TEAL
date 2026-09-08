@@ -9,3 +9,4 @@ pub mod diff;
 pub mod keygen;
 pub mod stage_init;
 pub mod update;
+pub mod status;
