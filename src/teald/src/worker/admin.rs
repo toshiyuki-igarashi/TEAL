@@ -112,7 +112,6 @@ async fn handle_status() -> (String, Option<InternalEvent>) {
     };
 
     // 2. Netlink バッファ使用状況とパケット破棄数の取得（/proc/net/netlink 等から）
-    // ※ 取得ロジックはヘルパー関数化
     let (buffer_usage_pct, drops) = get_netlink_socket_metrics();
 
     // 3. 判定ロジック
