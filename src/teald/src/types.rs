@@ -296,67 +296,62 @@ pub struct ApprovedTicket {
 }
 
 impl ApprovedTicket {
-    pub fn from_result(result: &PolicyResult) -> Option<Self> {
-        let rule_id = result.rule_id.as_ref()?;
-        let ticket = result.ticket.as_ref()?;
-        let rule = find_rule(rule_id).ok()?;
+    pub fn from_result_with_req(
+        result: &PolicyResult,
+        ticket: &TicketPayload,
+        req: &Request,
+    ) -> Self {
+        let rule_id = result.rule_id.clone().unwrap_or_default();
 
-        let origin_program = rule.subject.origin_program
-            .as_ref()
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| "ANY".to_string());
+        // find_rule が成功すればメタデータを使い、失敗しても req の事実情報でフォールバック
+        let (origin_program, origin_script, object, new_object, origin_applet, ttl_sec, max_uses) =
+            if let Ok(rule) = find_rule(&rule_id) {
+                (
+                    rule.subject.origin_program.as_ref().map(|p| p.to_string()).unwrap_or_else(|| req.raw_program.clone()),
+                    rule.subject.origin_script.as_ref().map(|p| p.to_string()).or_else(|| req.raw_script.clone()),
+                    rule.object.as_ref().and_then(|o| o.path.as_ref()).map(|p| p.to_string()).unwrap_or_else(|| req.raw_target.clone()),
+                    rule.object.as_ref().and_then(|o| o.new_path.as_ref()).map(|p| p.to_string()).or_else(|| req.raw_new_target.clone()),
+                    rule.subject.origin_applet.clone().or_else(|| req.raw_applet.clone()),
+                    rule.pre_approval.ttl_sec,
+                    rule.max_uses,
+                )
+            } else {
+                (
+                    req.raw_program.clone(),
+                    req.raw_script.clone(),
+                    req.raw_target.clone(),
+                    req.raw_new_target.clone(),
+                    req.raw_applet.clone(),
+                    ticket.expires_in_sec,
+                    ticket.uses_left,
+                )
+            };
 
-        let origin_script = rule.subject.origin_script
-            .as_ref()
-            .map(|p| p.to_string());
-
-        // --- パス系 ---
-        let object = rule.object.as_ref()
-                .and_then(|obj| obj.path.as_ref())
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "-".to_string());
-        
-        // new_object の抽出
-        let new_object = rule.object.as_ref()
-                .and_then(|obj| obj.new_path.as_ref())
-                .map(|p| p.to_string());
-
-        // --- ID系 ---
-        let origin_program_id = EntityId::new((ticket.prog_dev, ticket.prog_ino));
-        let object_id = EntityId::new((ticket.target_dev, ticket.target_ino));
-        
-        // new_object_id の構築
-        let new_object_id = if ticket.new_target_dev != 0 || ticket.new_target_ino != 0 {
-            Some(EntityId::new((ticket.new_target_dev, ticket.new_target_ino)))
-        } else {
-            None
-        };
-
-        let origin_script_id = if ticket.script_dev != 0 || ticket.script_ino != 0 {
-            Some(EntityId::new((ticket.script_dev, ticket.script_ino)))
-        } else {
-            None
-        };
-
-        Some(ApprovedTicket {
+        ApprovedTicket {
             ticket_id: ticket.ticket_id.clone(),
-            rule_id: rule_id.clone(),
+            rule_id,
             origin_program,
             origin_script,
             object,
             new_object,
-            
             uid: ticket.uid,
-            origin_program_id,
-            origin_script_id,
-            origin_applet: rule.subject.origin_applet.clone(),
-            object_id,
-            new_object_id,
+            origin_program_id: EntityId::new((ticket.prog_dev, ticket.prog_ino)),
+            origin_script_id: if ticket.script_dev != 0 || ticket.script_ino != 0 {
+                Some(EntityId::new((ticket.script_dev, ticket.script_ino)))
+            } else {
+                None
+            },
+            origin_applet,
+            object_id: EntityId::new((ticket.target_dev, ticket.target_ino)),
+            new_object_id: if ticket.new_target_dev != 0 || ticket.new_target_ino != 0 {
+                Some(EntityId::new((ticket.new_target_dev, ticket.new_target_ino)))
+            } else {
+                None
+            },
             op_mask: ticket.op,
-
-            ttl_sec: rule.pre_approval.ttl_sec,
-            max_uses: rule.max_uses,
-        })
+            ttl_sec,
+            max_uses,
+        }
     }
 
     pub fn from_draft(draft: &PreApprovalDraft) -> Option<Self> {

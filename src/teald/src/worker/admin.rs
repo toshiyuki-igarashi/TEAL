@@ -73,6 +73,7 @@ async fn handle_admin_connection(mut stream: tokio::net::UnixStream, nl_tx: &NlW
     // Netlinkの送信が必要なコマンドには nl_tx を渡す
     let (response, event) = match cmd_name {
         "STATUS"        => handle_status().await,
+        "NETLINK_STATUS" => (handle_netlink_status(), None),
         "LIST"          => handle_list(&cmd, uid).await,
         "REGISTER"      => handle_register(&cmd, uid).await,
         "TICKET"        => handle_ticket(&cmd, uid).await,
@@ -139,6 +140,22 @@ async fn handle_status() -> (String, Option<InternalEvent>) {
     match serde_json::to_string_pretty(&status_obj) {
         Ok(json) => (format!("{}\n", json), None),
         Err(e) => (format!("ERR failed to serialize status: {}\n", e), None),
+    }
+}
+
+/// ログストーム時でも app_state() のロックを取得せずに即座に Netlink の健康状態を返す
+fn handle_netlink_status() -> String {
+    let (buffer_usage_pct, drops) = get_netlink_socket_metrics();
+
+    let netlink_obj = NetlinkStatus {
+        buffer_usage_pct,
+        drops,
+        recv_rate_per_sec: 0,
+    };
+
+    match serde_json::to_string(&netlink_obj) {
+        Ok(json) => format!("{}\n", json),
+        Err(e) => format!("ERR failed to serialize netlink status: {}\n", e),
     }
 }
 

@@ -56,20 +56,23 @@ pub async fn decision_worker_loop(
         // 3. ポリシー判定の実行
         let mut policy_result = process_policy_decision(&req).await;
 
+        // reply_to_kernel で take() されて消失する前に、チケットIDを退避しておく
+        let issued_ticket_id = policy_result.ticket.as_ref().map(|t| t.ticket_id.clone());
+
         // 4. カーネルへの即時応答（Netlink経由で TICKET_ADD または APPROVE/DENY を送信）
+        // (内部で policy_result.ticket.take() されて ticket は None になる)
         if let Err(e) = reply_to_kernel(&nl_tx, &req, &mut policy_result).await {
             eprintln!("{}[ERROR] Failed to reply to kernel for REQ {}: {}", ktime_prefix(), req.id, e);
-            // 送信失敗時のフェイルセーフ: 確実にプロセスを解放するために再度DENYを試みる
             let _ = nl_tx.send_deny(req.id).await;
         }
 
         // 5. ログ記録を Audit Worker へ委譲
         let event = InternalEvent::Resolved {
-            req_line,       // 事前に作っておいた文字列を渡す
+            req_line,
             parsed_req: req,
             decision: policy_result.decision.clone(), 
             rule_id: policy_result.rule_id.clone(),
-            ticket_id: policy_result.ticket.as_ref().map(|t| t.ticket_id.clone()),
+            ticket_id: issued_ticket_id, // ★ 退避しておいた ID を渡す
         };
 
         if let Err(e) = internal_tx.send(event).await {
@@ -311,11 +314,14 @@ async fn reply_to_kernel(nl_tx: &NlWriter, req: &Request, policy_result: &mut Po
         PolicyDecision::Allow => {
             if let Some(ticket) = policy_result.ticket.take() {
                 let _ = nl_tx.send_approve(req.id).await;
+
+                // ★ ticket の参照を渡し、ACTIVE_TICKETS に確実に登録
+                let approved = ApprovedTicket::from_result_with_req(policy_result, &ticket, req);
+                ACTIVE_TICKETS.insert(approved.ticket_id.clone(), approved);
+
+                // ★ カーネルへチケットを投入
                 nl_tx.send_ticket_add(ticket).await?;
 
-                if let Some(approved) = ApprovedTicket::from_result(policy_result) {
-                    ACTIVE_TICKETS.insert(approved.ticket_id.clone(), approved);
-                }
                 Ok(())
             } else {
                 nl_tx.send_approve(req.id).await
