@@ -21,9 +21,21 @@ use std::os::fd::AsRawFd;
 use tokio::sync::{mpsc, Mutex};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use teal_policy_engine::util::ktime_prefix;
 use crate::types::TicketPayload;
+
+// --- グローバル受信 PortID 管理 ---
+static RX_PORTID: AtomicU32 = AtomicU32::new(0);
+
+pub fn set_rx_portid(portid: u32) {
+    RX_PORTID.store(portid, Ordering::Relaxed);
+}
+
+pub fn get_rx_portid() -> u32 {
+    RX_PORTID.load(Ordering::Relaxed)
+}
 
 // ==========================================
 // 1. C言語カーネルモジュールとの型マッピング
@@ -196,10 +208,9 @@ impl NlWriter {
 /// カーネルの "teal_ctrl" ファミリーを解決し、非同期ソケットを準備する
 /// 戻り値: (送信用ハンドル, Decisionワーカー用Receiver, Auditワーカー用Receiver)
 pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessage>, mpsc::Receiver<TealNetlinkMessage>)> {
-    // --- 1. ソケット接続とファミリー解決 ---
+    // --- 1. 受信用ソケット接続とファミリー解決 ---
     let mut rx_sock = NlSocketHandle::connect(NlFamily::Generic, None, &[])?;
 
-    // 受信バッファを 4MB 程度に引き上げる (デフォルトは 256KB 程度)
     let fd = rx_sock.as_raw_fd();
     let size: i32 = 4 * 1024 * 1024; 
     unsafe {
@@ -212,9 +223,25 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
         );
     }
 
-    let rx_portid = rx_sock.pid().unwrap_or(0);
     let family_id = rx_sock.resolve_genl_family("teal_ctrl")?;
     eprintln!("{}[INFO] Resolved teal_ctrl family ID: {}", ktime_prefix(), family_id);
+
+    // --- 2. REGISTER 送信 (同期ハンドシェイク) ---
+    let genlhdr: Genlmsghdr<TealCmd, TealAttr> = Genlmsghdr::new(TealCmd::Register, 1, GenlBuffer::new());
+    let nlhdr = Nlmsghdr::new(
+        None,
+        family_id,
+        NlmFFlags::new(&[NlmF::Request, NlmF::Ack]),
+        None,
+        None,
+        NlPayload::Payload(genlhdr),
+    );
+    rx_sock.send(nlhdr)?;
+    let _ = rx_sock.recv::<u16, Genlmsghdr<TealCmd, TealAttr>>()?;
+
+    // ★ REGISTER 成功後に正式な受信用 PortID を確定・保存
+    let rx_portid = rx_sock.pid().unwrap_or(0);
+    set_rx_portid(rx_portid);
 
     // 送信用ソケットを独立して接続
     let tx_sock = NlSocketHandle::connect(NlFamily::Generic, None, &[])?;
@@ -224,25 +251,17 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
     eprintln!("{}[INFO] teald RX PortID (Receiving): {}", ktime_prefix(), rx_portid);
     eprintln!("{}[INFO] teald TX PortID (Sending)  : {}", ktime_prefix(), tx_portid);
 
-    // --- 2. REGISTER 送信 (同期) ---
-    // ここはまだワーカーがいないので rx_sock を使って直接ハンドシェイク
-    let genlhdr: Genlmsghdr<TealCmd, TealAttr> = Genlmsghdr::new(TealCmd::Register, 1, GenlBuffer::new());
-    let nlhdr = Nlmsghdr::new(None, family_id, NlmFFlags::new(&[NlmF::Request, NlmF::Ack]), None, None, NlPayload::Payload(genlhdr));
-    rx_sock.send(nlhdr)?;
-    let _ = rx_sock.recv::<u16, Genlmsghdr<TealCmd, TealAttr>>()?;
-
     // --- 3. 送信ワーカーの準備と起動 ---
     let (send_tx, send_rx) = mpsc::channel(10240);
     let nl_tx = NlWriter { tx: send_tx, family_id };
 
-    // ワーカーを起動。sock_arc の所有権を渡す。
     let worker_sock = Arc::clone(&sock_arc);
     tokio::spawn(async move {
         netlink_send_worker_loop(send_rx, worker_sock, family_id).await;
     });
 
-    // --- 4. 初期モード同期 (ModeSwitch) ---
-    nl_tx.send_mode_switch(0).await?; 
+    // --- 4. 初期モード同期 ---
+    nl_tx.send_mode_switch(0).await?;
 
     // --- 5. 受信スレッドの起動 ---
     let (tx_decision, rx_decision) = mpsc::channel(1024);
@@ -477,11 +496,18 @@ fn build_sync_epoch_packet(family_id: u16, epoch: u32) -> Result<Nlmsghdr<u16, G
     Ok(Nlmsghdr::new(None, family_id, NlmFFlags::new(&[NlmF::Request]), None, None, NlPayload::Payload(genlhdr)))
 }
 
+/// Generic Netlink のプロトコル番号 ("16")
+const NETLINK_GENERIC_ETH: &str = "16";
 /// 設定された受信バッファサイズ (4MB) に対するカーネル内部の実割り当てサイズ (8MB)
 const NETLINK_EFFECTIVE_RCVBUF_BYTES: f64 = 8.0 * 1024.0 * 1024.0;
 
 /// Netlink 受信ソケットの (バッファ使用率%, ドロップ数) を取得する
 pub fn get_netlink_socket_metrics() -> (f64, u64) {
+    let target_portid = get_rx_portid();
+    if target_portid == 0 {
+        return (0.0, 0);
+    }
+
     let file = match File::open("/proc/net/netlink") {
         Ok(f) => f,
         Err(_) => return (0.0, 0),
@@ -491,16 +517,17 @@ pub fn get_netlink_socket_metrics() -> (f64, u64) {
 
     for line in reader.lines().flatten() {
         let fields: Vec<&str> = line.split_whitespace().collect();
-        // /proc/net/netlink のフォーマット:
-        // sk Eth Pid Groups Rmem Wmem Dump Locks Drops Inode
-        // 0  1   2   3      4    5    6    7     8     9
+        // フォーマット: sk Eth Pid Groups Rmem Wmem Dump Locks Drops Inode
+        //               0  1   2   3      4    5    6    7     8     9
         if fields.len() < 9 || fields[0] == "sk" {
             continue;
         }
 
-        // 自プロセスの PID と一致するソケットを検索
-        let pid_val: u32 = fields[2].parse().unwrap_or(0);
-        if pid_val == std::process::id() {
+        let eth = fields[1];
+        let portid_val: u32 = fields[2].parse().unwrap_or(0);
+
+        // ★ Generic Netlink (16) かつ 受信ソケットの PortID と完全一致する行を特定
+        if eth == NETLINK_GENERIC_ETH && portid_val == target_portid {
             let rmem: f64 = fields[4].parse().unwrap_or(0.0);
             let drops: u64 = fields[8].parse().unwrap_or(0);
 

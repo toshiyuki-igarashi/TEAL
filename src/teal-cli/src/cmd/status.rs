@@ -15,7 +15,10 @@ use teald::common::NetlinkStatus;
 use crate::send_command;
 
 /// ログストーム収束待機時のポーリング間隔（秒）
-const POLL_INTERVAL: Duration = Duration::from_secs(10);
+const POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+/// ログストーム収束判断基準
+const POLL_COUNT: u32 = 3;
 
 /// 収束判定のしきい値（バッファ使用率 10% 未満）
 const SETTLED_BUFFER_THRESHOLD_PCT: f64 = 10.0;
@@ -32,6 +35,7 @@ pub fn run(wait_settle: bool, timeout_sec: u64, json_mode: bool) -> Result<()> {
     println!("{}", "⏳ Waiting for TEAL Netlink buffer to settle...".cyan());
     let start_time = Instant::now();
     let timeout = Duration::from_secs(timeout_sec);
+    let mut settle_count: u32 = 1;
 
     loop {
         if start_time.elapsed() > timeout {
@@ -49,8 +53,14 @@ pub fn run(wait_settle: bool, timeout_sec: u64, json_mode: bool) -> Result<()> {
 
                     // バッファ使用率が安全圏に落ちたら収束と判断
                     if nl_stat.buffer_usage_pct < SETTLED_BUFFER_THRESHOLD_PCT {
-                        println!("{}", "✔ System settled successfully.".green().bold());
-                        break;
+                        if settle_count > POLL_COUNT {
+                            println!("{}", "✔ System settled successfully.".green().bold());
+                            break;
+                        } else {
+                            settle_count += 1;
+                        }
+                    } else {
+                        settle_count = 1;
                     }
                 }
             }

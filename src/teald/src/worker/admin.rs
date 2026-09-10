@@ -7,6 +7,7 @@
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 use blst::min_pk::{PublicKey, Signature};
 use blst::BLST_ERROR;
@@ -100,8 +101,16 @@ async fn handle_admin_connection(mut stream: tokio::net::UnixStream, nl_tx: &NlW
 /// ログストーム（バッファ高負荷）と判定する Netlink 受信バッファ使用率のしきい値 (%)
 const LOG_STORM_BUFFER_USAGE_THRESHOLD_PCT: f64 = 50.0;
 
+/// 前回の測定時の累積ドロップ数を保持する静的変数
+static PREV_DROPS: AtomicU64 = AtomicU64::new(0);
+
+/// ドロップ数の差分（増加量）を計算し、静的変数を最新値に更新する
+fn record_drops_and_calc_delta(current_drops: u64) -> u64 {
+    let prev = PREV_DROPS.swap(current_drops, Ordering::Relaxed);
+    current_drops.saturating_sub(prev)
+}
+
 async fn handle_status() -> (String, Option<InternalEvent>) {
-    // 1. AppState からインメモリ状態をスナップショット取得（ロックは即時解放）
     let (is_enforce, is_flushed, current_epoch, pending_len) = {
         let st = app_state().lock().await;
         (
@@ -112,12 +121,13 @@ async fn handle_status() -> (String, Option<InternalEvent>) {
         )
     };
 
-    // 2. Netlink バッファ使用状況とパケット破棄数の取得（/proc/net/netlink 等から）
     let (buffer_usage_pct, drops) = get_netlink_socket_metrics();
 
-    // 3. 判定ロジック
-    // バッファ使用率がしきい値を超過、またはパケット破棄が発生している場合にストームと判定
-    let is_storming = buffer_usage_pct > LOG_STORM_BUFFER_USAGE_THRESHOLD_PCT || drops > 0;
+    // ★ ドロップ差分の計算（NETLINK_STATUS 側で更新済みなら 0 になる）
+    let drops_delta = record_drops_and_calc_delta(drops);
+
+    // バッファ使用率超過、または直近サンプリング以降に新規ドロップがあればストームと判定
+    let is_storming = buffer_usage_pct > LOG_STORM_BUFFER_USAGE_THRESHOLD_PCT || drops_delta > 0;
 
     let status_obj = TealStatus {
         status: "ok".to_string(),
@@ -127,10 +137,10 @@ async fn handle_status() -> (String, Option<InternalEvent>) {
         netlink: NetlinkStatus {
             buffer_usage_pct,
             drops,
-            recv_rate_per_sec: 0, // レート集計がある場合は反映
+            recv_rate_per_sec: 0,
         },
         queues: QueueStatus {
-            decision_channel_len: 0, // チャネルの残量やキャパシティ
+            decision_channel_len: 0,
             audit_channel_len: 0,
             pending_requests_len: pending_len,
         },
@@ -146,6 +156,9 @@ async fn handle_status() -> (String, Option<InternalEvent>) {
 /// ログストーム時でも app_state() のロックを取得せずに即座に Netlink の健康状態を返す
 fn handle_netlink_status() -> String {
     let (buffer_usage_pct, drops) = get_netlink_socket_metrics();
+
+    // ★ ポーリング中にも PREV_DROPS を最新値へ進める
+    let _drops_delta = record_drops_and_calc_delta(drops);
 
     let netlink_obj = NetlinkStatus {
         buffer_usage_pct,
