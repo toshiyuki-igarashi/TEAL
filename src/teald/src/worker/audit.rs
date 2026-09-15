@@ -10,7 +10,7 @@ use std::fs;
 
 use crate::state::app_state;
 use crate::types::{Request, InternalEvent, PolicyDecision, PendingEntry, KernelEventLog, TicketPayload, EntityId, ApprovedTicket};
-use crate::types::{next_audit_ticket_id, ACTIVE_TICKETS};
+use crate::types::{next_audit_ticket_id, ACTIVE_TICKETS, is_drain};
 use crate::bundle::bundle;
 use crate::decide::request_to_ctx;
 use crate::evidence::EvidenceManager;
@@ -38,6 +38,11 @@ pub async fn audit_worker_loop(
             // A) カーネルから直接飛んできた AUDIT要求 や INFOログ
             // --------------------------------------------------------
             Some(msg) = rx_audit.recv() => {
+                // ドレインモード中なら、重い処理 (spawn / handle_audit_req) を一切行わず即破棄！
+                if is_drain() {
+                    continue;   // バッファから読み出すだけで即座に捨てる
+                }
+
                 match msg {
                     TealNetlinkMessage::Req(nl_req) => {
                         // AUDITモード時のアクセスリクエスト（判定不要、ログのみ）

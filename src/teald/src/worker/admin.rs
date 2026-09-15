@@ -17,7 +17,7 @@ use crate::bundle::{bundle, compute_directory_hash, DEFAULT_TEAL_DIR, STAGE_TEAL
 use crate::management::management;
 use crate::common::{DecisionKind, TealStatus, NetlinkStatus, QueueStatus};
 use crate::types::{InternalEvent, MgmtPendingCtl, MgmtCtlKind, MpaState, AppState, SignedCmdArgs, ApprovedTicket};
-use crate::types::ACTIVE_TICKETS;
+use crate::types::{ACTIVE_TICKETS, DaemonMode, set_daemon_mode, is_enforce};
 use crate::ticket::{is_ticketable, draft_from_rule};
 use crate::netlink::NlWriter;
 use crate::netlink::get_netlink_socket_metrics;
@@ -111,10 +111,9 @@ fn record_drops_and_calc_delta(current_drops: u64) -> u64 {
 }
 
 async fn handle_status() -> (String, Option<InternalEvent>) {
-    let (is_enforce, is_flushed, current_epoch, pending_len) = {
+    let (is_flushed, current_epoch, pending_len) = {
         let st = app_state().lock().await;
         (
-            st.is_enforce,
             st.is_flushed,
             st.current_epoch,
             st.slow.pending_requests.len(),
@@ -131,7 +130,7 @@ async fn handle_status() -> (String, Option<InternalEvent>) {
 
     let status_obj = TealStatus {
         status: "ok".to_string(),
-        is_enforce,
+        is_enforce: is_enforce(),
         is_flushed,
         current_epoch,
         netlink: NetlinkStatus {
@@ -552,16 +551,14 @@ async fn finalize_ctl_approval(
 
 async fn finalize_draft_approval(id: &str) -> Option<InternalEvent> {
     let mut event = None;
-    let is_enforce;
     let mut draft;
 
     {
         let mut lock = app_state().lock().await;
         draft = lock.fast.drafts.remove(id)?;
-        is_enforce = lock.is_enforce;
     }
 
-    if is_enforce {
+    if is_enforce() {
         let _ = draft.mpa_state.try_aggregate();
 
         if let Some(ticket) = ApprovedTicket::from_draft(&draft) {
@@ -581,10 +578,9 @@ async fn finalize_entry_approval(args: &SignedCmdArgs, nl_tx: &NlWriter) -> Opti
     let id_num = args.id.parse().unwrap_or(0);
     let mut event = None; 
 
-    let (is_enforce, entry) = {
+    let entry = {
         let mut lock = app_state().lock().await;
-        let entry_opt = lock.slow.pending_requests.remove(&id_num);
-        (lock.is_enforce, entry_opt)
+        lock.slow.pending_requests.remove(&id_num)
     };
 
     let (cacheable, ticket_payload) = match entry {
@@ -619,7 +615,7 @@ async fn finalize_entry_approval(args: &SignedCmdArgs, nl_tx: &NlWriter) -> Opti
         None => (false, None)
     };
 
-    if is_enforce {
+    if is_enforce() {
         let _ = nl_tx.send_approve(id_num).await;
         if cacheable {
             if let Some(ticket) = ticket_payload {
@@ -759,13 +755,13 @@ async fn process_deny_entry(args: &SignedCmdArgs, nl_tx: &NlWriter) -> (String, 
     let id = args.id.parse().unwrap_or(0);
     
     // 1. まず一瞬だけロックを取り、判定に必要な「ロール」と「ENFORCE状態」だけをコピーする
-    let (is_enforce, approver_roles) = {
+    let approver_roles = {
         let lock = app_state().lock().await;
         let entry = match lock.slow.pending_requests.get(&id) {
             Some(p) => p,
             None => return ("ERR no such pending id\n".to_string(), None),
         };
-        (lock.is_enforce, entry.mpa_state.approver_roles.clone())
+        entry.mpa_state.approver_roles.clone()
     }; // ここで即座にロック解放！
 
     // 2. ロックを持たない安全な状態で、1回だけ権限チェックを行う
@@ -799,7 +795,7 @@ async fn process_deny_entry(args: &SignedCmdArgs, nl_tx: &NlWriter) -> (String, 
     });
 
     // 5. I/O処理（カーネルへの通知）
-    if is_enforce {
+    if is_enforce() {
         let _ = nl_tx.send_deny(id).await;
     }
     
@@ -1027,10 +1023,10 @@ async fn execute_mgmt_ctl(
                     );
                 }
                 clear_ephemeral_state_for_enforce(&mut st);
-                st.is_enforce = true;
+                set_daemon_mode(DaemonMode::Enforce);
             }
             MgmtCtlKind::Stop => {
-                st.is_enforce = false;
+                set_daemon_mode(DaemonMode::Audit);
                 clear_ephemeral_state_for_enforce(&mut st);
             }
             MgmtCtlKind::PolicyUpdate => {

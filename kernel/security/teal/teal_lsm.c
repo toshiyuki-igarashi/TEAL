@@ -745,13 +745,33 @@ static struct teal_request *teal_req_build(const char *action,
     return req;
 }
 
-static int teal_req_wait(struct teal_request *req)
-{
-    /* pending(0) から変わるまで待つ */
-    if (wait_event_interruptible(teal_ctl_wait_queue, READ_ONCE(req->decision) != 0))
-        return -EINTR;
+#define TEAL_DECISION_TIMEOUT_HZ    msecs_to_jiffies(3000) // 3000ms = 3秒
+#define TEAL_DECISION_APPROVE       0                       // 0 (ALLOW)
 
-    return READ_ONCE(req->decision);
+int teal_req_wait(struct teal_request *req)
+{
+    long remaining;
+
+    // 無期限待ちではなく、最大3秒でタイムアウトさせる
+    remaining = wait_event_interruptible_timeout(
+        teal_ctl_wait_queue,
+        READ_ONCE(req->decision) != 0,
+        TEAL_DECISION_TIMEOUT_HZ
+    );
+
+    if (remaining == 0) {
+        // タイムアウト発生: デーモン無応答のため Fail-Safe ALLOW
+        pr_warn_ratelimited(
+            "TEAL: Request timed out (daemon unresponsive). Fail-safe: ALLOW. "
+            "action=%s target=%s prog=%s\n",
+            req->action, req->target, req->program
+        );
+        return TEAL_DECISION_APPROVE;
+    } else if (remaining < 0) {
+        return -EINTR;
+    }
+
+    return req->decision;
 }
 
 static int teal_req_enqueue(struct teal_request *req, u8 teal_mode)

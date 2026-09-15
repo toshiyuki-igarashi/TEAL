@@ -38,7 +38,6 @@ pub async fn init_state() {
                 dev_teal_path: String::from("netlink:teal_ctrl"),
                 device_file: None, 
             },
-            is_enforce: false,
             is_flushed: false,
             current_epoch: 0,
         }))

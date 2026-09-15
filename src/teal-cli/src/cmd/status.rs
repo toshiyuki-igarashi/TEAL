@@ -53,7 +53,7 @@ pub fn run(wait_settle: bool, timeout_sec: u64, json_mode: bool) -> Result<()> {
 
                     // バッファ使用率が安全圏に落ちたら収束と判断
                     if nl_stat.buffer_usage_pct < SETTLED_BUFFER_THRESHOLD_PCT {
-                        if settle_count > POLL_COUNT {
+                        if settle_count >= POLL_COUNT {
                             println!("{}", "✔ System settled successfully.".green().bold());
                             break;
                         } else {

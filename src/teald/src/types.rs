@@ -8,7 +8,7 @@ use tokio::fs::File;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
@@ -47,6 +47,43 @@ pub fn next_audit_ticket_id() -> String {
 // ==============================================================
 pub static ACTIVE_TICKETS: Lazy<DashMap<String, ApprovedTicket>> = Lazy::new(|| DashMap::new());
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DaemonMode {
+    Drain = 0,   // 起動時ドレインモード（読み捨て）
+    Audit = 1,   // 通常オーディットモード（ログ記録・チケット発行）
+    Enforce = 2, // 同期遮断モード
+}
+
+impl From<u8> for DaemonMode {
+    fn from(val: u8) -> Self {
+        match val {
+            0 => DaemonMode::Drain,
+            1 => DaemonMode::Audit,
+            2 => DaemonMode::Enforce,
+            _ => DaemonMode::Audit,
+        }
+    }
+}
+
+// グローバルで瞬時に読み取れるアトミック変数
+static GLOBAL_DAEMON_MODE: AtomicU8 = AtomicU8::new(DaemonMode::Drain as u8);
+
+pub fn get_daemon_mode() -> DaemonMode {
+    DaemonMode::from(GLOBAL_DAEMON_MODE.load(Ordering::Relaxed))
+}
+
+pub fn set_daemon_mode(mode: DaemonMode) {
+    GLOBAL_DAEMON_MODE.store(mode as u8, Ordering::Relaxed);
+}
+
+pub fn is_enforce() -> bool {
+    get_daemon_mode() == DaemonMode::Enforce
+}
+
+pub fn is_drain() -> bool {
+    get_daemon_mode() == DaemonMode::Drain
+}
 
 #[derive(Debug, Clone)]
 pub struct Request {
@@ -133,7 +170,6 @@ pub struct AppState {
     pub fast: FastState,
     pub slow: SlowState,
     pub dev: TealDeviceState,
-    pub is_enforce: bool,
     pub is_flushed: bool,
     pub current_epoch: u32, // カーネル側の定義(u32)に合わせる
 }
