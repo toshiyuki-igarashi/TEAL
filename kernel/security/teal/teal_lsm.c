@@ -1369,12 +1369,14 @@ static bool is_ticket_matched(struct teal_ticket_add_payload *ticket, u64 now,
     return true;
 }
 
+#define TEAL_TICKET_FLG_PARENT_MATCH  (1U << 4) // 親ディレクトリ包括チケットフラグ
+
 /**
- * 現在のコンテキストとターゲットinodeが、有効なチケットと一致するか確認する
- * 一致した場合、uses_left を減らし true を返す
+ * __check_ticket_for_inode - 特定の1つの inode に対するチケット検索・消費処理
+ * @is_parent_check: 親ディレクトリとしての照合かどうかのフラグ
  */
-static bool teal_check_ticket_match(struct inode *obj_inode, enum teal_event_type ev, 
-                                    struct teal_id_pair *new_id)
+static bool __check_ticket_for_inode(struct inode *target_inode, enum teal_event_type ev,
+                                     struct teal_id_pair *new_id, bool is_parent_check)
 {
     struct teal_task_meta *meta;
     struct teal_id_pair *org_id;
@@ -1384,98 +1386,96 @@ static bool teal_check_ticket_match(struct inode *obj_inode, enum teal_event_typ
     u64 now;
     bool match = false;
 
-    // 引数が NULL の場合は即座に false
-    if (!obj_inode) return false;
-    
-    /* メタデータから実行元IDを取得 */
+    if (!target_inode) return false;
+
     meta = teal_task_meta_current();
     if (!meta) return false;
     org_id = &meta->program_id;
-    
-    now = ktime_get_real_seconds();
-    
-    // ターゲットの識別子をセット
-    key.dev = obj_inode->i_sb->s_dev;
-    key.ino = obj_inode->i_ino;
 
-    // ==========================================================
-    //  O(1) RCU 爆速検索 (ロック競合ゼロ・通信ゼロ)
-    // ==========================================================
+    now = ktime_get_real_seconds();
+
+    key.dev = target_inode->i_sb->s_dev;
+    key.ino = target_inode->i_ino;
+
     rcu_read_lock();
     list = rhltable_lookup(&teal_ticket_ht, &key, teal_cache_params);
-    
-    rhl_for_each_entry_rcu(entry, tmp, list, node) {
-        // 【ステップ1 & 2】 Epochと有効期限の検証
-        if (is_ticket_matched(entry->ticket, now, obj_inode, org_id, ev, new_id)) {
 
-            // ==========================================================
-            // キャッシュからプロセスの cred へ特権をコピー（昇格）
-            // ==========================================================
+    rhl_for_each_entry_rcu(entry, tmp, list, node) {
+        // ★ 親ディレクトリ照合の場合、チケットが包括フラグを持っていなければスキップ
+        if (is_parent_check && !(entry->ticket->flags & TEAL_TICKET_FLG_PARENT_MATCH)) {
+            continue;
+        }
+
+        // 【ステップ1 & 2】 Epochと有効期限、属性の検証
+        if (is_ticket_matched(entry->ticket, now, target_inode, org_id, ev, new_id)) {
+
+            // 【特権の昇格 (Self-Baking)】
             struct teal_cred_ctx *ctx = teal_cred(current_cred());
             if (ctx && entry->ticket->flags) {
-                /*
-                 * 既に持っている特権を消さないように、OR演算 (|=) で追加します。
-                 * これにより、このプロセスは以後キャッシュを検索することなく、
-                 * 入り口の Fast Path (teal_file_open の冒頭) を 0秒で通過できるようになります。
-                 */
                 ctx->ticket_flags |= entry->ticket->flags;
             }
-            // ==========================================================
 
-            // 【ステップ3】 Silent & Unlimited モード判定
+            // 【ステップ3】 Silent & Unlimited モード判定 (ID: 0)
             if (entry->ticket->ticket_id == 0) {
                 match = true;
-                /* uses_leftを減算せず、INFOメッセージも出さずに即許可 */
                 break;
             }
 
-            // ==========================================================
-            // 【ステップ4】 通常チケットの消費処理 (厳密なマルチコア対応)
-            // ==========================================================
-            /* * atomic_dec_if_positive() は値が > 0 の時だけ安全に減算し、減算後の値を返します。
-             * 0以下の場合は減算せずに負の値を返すため、競合(マイナスへの突き抜け)を完全に防げます。
-             */
+            // 【ステップ4】 通常チケットの消費処理
             int current_uses = atomic_dec_if_positive(&entry->ticket->uses_left);
-            
             if (current_uses >= 0) {
-                struct teal_log_entry *log;
                 match = true;
 
-                if (entry->ticket->audit_flags == 2 || (entry->ticket->audit_flags == 0 && current_uses == 0)) {
-                    // --- INFO:CONSUMED ログのエンキュー ---
-                    log = kmalloc(sizeof(*log), GFP_ATOMIC);
+                if (entry->ticket->audit_flags == 2 || 
+                   (entry->ticket->audit_flags == 0 && current_uses == 0)) {
+                    struct teal_log_entry *log = kmalloc(sizeof(*log), GFP_ATOMIC);
                     if (log) {
                         log->type = TICKET_CONSUMED;
                         log->ticket_id = entry->ticket->ticket_id;
                         log->uid = entry->ticket->uid;
-                        log->uses_left_snapshot = (u32)current_uses; // 減算後の残り回数
+                        log->uses_left_snapshot = (u32)current_uses;
                         log->timestamp = now;
                         log->org_ino = entry->ticket->org.ino;
                         log->org_dev = entry->ticket->org.dev;
                         log->obj_ino = entry->ticket->obj.ino;
                         log->obj_dev = entry->ticket->obj.dev;
-                        // RENAME 用に移動先の識別子もログに載せる
                         log->new_obj_ino = entry->ticket->new_obj.ino;
                         log->new_obj_dev = entry->ticket->new_obj.dev;
 
-                        /* リストに積まず、直接Netlinkで送信して即解放！ */
                         teal_genl_send_info(log);
                         kfree(log);
                     }
                 }
-                
-                break; // マッチしたのでループを抜ける
+                break;
             }
-            
-            /*
-             * current_uses < 0 だった場合は「他のスレッドが先に消費し尽くして 0 になった」
-             * 状態なので、このチケットは無視して次のチケットを探す(ループ継続)。
-             */
         }
     }
     rcu_read_unlock();
 
     return match;
+}
+
+/**
+ * 現在のコンテキストとターゲットinodeが、有効なチケットと一致するか確認する
+ * 一致した場合、uses_left を減らし true を返す
+ * ターゲット自身および親ディレクトリのチケットを包括検証する
+ */
+static bool teal_check_ticket_match(struct inode *obj_inode, struct inode *parent_inode,
+                                    enum teal_event_type ev, struct teal_id_pair *new_id)
+{
+    // 1. ファイル自身のチケット照合 (最優先)
+    if (__check_ticket_for_inode(obj_inode, ev, new_id, false)) {
+        return true;
+    }
+
+    // 2. ヒットしなかった場合、親ディレクトリの包括チケット照合
+    if (parent_inode && parent_inode != obj_inode) {
+        if (__check_ticket_for_inode(parent_inode, ev, new_id, true)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static DECLARE_DELAYED_WORK(teal_gc_work, teal_gc_worker);
@@ -1668,7 +1668,7 @@ static int teal_bprm_check(struct linux_binprm *bprm)
     }
 
     if (bprm && bprm->file) {
-        if (teal_check_ticket_match(file_inode(bprm->file), TEAL_EVENT_EXECUTE, NULL)) {
+        if (teal_check_ticket_match(file_inode(bprm->file), NULL, TEAL_EVENT_EXECUTE, NULL)) {
             return 0;
         }
     }
@@ -1832,8 +1832,12 @@ static int teal_file_open(struct file *file)
         return 0; 
     }
 
-    if (teal_check_ticket_match(inode, ev, NULL)) {
-        return 0; 
+    struct inode *parent_inode = (file->f_path.dentry && file->f_path.dentry->d_parent) 
+                                 ? d_inode(file->f_path.dentry->d_parent) : NULL;
+
+    // ★ 自身と親ディレクトリの包括判定を 1 回の呼び出しで完了
+    if (teal_check_ticket_match(inode, parent_inode, ev, NULL)) {
+        return 0;
     }
 
     // ==========================================================
@@ -2131,7 +2135,10 @@ static int teal_handle_path_deletion(const struct path *dir, struct dentry *dent
 
     // 2. O(1) Fast Path チェック (チケットキャッシュ判定)
     if (d_is_positive(dentry)) {
-        if (teal_check_ticket_match(d_inode(dentry), event_type, NULL)) {
+        // VFS から渡された dir を優先して親 inode を取得
+        struct inode *parent_inode = (dir && dir->dentry) ? d_inode(dir->dentry) : NULL;
+
+        if (teal_check_ticket_match(d_inode(dentry), parent_inode, event_type, NULL)) {
             return 0; // キャッシュヒットにより即時許可
         }
     }
@@ -2317,8 +2324,8 @@ static int teal_path_rename(const struct path *old_dir, struct dentry *old_dentr
             dst_id.ino = d_inode(new_dentry)->i_ino;
 
             // 構築した dst_id を渡してキャッシュマッチング（リネーム先まで厳密に検証）
-            if (teal_check_ticket_match(old_inode, TEAL_EVENT_RENAME, &dst_id)) {
-                return 0; // キャッシュヒットにより即時許可（爆速パス）
+            if (teal_check_ticket_match(old_inode, NULL, TEAL_EVENT_RENAME, &dst_id)) {
+                return 0; // キャッシュヒットにより即時許可
             }
         } else {
             // ケースB: 新規作成リネーム（移動先にまだファイルがない）
@@ -2357,7 +2364,11 @@ static int teal_handle_attr_change(struct dentry *dentry, enum teal_event_type e
 
     // 2. O(1) Fast Path チェック (チケットキャッシュ判定)
     if (d_is_positive(dentry)) {
-        if (teal_check_ticket_match(d_inode(dentry), event_type, NULL)) { 
+        // dentry->d_parent から親 inode を安全に取得（ルートディレクトリ除外）
+        struct inode *parent_inode = (dentry->d_parent && dentry->d_parent != dentry) 
+                                     ? d_inode(dentry->d_parent) : NULL;
+
+        if (teal_check_ticket_match(d_inode(dentry), parent_inode, event_type, NULL)) { 
             return 0; // キャッシュヒットにより即時許可
         }
     }
