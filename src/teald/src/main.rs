@@ -21,6 +21,7 @@ use teald::evidence::EvidenceManager;
 use teald::netlink::{NlWriter, TealNetlinkMessage, init_socket, get_netlink_socket_metrics};
 use teald::pam_server::start_pam_listener;
 use teald::types::{DaemonMode, set_daemon_mode, InternalEvent};
+use teald::ticket::preload_silent_directory_tickets;
 
 use teal_policy_engine::util::ktime_prefix;
 
@@ -132,15 +133,22 @@ async fn main() -> Result<()> {
         start_pam_listener().await;
     });
 
+    let nl_tx_monitor = nl_tx.clone();
+
     // ==============================================================
     // ログストーム収束監視タスク (Drain -> Audit 自動移行)
     // ==============================================================
     tokio::spawn(async move {
         eprintln!("{}[INFO] teald: Started in DRAIN mode. Absorbing boot storm...", ktime_prefix());
-        
-        // 1. 起動直後の過渡期を無条件待機
+
+        // ★ ここで silent_io かつ prefix: なディレクトリ包括チケットを一括投入！
+        if let Err(e) = preload_silent_directory_tickets(&nl_tx_monitor).await {
+            eprintln!("{}[WARN] Failed to preload directory tickets: {}", ktime_prefix(), e);
+        }
+
+        // 1. 起動直後の過渡期を無条件待機 (この間にチケットがカーネルに定着する)
         tokio::time::sleep(INIT_WAIT).await;
-        
+
         eprintln!("{}[INFO] teald: Monitoring Netlink buffer settle...", ktime_prefix());
         let mut settled_consecutive = 0;
         let mut interval = tokio::time::interval(POLL_INTERVAL);

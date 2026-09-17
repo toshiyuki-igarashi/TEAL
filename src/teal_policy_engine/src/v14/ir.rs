@@ -13,6 +13,7 @@ use globset::Glob;
 use crate::types::{Effect, AuditLevel, Action, SystemType, RuleType};
 use crate::errors::CompileWarnings;
 use crate::raw::{RawPreApprovalDefaults, RawTicketProfile};
+use crate::raw::{TEAL_TICKET_FLG_SILENT_IO, TEAL_TICKET_FLG_INHERIT};
 
 #[derive(Debug)]
 pub struct CompiledPolicy {
@@ -391,6 +392,16 @@ pub struct TicketProfile {
 impl TicketProfile {
     pub fn from_raw(raw: &RawTicketProfile) -> Self {
         Self { flags: raw.to_u32() }
+    }
+
+    #[inline]
+    pub fn is_silent_io(&self) -> bool {
+        (self.flags & TEAL_TICKET_FLG_SILENT_IO) != 0
+    }
+
+    #[inline]
+    pub fn is_inherit(&self) -> bool {
+        (self.flags & TEAL_TICKET_FLG_INHERIT) != 0
     }
 }
 

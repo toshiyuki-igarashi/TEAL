@@ -194,9 +194,11 @@ pub struct RawTicketProfile {
     #[serde(default)] pub allow_nameless_ipc: bool,
 }
 
-pub const TEAL_TICKET_FLG_SILENT_IO: u32 = 0x01;
-pub const TEAL_TICKET_FLG_INHERIT:   u32 = 0x02;
-pub const TEAL_TICKET_FLG_NAMELESS_IPC:   u32 = 0x04;
+pub const TEAL_TICKET_FLG_SILENT_IO: u32    = 1 << 0; // 0x01: サイレントIO特権
+pub const TEAL_TICKET_FLG_INHERIT: u32      = 1 << 1; // 0x02: 子プロセスへの継承
+pub const TEAL_TICKET_FLG_NAMELESS_IPC: u32 = 1 << 2; // 0x04: 匿名パイプ/ソケット特権
+// (1 << 3 は将来の予約領域)
+pub const TEAL_TICKET_FLG_PARENT_MATCH: u32 = 1 << 4; // 0x10: 親ディレクトリ包括チケット
 
 impl RawTicketProfile {
     pub fn to_u32(&self) -> u32 {

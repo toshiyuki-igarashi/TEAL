@@ -158,7 +158,7 @@ impl Action {
         }
     }
 
-    pub fn to_mask(&self) -> u32 {
+    pub const fn to_mask(&self) -> u32 {
         match self {
             Action::Read => 1,
             Action::Write => 2,
@@ -171,6 +171,16 @@ impl Action {
             Action::NetConnect => 256,
             Action::Unknown => 512,
         }
+    }
+
+    /// 親ディレクトリ包括チケットが対象とすべきファイル操作アクションのマスク
+    pub const fn file_ops_mask() -> u32 {
+        Action::Read.to_mask()
+            | Action::Write.to_mask()
+            | Action::FileDelete.to_mask()
+            | Action::FileUnlink.to_mask()
+            | Action::FileChmod.to_mask()
+            | Action::FileChown.to_mask()
     }
 }
 

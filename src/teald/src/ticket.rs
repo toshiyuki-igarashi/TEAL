@@ -17,15 +17,24 @@
 //!   Cargo.toml 例：
 //!   tokio = { version = "1", features = ["full"] }
 
+use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::collections::HashMap;
 use anyhow::Result;
 use uuid::Uuid;
 
+use teal_policy_engine::types::RuleType;
+use teal_policy_engine::types::Action;
+use teal_policy_engine::raw::{TEAL_TICKET_FLG_SILENT_IO, TEAL_TICKET_FLG_PARENT_MATCH};
+use teal_policy_engine::util::ktime_prefix;
+use teal_policy_engine::ir::{CompiledRule, ActionMatcher, PathMatcher};
+
+use crate::bundle::bundle;
+use crate::netlink::NlWriter;
 use crate::types::{PreApprovalDraft, PendingEntry, EntityId, ApprovedTicket, MpaState};
+use crate::types::TicketPayload;
 use crate::types::next_audit_ticket_id;
 
-use teal_policy_engine::types::RuleType;
-use teal_policy_engine::ir::{CompiledRule, ActionMatcher};
 
 // ==================================
 //  Ticketable 判定と Draft 生成
@@ -166,3 +175,101 @@ pub async fn ticket_from_entry(rule: &CompiledRule, entry: &PendingEntry) -> App
     }
 }
 
+/// 起動時およびポリシー更新時に、silent_io な prefix ディレクトリの包括チケットを一括投入する
+pub async fn preload_silent_directory_tickets(nl_tx: &NlWriter) -> Result<()> {
+    let compiled = bundle();
+    let mut loaded_count = 0;
+
+    for rule in &compiled.policy.rules {
+        // 1. allow ルールかつ silent_io: true であること
+        if rule.effect.as_str() != "allow" || !rule.ticket_profile.is_silent_io() {
+            continue;
+        }
+
+        // 2. 対象アクションにファイル操作が含まれていること
+        let op_mask = rule.action_match.to_u32();
+        if (op_mask & Action::file_ops_mask()) == 0 {
+            continue;
+        }
+
+        // 3. object.path が存在し、Prefix バリアントであること
+        let Some(ref obj) = rule.object else { continue; };
+        let Some(PathMatcher::Prefix(ref prefix_path)) = obj.path else { continue; };
+
+        // 4. ディレクトリが存在し、ディレクトリであることを確認して Dev/Inode を取得
+        let Ok(meta) = fs::metadata(prefix_path) else {
+            continue;
+        };
+
+        if !meta.is_dir() {
+            continue;
+        }
+
+        let target_dev = meta.dev() as u32;
+        let target_ino = meta.ino();
+
+        // 5. Subject（実行元）の Dev/Inode を取得
+        let (prog_dev, prog_ino) = if rule.rule_type == RuleType::SubjectOnly {
+            (0, 0)
+        } else if let Some(ref prog_matcher) = rule.subject.origin_program {
+            let prog_path = match prog_matcher {
+                PathMatcher::Exact(p) | PathMatcher::Prefix(p) => Some(p.as_path()),
+                PathMatcher::Glob { .. } => None,
+            };
+
+            if let Some(path) = prog_path {
+                if let Ok(pmeta) = fs::metadata(path) {
+                    (pmeta.dev() as u32, pmeta.ino())
+                } else {
+                    (0, 0)
+                }
+            } else {
+                (0, 0)
+            }
+        } else {
+            (0, 0)
+        };
+
+        // 6. 包括チケットの組み立て (無制限・サイレント・包括フラグ付き)
+        let payload = TicketPayload {
+            ticket_id: "T-000000000".to_string(), // ID: 0 (Fast Path 恒久許可)
+            uid: rule.subject.uid.unwrap_or(0),
+            op: op_mask,
+            prog_dev: prog_dev.into(),
+            prog_ino,
+            script_dev: 0,
+            script_ino: 0,
+            applet_hash: 0,
+            target_dev: target_dev.into(),
+            target_ino,
+            new_target_dev: 0,
+            new_target_ino: 0,
+            expires_in_sec: u64::MAX, // 無期限
+            flags: TEAL_TICKET_FLG_PARENT_MATCH | TEAL_TICKET_FLG_SILENT_IO,
+            uses_left: u32::MAX,
+            epoch: 0,
+            audit_flags: 1, // Silent
+        };
+
+        if let Err(e) = nl_tx.send_ticket_add(payload).await {
+            eprintln!(
+                "{}[WARN] Failed to preload directory ticket for {}: {}",
+                ktime_prefix(), prefix_path.display(), e
+            );
+        } else {
+            loaded_count += 1;
+            eprintln!(
+                "{}[INFO] teald: Preloaded parent wildcard ticket: rule='{}', path='{}' (dev={}, ino={})",
+                ktime_prefix(), rule.id, prefix_path.display(), target_dev, target_ino
+            );
+        }
+    }
+
+    eprintln!(
+        "{}[INFO] teald: Successfully preloaded {} silent directory tickets into Kernel.",
+        ktime_prefix(),
+        loaded_count
+    );
+
+    Ok(())
+}
