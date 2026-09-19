@@ -2072,6 +2072,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "teal-logview"
+version = "0.5.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "arc-swap",
+ "base64ct",
+ "blst",
+ "chrono",
+ "clap",
+ "colored 2.2.0",
+ "dashmap",
+ "ed25519-dalek",
+ "futures",
+ "glob",
+ "hex",
+ "hmac",
+ "hostname",
+ "humantime",
+ "libc",
+ "neli",
+ "nix",
+ "once_cell",
+ "quick-xml",
+ "rand",
+ "rand_core",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "teal_policy_engine",
+ "teald",
+ "tempfile",
+ "tiny_http",
+ "tokio",
+ "tss-esapi",
+ "uuid",
+]
+
+[[package]]
 name = "teal_policy_engine"
 version = "0.5.0"
 dependencies = [

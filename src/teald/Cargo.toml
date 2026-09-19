@@ -8,10 +8,6 @@ name = "teald"
 path = "src/main.rs"
 
 [[bin]]
-name = "teal-logview"
-path = "src/logview.rs"
-
-[[bin]]
 name = "teal-bench"
 path = "src/bench.rs"
 
@@ -32,7 +28,6 @@ aes-gcm = "0.10"            # 高速暗号化用
 tss-esapi = "7.6.0"
 tokio = { version = "1.48.0", features = ["full"] }
 libc = "0.2"
-teal_policy_engine = { path = "../teal_policy_engine" }
 nix = { version = "0.28", features = ["user"] }
 uuid = { version = "1.10", features = ["v4", "serde"] } # 監査ID (UUID v7/v4対応)
 chrono = { version = "0.4", features = ["serde"] }      # 時刻操作 (ISO 8601 / Utc対応)
@@ -49,4 +44,7 @@ tempfile = "3.8"            # 一時的な .als / .xml ファイル管理用
 arc-swap = "1.9.2"
 dashmap = "5.5"
 once_cell = "1.19"          # (Rust 1.79以前なので)
+
+# TEAL 内部クレート
+teal_policy_engine = { path = "../teal_policy_engine" }
 

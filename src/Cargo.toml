@@ -4,6 +4,7 @@ members = [
   "teal_policy_engine",
   "pam_teal",
   "teal-cli",
+  "teal-logview",
 ]  
 resolver = "2"
 
