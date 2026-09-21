@@ -1324,25 +1324,30 @@ static bool is_ticket_matched(struct teal_ticket_add_payload *ticket, u64 now,
                              enum teal_event_type ev, struct teal_id_pair *new_id)
 {
     // A) 有効期限チェック
-    if (now > ticket->expires_at)
+    if (now > ticket->expires_at) {
         return false;
+    }
 
     // B) 回数制限チェック (0なら無効)
-    if (atomic_read(&ticket->uses_left) == 0)
+    if (atomic_read(&ticket->uses_left) == 0) {
         return false;
+    }
 
     // C) UID チェック
-    if (ticket->uid != from_kuid(current_user_ns(), current_uid()))
+    if (ticket->uid != from_kuid(current_user_ns(), current_uid())) {
         return false;
+    }
 
     // D) Operation チェック
-    if ((ticket->op & ev) == 0)
+    if ((ticket->op & ev) == 0) {
         return false;
+    }
 
     // E) Object (ターゲットファイル) の一致確認
     if (ticket->obj.ino != obj_inode->i_ino || 
-        ticket->obj.dev != obj_inode->i_sb->s_dev)
+        ticket->obj.dev != obj_inode->i_sb->s_dev) {
         return false;
+    }
 
     // E-2) evがTEAL_EVENT_RENAMEの時は、移動先の識別子も一致確認を行う
     if (ev == TEAL_EVENT_RENAME) {
@@ -1357,8 +1362,9 @@ static bool is_ticket_matched(struct teal_ticket_add_payload *ticket, u64 now,
 
     // F) Origin (実行プロセス) の一致確認
     if (ticket->org.ino != org_id->ino || 
-        ticket->org.dev != org_id->dev)
+        ticket->org.dev != org_id->dev) {
         return false;
+    }
 
     // G) Script の一致確認
     if (ticket->script.ino != 0 && ticket->script.dev != 0) {
@@ -1401,6 +1407,7 @@ static bool __check_ticket_for_inode(struct inode *target_inode, enum teal_event
     list = rhltable_lookup(&teal_ticket_ht, &key, teal_cache_params);
 
     rhl_for_each_entry_rcu(entry, tmp, list, node) {
+
         // ★ 親ディレクトリ照合の場合、チケットが包括フラグを持っていなければスキップ
         if (is_parent_check && !(entry->ticket->flags & TEAL_TICKET_FLG_PARENT_MATCH)) {
             continue;

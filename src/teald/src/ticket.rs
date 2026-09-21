@@ -175,6 +175,15 @@ pub async fn ticket_from_entry(rule: &CompiledRule, entry: &PendingEntry) -> App
     }
 }
 
+fn to_kernel_dev(u_dev: u64) -> u32 {
+    // glibc / Linux の major, minor 抽出マクロ相当
+    let major = ((u_dev >> 8) & 0xfff) as u32;
+    let minor = ((u_dev & 0xff) | ((u_dev >> 12) & 0xfff00)) as u32;
+
+    // カーネルの MKDEV(major, minor) = (major << 20) | minor
+    (major << 20) | minor
+}
+
 /// 起動時およびポリシー更新時に、silent_io な prefix ディレクトリの包括チケットを一括投入する
 pub async fn preload_silent_directory_tickets(nl_tx: &NlWriter) -> Result<()> {
     let compiled = bundle();
@@ -205,7 +214,8 @@ pub async fn preload_silent_directory_tickets(nl_tx: &NlWriter) -> Result<()> {
             continue;
         }
 
-        let target_dev = meta.dev() as u32;
+        // ユーザー空間の dev をカーネル内部の dev_t に変換
+        let target_dev = to_kernel_dev(meta.dev());
         let target_ino = meta.ino();
 
         // 5. Subject（実行元）の Dev/Inode を取得
@@ -219,7 +229,8 @@ pub async fn preload_silent_directory_tickets(nl_tx: &NlWriter) -> Result<()> {
 
             if let Some(path) = prog_path {
                 if let Ok(pmeta) = fs::metadata(path) {
-                    (pmeta.dev() as u32, pmeta.ino())
+                    // プログラム側の dev も同様に変換
+                    (to_kernel_dev(pmeta.dev()), pmeta.ino())
                 } else {
                     (0, 0)
                 }
