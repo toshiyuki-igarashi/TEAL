@@ -244,7 +244,8 @@ pub async fn preload_silent_directory_tickets(nl_tx: &NlWriter) -> Result<()> {
         // 6. 包括チケットの組み立て (無制限・サイレント・包括フラグ付き)
         let payload = TicketPayload {
             ticket_id: "T-000000000".to_string(), // ID: 0 (Fast Path 恒久許可)
-            uid: rule.subject.uid.unwrap_or(0),
+            // ★ 特定 UID の指定がなければワイルドカード (u32::MAX) をセット
+            uid: rule.subject.uid.unwrap_or(u32::MAX),
             op: op_mask,
             prog_dev: prog_dev.into(),
             prog_ino,

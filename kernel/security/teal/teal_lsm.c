@@ -1334,8 +1334,14 @@ static bool is_ticket_matched(struct teal_ticket_add_payload *ticket, u64 now,
     }
 
     // C) UID チェック
-    if (ticket->uid != from_kuid(current_user_ns(), current_uid())) {
-        return false;
+    // ★ silent_io 特権チケット、または UID がワイルドカード (0xFFFFFFFF) の場合は不問とする
+    bool is_wildcard_uid = (ticket->uid == (u32)-1);
+    bool is_silent_io    = (ticket->flags & TEAL_TICKET_FLG_SILENT_IO);
+
+    if (!is_wildcard_uid && !is_silent_io) {
+        if (ticket->uid != from_kuid(current_user_ns(), current_uid())) {
+            return false;
+        }
     }
 
     // D) Operation チェック

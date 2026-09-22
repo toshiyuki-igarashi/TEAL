@@ -208,19 +208,32 @@ impl NlWriter {
 /// カーネルの "teal_ctrl" ファミリーを解決し、非同期ソケットを準備する
 /// 戻り値: (送信用ハンドル, Decisionワーカー用Receiver, Auditワーカー用Receiver)
 pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessage>, mpsc::Receiver<TealNetlinkMessage>)> {
-    // --- 1. 受信用ソケット接続とファミリー解決 ---
+    // --- 1. ソケット接続とファミリー解決 ---
     let mut rx_sock = NlSocketHandle::connect(NlFamily::Generic, None, &[])?;
 
     let fd = rx_sock.as_raw_fd();
-    let size: i32 = 4 * 1024 * 1024; 
+    let size: i32 = 16 * 1024 * 1024; // ★ 16MB に変更
+
     unsafe {
-        libc::setsockopt(
+        // ★ SO_RCVBUFFORCE を使用して rmem_max をバイパス
+        let ret = libc::setsockopt(
             fd,
             libc::SOL_SOCKET,
-            libc::SO_RCVBUF,
+            libc::SO_RCVBUFFORCE,
             &size as *const _ as *const libc::c_void,
-            std::mem::size_of::<i32>() as libc::socklen_t,
+            std::mem::size_of_val(&size) as libc::socklen_t,
         );
+
+        // CAP_NET_ADMIN がない等の理由で失敗した場合は通常の SO_RCVBUF にフォールバック
+        if ret < 0 {
+            let _ = libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVBUF,
+                &size as *const _ as *const libc::c_void,
+                std::mem::size_of_val(&size) as libc::socklen_t,
+            );
+        }
     }
 
     let family_id = rx_sock.resolve_genl_family("teal_ctrl")?;
@@ -281,7 +294,7 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
                             TealCmd::Req => {
                                 match parse_req_msg(&genl_msg) {
                                     Ok(req) => {
-                                        let is_audit = (req.flags & 1) != 0;                                        
+                                        let is_audit = (req.flags & 1) != 0;
                                         if is_audit {
                                             let _ = tx_audit.blocking_send(TealNetlinkMessage::Req(req));
                                         } else {
@@ -309,7 +322,7 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
                     let err_str = format!("{:?}", e);
                     if err_str.contains("ENOBUFS") || err_str.contains("No buffer space available") {
                         eprintln!("{}[CRITICAL-NETLINK] BUFFER OVERFLOW DETECTED (ENOBUFS)!", ktime_prefix());
-                        eprintln!("{}[CRITICAL-NETLINK] Kernel dropped packets because teald is too slow to read or buffer (4MB) is full.", ktime_prefix());
+                        eprintln!("{}[CRITICAL-NETLINK] Kernel dropped packets because teald is too slow to read or buffer (16MB) is full.", ktime_prefix());
                         eprintln!("{}[CRITICAL-NETLINK] ACTION REQUIRED: Optimize policies using SILENT_IO tickets to reduce kernel IPC.", ktime_prefix());
                     } else {
                         // その他の通信エラー（シーケンス番号のズレなど）
@@ -498,8 +511,8 @@ fn build_sync_epoch_packet(family_id: u16, epoch: u32) -> Result<Nlmsghdr<u16, G
 
 /// Generic Netlink のプロトコル番号 ("16")
 const NETLINK_GENERIC_ETH: &str = "16";
-/// 設定された受信バッファサイズ (4MB) に対するカーネル内部の実割り当てサイズ (8MB)
-const NETLINK_EFFECTIVE_RCVBUF_BYTES: f64 = 8.0 * 1024.0 * 1024.0;
+/// 設定された受信バッファサイズ (16MB) に対するカーネル内部の実割り当てサイズ (32MB)
+const NETLINK_EFFECTIVE_RCVBUF_BYTES: f64 = 32.0 * 1024.0 * 1024.0;
 
 /// Netlink 受信ソケットの (バッファ使用率%, ドロップ数) を取得する
 pub fn get_netlink_socket_metrics() -> (f64, u64) {
