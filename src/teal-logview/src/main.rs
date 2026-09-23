@@ -694,7 +694,7 @@ fn build_raw_rule(
 
     // 3. Subject の組み立て
     let subject_obj = RawSubject {
-        user: if key.user.is_empty() || key.user == "-" { None } else { Some(key.user.clone()) },
+        user: if key.user.is_empty() || key.user == "-" || *target == ProfileTarget::AntiStorm { None } else { Some(key.user.clone()) },
         uid: None,
         origin_program: if key.subject_program.is_empty() || key.subject_program == "-" {
             None
@@ -734,7 +734,7 @@ fn build_raw_rule(
             mpa: None,
             audit_level: AuditLevel::Standard,
             max_uses: 1,
-            pre_approval: Some(RawPreApproval { enabled: false, ttl_sec: Some(600) }),
+            pre_approval: Some(RawPreApproval { enabled: false, ttl_sec: None }),
             ticket_profile: RawTicketProfile {
                 silent_io: false,
                 inherit: false,
@@ -754,7 +754,7 @@ fn build_raw_rule(
             mpa: None,
             audit_level: AuditLevel::Silent,
             max_uses: 10000,
-            pre_approval: Some(RawPreApproval { enabled: false, ttl_sec: Some(600) }),
+            pre_approval: Some(RawPreApproval { enabled: false, ttl_sec: None }),
             ticket_profile: RawTicketProfile {
                 silent_io: true,
                 inherit: true,

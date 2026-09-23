@@ -4,6 +4,9 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
+
+use std::fs;
+use std::os::unix::fs::MetadataExt;
 use tokio::sync::mpsc;
 use anyhow::Result;
 
@@ -19,10 +22,12 @@ use crate::netlink::{TealNetlinkMessage, NlWriter};
 use crate::types::{next_audit_ticket_id, ACTIVE_TICKETS};
 
 use teal_policy_engine::types::Action;
+use teal_policy_engine::types::AuditLevel;
 use teal_policy_engine::ir::{CompiledRule, Decision};
+use teal_policy_engine::ir::PathMatcher;
 use teal_policy_engine::util::{uid_to_name, ktime_prefix};
 use teal_policy_engine::eval::evaluate;
-use teal_policy_engine::types::AuditLevel;
+use teal_policy_engine::raw::{TEAL_TICKET_FLG_SILENT_IO, TEAL_TICKET_FLG_PARENT_MATCH};
 
 // =========================================================================
 // ワーカーのメインループ
@@ -199,6 +204,13 @@ async fn apply_matched_rule(r: &CompiledRule, req: &Request, current_epoch: u32)
     }
 }
 
+#[inline]
+fn to_kernel_dev(u_dev: u64) -> u32 {
+    let major = ((u_dev >> 8) & 0xfff) as u32;
+    let minor = ((u_dev & 0xff) | ((u_dev >> 12) & 0xfff00)) as u32;
+    (major << 20) | minor
+}
+
 // ============================================================================
 // 5. 許可(ALLOW)チケットの生成ロジック（純粋な関数になり、ロック非依存に）
 // ============================================================================
@@ -208,6 +220,37 @@ fn generate_allow_ticket(
     ticket_seq: String, 
     current_epoch: u32
 ) -> TicketPayload {
+    let mut flags = r.ticket_profile.flags;
+    let mut target_dev = req.target_dev;
+    let mut target_ino = req.target_ino;
+    let mut uses_left = r.max_uses;
+    let mut expires_in_sec = r.pre_approval.ttl_sec;
+
+    let is_silent = (flags & TEAL_TICKET_FLG_SILENT_IO) != 0;
+
+    // ★ ログストーム対策: silent_io かつ prefix ルールの場合、包括チケット化する
+    if is_silent {
+        if let Some(ref obj) = r.object {
+            if let Some(PathMatcher::Prefix(ref prefix_path)) = obj.path {
+                // ルール指定の prefix ディレクトリが存在すれば、その Dev/Inode に差し替える
+                if let Ok(meta) = fs::metadata(prefix_path) {
+                    if meta.is_dir() {
+                        target_dev = to_kernel_dev(meta.dev()) as u64;
+                        target_ino = meta.ino();
+                        
+                        // 包括フラグを追加
+                        flags |= TEAL_TICKET_FLG_PARENT_MATCH;
+                        
+                        // ログストームを確実に止めるため、無制限・長寿命化
+                        uses_left = u32::MAX;
+                        if expires_in_sec == 0 {
+                            expires_in_sec = 86400; // デフォルト1日など
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     TicketPayload {
         ticket_id: ticket_seq,
@@ -218,14 +261,14 @@ fn generate_allow_ticket(
         script_dev: req.script_dev,
         script_ino: req.script_ino,
         applet_hash: 0,
-        target_dev: req.target_dev,
-        target_ino: req.target_ino,
+        target_dev,
+        target_ino,
         new_target_dev: req.new_target_dev,
         new_target_ino: req.new_target_ino,
-        expires_in_sec: r.pre_approval.ttl_sec,
-        flags: r.ticket_profile.flags,
-        uses_left: r.max_uses,
-        epoch: current_epoch, // フェーズ1で取得したコピーを使用
+        expires_in_sec,
+        flags,
+        uses_left,
+        epoch: current_epoch,
         audit_flags: r.audit_level.to_u32(),
     }
 }
