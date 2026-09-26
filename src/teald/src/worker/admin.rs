@@ -18,7 +18,7 @@ use crate::management::management;
 use crate::common::{DecisionKind, TealStatus, NetlinkStatus, QueueStatus};
 use crate::types::{InternalEvent, MgmtPendingCtl, MgmtCtlKind, MpaState, AppState, SignedCmdArgs, ApprovedTicket};
 use crate::types::{ACTIVE_TICKETS, DaemonMode, set_daemon_mode, is_enforce};
-use crate::ticket::{is_ticketable, draft_from_rule};
+use crate::ticket::{is_ticketable, draft_from_rule, preload_silent_directory_tickets};
 use crate::netlink::NlWriter;
 use crate::netlink::get_netlink_socket_metrics;
 
@@ -1053,12 +1053,22 @@ async fn execute_mgmt_ctl(
                 let _ = nl_tx.send_deny(id).await;
             }
             let _ = nl_tx.send_mode_switch(1).await;
+
+            eprintln!("{}[INFO] Re-loading silent_io tickets for ENFORCE mode...", ktime_prefix());
+            if let Err(e) = preload_silent_directory_tickets(nl_tx).await {
+                eprintln!("{}[WARN] Failed to preload silent tickets: {}", ktime_prefix(), e);
+            }
         }
         MgmtCtlKind::Stop => {
             let _ = nl_tx.send_mode_switch(0).await;
         }
         MgmtCtlKind::PolicyUpdate => {
             let _ = nl_tx.send_sync_epoch(current_epoch).await;
+
+            eprintln!("{}[INFO] Re-loading silent_io tickets for new policy...", ktime_prefix());
+            if let Err(e) = preload_silent_directory_tickets(nl_tx).await {
+                eprintln!("{}[WARN] Failed to preload silent tickets: {}", ktime_prefix(), e);
+            }
         }
         MgmtCtlKind::Flush => {
             // TODO: カーネルへ Epoch 更新メッセージを送る本実装時に有効化

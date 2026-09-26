@@ -1468,23 +1468,46 @@ static bool __check_ticket_for_inode(struct inode *target_inode, enum teal_event
     return match;
 }
 
+#define TEAL_MAX_PARENT_TRAVERSE 8  // 遡る親階層の最大深さ（4〜8階層）
+
 /**
- * 現在のコンテキストとターゲットinodeが、有効なチケットと一致するか確認する
- * 一致した場合、uses_left を減らし true を返す
- * ターゲット自身および親ディレクトリのチケットを包括検証する
+ * teal_check_ticket_match - ターゲット自身および親ディレクトリ群（最大8階層）のチケットを検証
+ * @obj_inode: アクセス対象ファイルの inode
+ * @dentry: 対象ファイルの dentry（親を遡るために使用。NULL の場合は自身のみ照合）
+ * @ev: イベントタイプ
+ * @new_id: リネーム用 (通常は NULL)
  */
-static bool teal_check_ticket_match(struct inode *obj_inode, struct inode *parent_inode,
+static bool teal_check_ticket_match(struct inode *obj_inode, struct dentry *dentry,
                                     enum teal_event_type ev, struct teal_id_pair *new_id)
 {
-    // 1. ファイル自身のチケット照合 (最優先)
+    // 1. ファイル自身のチケット照合 (最優先・O(1))
     if (__check_ticket_for_inode(obj_inode, ev, new_id, false)) {
         return true;
     }
 
-    // 2. ヒットしなかった場合、親ディレクトリの包括チケット照合
-    if (parent_inode && parent_inode != obj_inode) {
-        if (__check_ticket_for_inode(parent_inode, ev, new_id, true)) {
-            return true;
+    // 2. ヒットしなかった場合、親・祖父・曾祖父ディレクトリ...の包括チケット照合
+    if (dentry) {
+        struct dentry *curr = dentry;
+        int depth = 0;
+
+        // ルートに達するか、上限（8階層）に達するまで親を辿る
+        while (curr && !IS_ROOT(curr) && depth < TEAL_MAX_PARENT_TRAVERSE) {
+            struct dentry *parent = curr->d_parent;
+            struct inode *p_inode;
+
+            if (!parent || parent == curr)
+                break;
+
+            p_inode = d_inode(parent);
+            if (p_inode && p_inode != obj_inode) {
+                // 親包括フラグ (TEAL_TICKET_FLG_PARENT_MATCH) を持つチケットと照合
+                if (__check_ticket_for_inode(p_inode, ev, new_id, true)) {
+                    return true; // 包括許可ヒット！即時 Fast Path 通過
+                }
+            }
+
+            curr = parent;
+            depth++;
         }
     }
 
@@ -1845,12 +1868,9 @@ static int teal_file_open(struct file *file)
         return 0; 
     }
 
-    struct inode *parent_inode = (file->f_path.dentry && file->f_path.dentry->d_parent) 
-                                 ? d_inode(file->f_path.dentry->d_parent) : NULL;
-
-    // ★ 自身と親ディレクトリの包括判定を 1 回の呼び出しで完了
-    if (teal_check_ticket_match(inode, parent_inode, ev, NULL)) {
-        return 0;
+    // ★ dentry を渡すことで、内部で自身＋最大8階層の親を高速検証
+    if (teal_check_ticket_match(inode, file->f_path.dentry, ev, NULL)) {
+        return 0; // キャッシュヒットにより即時許可！
     }
 
     // ==========================================================
@@ -2148,11 +2168,8 @@ static int teal_handle_path_deletion(const struct path *dir, struct dentry *dent
 
     // 2. O(1) Fast Path チェック (チケットキャッシュ判定)
     if (d_is_positive(dentry)) {
-        // VFS から渡された dir を優先して親 inode を取得
-        struct inode *parent_inode = (dir && dir->dentry) ? d_inode(dir->dentry) : NULL;
-
-        if (teal_check_ticket_match(d_inode(dentry), parent_inode, event_type, NULL)) {
-            return 0; // キャッシュヒットにより即時許可
+        if (teal_check_ticket_match(d_inode(dentry), dentry, event_type, NULL)) {
+            return 0;
         }
     }
 
@@ -2377,12 +2394,8 @@ static int teal_handle_attr_change(struct dentry *dentry, enum teal_event_type e
 
     // 2. O(1) Fast Path チェック (チケットキャッシュ判定)
     if (d_is_positive(dentry)) {
-        // dentry->d_parent から親 inode を安全に取得（ルートディレクトリ除外）
-        struct inode *parent_inode = (dentry->d_parent && dentry->d_parent != dentry) 
-                                     ? d_inode(dentry->d_parent) : NULL;
-
-        if (teal_check_ticket_match(d_inode(dentry), parent_inode, event_type, NULL)) { 
-            return 0; // キャッシュヒットにより即時許可
+        if (teal_check_ticket_match(d_inode(dentry), dentry, event_type, NULL)) {
+            return 0;
         }
     }
 

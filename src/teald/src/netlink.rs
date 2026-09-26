@@ -282,7 +282,7 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
     
     thread::spawn(move || {
        eprintln!("{}[INFO] Netlink dedicated receiver thread started.", ktime_prefix());
-        
+
         loop {
             let msg_res = rx_sock.recv::<u16, Genlmsghdr<TealCmd, TealAttr>>();
 
