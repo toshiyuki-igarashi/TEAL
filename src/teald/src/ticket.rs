@@ -158,6 +158,7 @@ pub async fn ticket_from_entry(rule: &CompiledRule, entry: &PendingEntry) -> App
         ticket_id: draft_id,
         rule_id: rule.id.clone(),
         origin_program,
+        origin_program_sha256: None,
         origin_script: entry.subject.script_path.clone(),
         object,
         new_object,

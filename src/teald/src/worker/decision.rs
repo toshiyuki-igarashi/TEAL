@@ -19,7 +19,8 @@ use crate::types::{
 use crate::bundle::bundle;
 use crate::decide::request_to_ctx;
 use crate::netlink::{TealNetlinkMessage, NlWriter};
-use crate::types::{next_audit_ticket_id, ACTIVE_TICKETS};
+use crate::types::{next_audit_ticket_id, ACTIVE_TICKETS, to_kernel_dev};
+use crate::evidence::{ensure_program_hash, invalidate_hash_cache_for_request};
 
 use teal_policy_engine::types::Action;
 use teal_policy_engine::types::AuditLevel;
@@ -56,10 +57,11 @@ pub async fn decision_worker_loop(
 
         // 2. ENFORCEモード用として Request 構造体に変換 (is_audit = false)
         // ここで nl_req の所有権が移動（消費）される
-        let req = Request::from_enforce_teal_req(nl_req);
+        let mut req = Request::from_enforce_teal_req(nl_req);
+        invalidate_hash_cache_for_request(&req);
 
         // 3. ポリシー判定の実行
-        let mut policy_result = process_policy_decision(&req).await;
+        let mut policy_result = process_policy_decision(&mut req).await;
 
         // reply_to_kernel で take() されて消失する前に、チケットIDを退避しておく
         let issued_ticket_id = policy_result.ticket.as_ref().map(|t| t.ticket_id.clone());
@@ -89,36 +91,71 @@ pub async fn decision_worker_loop(
 // ============================================================================
 // 1. メイン関数（非同期化し、ロック期間を最小化）
 // ============================================================================
-pub async fn process_policy_decision(req: &Request) -> PolicyResult {
+pub async fn process_policy_decision(
+    req: &mut Request
+) -> PolicyResult {
     let compiled = bundle();
 
-    // 1. AppStateのロックを取得する *前* に、重い名前解決を非同期 (spawn_blocking) で済ませる
-    let target_uid = req.uid; 
+    let target_uid = req.uid;
 
     let request_user = tokio::task::spawn_blocking(move || {
-        uid_to_name(target_uid).ok() // 戻り値は Option<String> と推測される
+        uid_to_name(target_uid).ok()
     })
     .await
-    .unwrap_or(None); // 万が一タスクがパニックしても None として安全に扱う
+    .unwrap_or(None);
 
-    // 【フェーズ1】一瞬だけロックを取り、判定に必要な事実（ファクト）だけをコピー
     let (session_info, current_epoch) = {
         let state = app_state().lock().await;
+
         (
-            state.check_registered_session(&req.session_tty, req.uid, request_user.as_deref()),
+            state.check_registered_session(
+                &req.session_tty,
+                req.uid,
+                request_user.as_deref()
+            ),
             state.current_epoch
         )
-    }; // 即座にロック解放！
+    };
 
-    // 【フェーズ2】ロックを持たない状態で、重いポリシー評価を並行実行
-    let ctx = request_to_ctx(req, &compiled.roles, session_info);
-    let decision = evaluate(&compiled.policy, &ctx);
+    let ctx =
+        request_to_ctx(req, &compiled.roles, session_info);
 
-    // 【フェーズ3】評価結果に応じた処理へルーティング
+    let decision =
+        evaluate(&compiled.policy, &ctx);
+
     match decision {
-        Decision::Pass => build_not_managed_result(req, current_epoch),
-        Decision::NoMatchManaged => build_no_match_result(),
-        Decision::Matched(rule) => apply_matched_rule(rule, req, current_epoch).await,
+        //
+        // 管理対象外
+        //
+        Decision::Pass => {
+            // prog_sha256 は None のまま
+            build_not_managed_result(req, current_epoch)
+        }
+
+        //
+        // Managedだがルールなし → DENY
+        //
+        Decision::NoMatchManaged => {
+            ensure_program_hash(req).await;
+
+            build_no_match_result()
+        }
+
+        //
+        // ルールにマッチ
+        //
+        Decision::Matched(rule) => {
+            if !rule.ticket_profile.is_silent_io() {
+                ensure_program_hash(req).await;
+            }
+
+            apply_matched_rule(
+                rule,
+                req,
+                current_epoch
+            )
+            .await
+        }
     }
 }
 
@@ -202,13 +239,6 @@ async fn apply_matched_rule(r: &CompiledRule, req: &Request, current_epoch: u32)
             }
         }
     }
-}
-
-#[inline]
-fn to_kernel_dev(u_dev: u64) -> u32 {
-    let major = ((u_dev >> 8) & 0xfff) as u32;
-    let minor = ((u_dev & 0xff) | ((u_dev >> 12) & 0xfff00)) as u32;
-    (major << 20) | minor
 }
 
 // ============================================================================
@@ -373,6 +403,7 @@ async fn reply_to_kernel(nl_tx: &NlWriter, req: &Request, policy_result: &mut Po
         PolicyDecision::Approved(approved) => {
             // メタデータの補完
             approved.origin_program = req.raw_program.clone();
+            approved.origin_program_sha256 = req.prog_sha256.clone();
             approved.origin_script = req.raw_script.clone();
 
             // --- パスの補完 ---

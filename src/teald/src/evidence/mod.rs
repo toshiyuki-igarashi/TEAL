@@ -4,11 +4,21 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
+
 pub mod schema;
 mod context;
 mod storage;
 
-use std::io;
+use once_cell::sync::Lazy;
+use dashmap::DashMap;
+
+use std::fs::File;
+use std::io::{self, Read};
+use std::os::unix::fs::MetadataExt;
+use std::sync::{Arc, Mutex};
+
+use sha2::{Digest, Sha256};
+
 use std::sync::OnceLock;
 
 use chrono::Utc;
@@ -19,7 +29,11 @@ use uuid::Uuid;
 use teal_policy_engine::util::{uid_to_name, ktime_prefix, u32_to_str};
 use teal_policy_engine::types::Effect;
 
-use crate::types::{PreApprovalDraft, ApprovedTicket, PendingEntry, MgmtPendingCtl, MgmtCtlKind, KernelEventLog};
+use crate::types::{
+    PreApprovalDraft, ApprovedTicket, PendingEntry, MgmtPendingCtl, MgmtCtlKind,
+    KernelEventLog, Request
+};
+use crate::types::{EntityId, to_kernel_dev};
 use self::schema::{
     AuditLogEntry, AuthInfo, LogType, ObjectInfo, PolicyEvalResult, SubjectInfo,
     SyscallContext, TicketRef, IssuedTicketInfo,
@@ -105,8 +119,10 @@ impl EvidenceManager {
     /// Fast Path (チケット消費時) のログ記録
     /// 軽量化のため args は無し、TicketID参照のみ
     async fn enqueue_fast_path(&self, log_type: LogType, event_log: &KernelEventLog, ticket: &ApprovedTicket) {
-        // Hash計算 (Slow Pathは実ファイルから計算)
-        let hash = calculate_sha256(&ticket.origin_program).unwrap_or_else(|_| "HASH_CALC_FAILED".to_string());
+        // Hash取得
+        let hash = ticket.origin_program_sha256
+            .clone()
+            .unwrap_or_else(|| "HASH_NOT_CALCULATED".to_string());
 
         let entry = AuditLogEntry {
             ver: "1.5".to_string(),
@@ -186,8 +202,10 @@ impl EvidenceManager {
         // 1. Enrich: コンテキスト解決
         let env_ctx = context::ContextResolver::resolve(pending.subject.pid);
         
-        // 2. Hash計算 (Slow Pathは実ファイルから計算)
-        let hash = calculate_sha256(&pending.subject.program_path).unwrap_or_else(|_| "HASH_CALC_FAILED".to_string());
+        // 2. Hash取得
+        let hash = pending.subject.program_hash
+            .clone()
+            .unwrap_or_else(|| "HASH_NOT_CALCULATED".to_string());
 
         // 3. 構造体組み立て
         let entry = AuditLogEntry {
@@ -271,8 +289,10 @@ impl EvidenceManager {
         draft: &PreApprovalDraft,
         ticket: &ApprovedTicket,
     ) {
-        // 2. Hash計算 (Slow Pathは実ファイルから計算)
-        let hash = calculate_sha256(&ticket.origin_program).unwrap_or_else(|_| "HASH_CALC_FAILED".to_string());
+        // 2. Hash取得
+        let hash = ticket.origin_program_sha256
+            .clone()
+            .unwrap_or_else(|| "HASH_NOT_CALCULATED".to_string());
 
         // 3. 構造体組み立て
         let entry = AuditLogEntry {
@@ -345,7 +365,8 @@ impl EvidenceManager {
         decision: Effect,
         pending_ctl: &MgmtPendingCtl,
     ) {
-        let hash = calculate_sha256("/bin/teal-cli").unwrap_or_else(|_| "HASH_CALC_FAILED".to_string());
+        let hash = get_or_calculate_file_hash("/bin/teal-cli")
+            .unwrap_or_else(|_| "HASH_CALC_FAILED".to_string());
 
         // MgmtCtlKind に応じて、ログに出力する文字列を動的に切り替える
         let (action_str, object_path, arg_str) = match pending_ctl.kind {
@@ -420,22 +441,407 @@ fn get_hostname() -> String {
         .unwrap_or_else(|_| "localhost".to_string())
 }
 
-/// ファイルのSHA256ハッシュを計算
-pub fn calculate_sha256(path: &str) -> io::Result<String> {
-    use sha2::{Sha256, Digest};
-    use std::fs::File;
-    use std::io::Read;
+/// ファイルのSHA256演算のキャッシュ
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileMeta {
+    pub size: u64,
 
-    let mut file = File::open(path)?;
+    pub mtime_sec: i64,
+    pub mtime_nsec: i64,
+
+    pub ctime_sec: i64,
+    pub ctime_nsec: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileHashEntry {
+    pub meta: FileMeta,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProcessKey {
+    pub pid: u32,
+    pub start_time: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProcessBinding {
+    pub file_id: EntityId,
+    pub sha256: String,
+}
+
+pub static FILE_HASH_CACHE: Lazy<DashMap<EntityId, FileHashEntry>>
+    = Lazy::new(DashMap::new);
+
+pub static PROCESS_BINDINGS: Lazy<DashMap<ProcessKey, ProcessBinding>>
+    = Lazy::new(DashMap::new);
+
+static HASH_LOCKS: Lazy<DashMap<EntityId, Arc<Mutex<()>>>> =
+    Lazy::new(DashMap::new);
+
+fn file_meta(file: &File) -> io::Result<(EntityId, FileMeta)> {
+    let metadata = file.metadata()?;
+
+    let file_id = EntityId {
+        dev: to_kernel_dev(metadata.dev()) as u64,
+        ino: metadata.ino(),
+    };
+
+    let meta = FileMeta {
+        size: metadata.size(),
+        mtime_sec: metadata.mtime(),
+        mtime_nsec: metadata.mtime_nsec(),
+        ctime_sec: metadata.ctime(),
+        ctime_nsec: metadata.ctime_nsec(),
+    };
+
+    Ok((file_id, meta))
+}
+
+pub async fn ensure_program_hash(req: &mut Request) {
+    if req.prog_sha256.is_some() {
+        return;
+    }
+
+    let pid = req.pid;
+
+    let file_id = EntityId::new((
+        req.prog_dev,
+        req.prog_ino,
+    ));
+
+    let path = req.raw_program.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        get_or_calculate_bound_program_hash(
+            pid,
+            file_id,
+            &path,
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(hash)) => {
+            req.prog_sha256 = Some(hash);
+        }
+
+        Ok(Err(e)) => {
+            eprintln!(
+                "[WARN] SHA256 calculation failed for {}: {}",
+                req.raw_program,
+                e
+            );
+
+            req.prog_sha256 =
+                Some("HASH_CALC_FAILED".to_string());
+        }
+
+        Err(e) => {
+            eprintln!(
+                "[WARN] SHA256 worker failed for {}: {}",
+                req.raw_program,
+                e
+            );
+
+            req.prog_sha256 =
+                Some("HASH_CALC_FAILED".to_string());
+        }
+    }
+}
+
+/// ファイルのSHA256ハッシュを計算
+fn calculate_sha256_from_file(file: &mut File) -> io::Result<String> {
     let mut hasher = Sha256::new();
-    let mut buffer = [0; 1024];
+    let mut buffer = [0u8; 64 * 1024];
 
     loop {
         let count = file.read(&mut buffer)?;
-        if count == 0 { break; }
+
+        if count == 0 {
+            break;
+        }
+
         hasher.update(&buffer[..count]);
     }
 
     let result = hasher.finalize();
+
     Ok(format!("sha256:{:x}", result))
+}
+
+pub fn get_or_calculate_program_hash(
+    expected_id: EntityId,
+    path: &str,
+) -> io::Result<String> {
+    get_or_calculate_hash(path, Some(expected_id))
+}
+
+pub fn get_or_calculate_file_hash(
+    path: &str,
+) -> io::Result<String> {
+    get_or_calculate_hash(path, None)
+}
+
+/// ファイルのSHA256ハッシュを取得
+fn get_or_calculate_hash(
+    path: &str,
+    expected_id: Option<EntityId>,
+) -> io::Result<String> {
+    //
+    // 1. ファイルをopen
+    //
+    // このFDを最後まで使用する。
+    //
+    let mut file = File::open(path)?;
+
+    let (actual_id, current_meta) = file_meta(&file)?;
+
+    //
+    // REQ由来の場合は、カーネルが報告した(dev, ino)との一致を確認
+    //
+    if let Some(file_id) = expected_id {
+        if actual_id != file_id {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "program identity mismatch: expected dev={} ino={}, actual dev={} ino={}",
+                    file_id.dev,
+                    file_id.ino,
+                    actual_id.dev,
+                    actual_id.ino,
+                ),
+            ));
+        }
+    }
+
+    //
+    // 2. Fast path: cache確認
+    //
+    if let Some(entry) = FILE_HASH_CACHE.get(&actual_id) {
+        if entry.meta == current_meta {
+            let hash = entry.sha256.clone();
+            drop(entry);
+
+            return Ok(hash);
+        }
+    }
+
+    // metadataが異なる古いcacheは削除
+    FILE_HASH_CACHE.remove(&actual_id);
+
+    //
+    // 3. 同一(dev, ino)のSHA計算を1workerだけにする
+    //
+    let lock = HASH_LOCKS
+        .entry(actual_id)
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone();
+
+    let _guard = lock
+        .lock()
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                "hash lock poisoned",
+            )
+        })?;
+
+    //
+    // 4. lock待ち中にファイルが変更されている可能性があるので
+    //    同じFDからmetadataを再取得
+    //
+    let (actual_id_before, before) = file_meta(&file)?;
+
+    if actual_id_before != actual_id {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "program identity changed before calculating SHA-256",
+        ));
+    }
+
+    //
+    // lock待ち中に別workerがhashを登録した可能性があるので再確認
+    //
+    if let Some(entry) = FILE_HASH_CACHE.get(&actual_id) {
+        if entry.meta == before {
+            let hash = entry.sha256.clone();
+            drop(entry);
+
+            return Ok(hash);
+        }
+    }
+
+    FILE_HASH_CACHE.remove(&actual_id);
+
+    //
+    // 5. SHA-256計算
+    //
+    let hash = calculate_sha256_from_file(&mut file)?;
+
+    //
+    // 6. SHA計算後、同じFDのmetadataを再確認
+    //
+    let (actual_id_after, after) = file_meta(&file)?;
+
+    if actual_id_after != actual_id {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "program identity changed while calculating SHA-256",
+        ));
+    }
+
+    if before != after {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "program metadata changed while calculating SHA-256",
+        ));
+    }
+
+    //
+    // 7. cache登録
+    //
+    FILE_HASH_CACHE.insert(
+        actual_id,
+        FileHashEntry {
+            meta: after,
+            sha256: hash.clone(),
+        },
+    );
+
+    Ok(hash)
+}
+
+fn process_start_time(pid: u32) -> io::Result<u64> {
+    let stat = std::fs::read_to_string(
+        format!("/proc/{}/stat", pid)
+    )?;
+
+    // comm は "(...)" 内に空白を含む可能性があるので、
+    // 単純な split_whitespace() をファイル全体には使わない。
+    let end_comm = stat.rfind(')').ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid /proc/<pid>/stat format",
+        )
+    })?;
+
+    // ')' の後は field 3 (state) から始まる
+    let fields: Vec<&str> =
+        stat[end_comm + 1..].split_whitespace().collect();
+
+    // starttime は field 22
+    // field 3 を index 0 とすると 22 - 3 = 19
+    let start_time = fields
+        .get(19)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "missing starttime in /proc/<pid>/stat",
+            )
+        })?
+        .parse::<u64>()
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid process starttime: {}", e),
+            )
+        })?;
+
+    Ok(start_time)
+}
+
+pub fn get_or_calculate_bound_program_hash(
+    pid: u32,
+    file_id: EntityId,
+    path: &str,
+) -> io::Result<String> {
+    //
+    // ProcessBinding は補助キャッシュ。
+    // Audit Lane ではREQ処理時点ですでにプロセスが終了している
+    // 可能性があるので、start_time取得失敗だけでhash取得を失敗させない。
+    //
+    let process_key = process_start_time(pid)
+        .ok()
+        .map(|start_time| ProcessKey {
+            pid,
+            start_time,
+        });
+
+    //
+    // 1. 同一プロセス・同一実行ファイルなら、
+    //    REQ時に確定済みのhashをそのまま使用
+    //
+    if let Some(key) = process_key {
+        if let Some(binding) = PROCESS_BINDINGS.get(&key) {
+            if binding.file_id == file_id {
+                let hash = binding.sha256.clone();
+                drop(binding);
+
+                return Ok(hash);
+            }
+
+            // file_id が異なる場合は、
+            // 同じPIDでexecされた可能性があるのでエラーにはしない。
+            drop(binding);
+        }
+    }
+
+    //
+    // 2. ProcessBindingがない、またはexec後
+    //
+    let hash =
+        get_or_calculate_program_hash(file_id, path)?;
+
+    //
+    // 3. 今回確定した実体をprocessへbind
+    //
+    if let Some(key) = process_key {
+        PROCESS_BINDINGS.insert(
+            key,
+            ProcessBinding {
+                file_id,
+                sha256: hash.clone(),
+            },
+        );
+    }
+
+    Ok(hash)
+}
+
+pub fn invalidate_file_hash(file_id: EntityId) {
+    FILE_HASH_CACHE.remove(&file_id);
+}
+
+pub fn invalidate_hash_cache_for_request(req: &Request) {
+    let action = req.raw_action.to_ascii_uppercase();
+
+    match action.as_str() {
+        "WRITE" | "UNLINK" | "RENAME" => {
+            if req.target_dev != 0 || req.target_ino != 0 {
+                let file_id = EntityId::new((
+                    req.target_dev,
+                    req.target_ino,
+                ));
+
+                FILE_HASH_CACHE.remove(&file_id);
+            }
+
+            // RENAME先に実体IDがある場合も保守的にinvalidate
+            if action == "RENAME"
+                && (req.new_target_dev != 0
+                    || req.new_target_ino != 0)
+            {
+                let file_id = EntityId::new((
+                    req.new_target_dev,
+                    req.new_target_ino,
+                ));
+
+                FILE_HASH_CACHE.remove(&file_id);
+            }
+        }
+
+        _ => {}
+    }
 }

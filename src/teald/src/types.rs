@@ -23,7 +23,6 @@ use teal_policy_engine::ir::{CompiledRule, RegisteredSession};
 use teal_policy_engine::util::{uid_to_name, normalize_opt_field, normalize_tty_name, ktime_prefix};
 use teal_policy_engine::types::{Effect, RuleType};
 
-use crate::evidence;
 use crate::state::app_state;
 use crate::bundle::bundle;
 use crate::ticket::{is_ticketable, ticket_from_entry};
@@ -96,6 +95,7 @@ pub struct Request {
 
     pub prog_dev: u64,      // 実行バイナリのデバイス番号
     pub prog_ino: u64,      // 実行バイナリのinode番号
+    pub prog_sha256: Option<String>,
     pub raw_program: String,
 
     pub raw_action: String,
@@ -134,6 +134,7 @@ impl Request {
             gid: nl_req.gid,
             prog_dev: nl_req.prog_dev as u64,
             prog_ino: nl_req.prog_ino,
+            prog_sha256: None,
             raw_program: nl_req.program, // .clone()不要でムーブできるため高速
             raw_action: nl_req.action,
             target_dev: nl_req.target_dev as u64,
@@ -320,6 +321,7 @@ pub struct ApprovedTicket {
     // Strict Context Binding（確定済み）
     pub uid: u32,
     pub origin_program_id: EntityId,
+    pub origin_program_sha256: Option<String>,
     pub origin_script_id: Option<EntityId>,
     pub origin_applet: Option<String>,
     pub object_id: EntityId,
@@ -372,6 +374,7 @@ impl ApprovedTicket {
             new_object,
             uid: ticket.uid,
             origin_program_id: EntityId::new((ticket.prog_dev, ticket.prog_ino)),
+            origin_program_sha256: req.prog_sha256.clone(),
             origin_script_id: if ticket.script_dev != 0 || ticket.script_ino != 0 {
                 Some(EntityId::new((ticket.script_dev, ticket.script_ino)))
             } else {
@@ -415,6 +418,7 @@ impl ApprovedTicket {
                 ticket_id: draft.draft_id.clone(),
                 rule_id: rule.id,
                 origin_program,
+                origin_program_sha256: None,
                 origin_script,
                 object,
                 new_object,
@@ -459,6 +463,7 @@ impl ApprovedTicket {
             rule_id,
             
             origin_program: entry.subject.program_path.clone(),
+            origin_program_sha256: None,
             origin_script: entry.subject.script_path.clone(),
             object: entry.object.path.clone(),
             new_object: entry.object.new_path.clone(),
@@ -494,6 +499,14 @@ impl fmt::Display for EntityId {
         write!(f, "{}:{}", self.dev, self.ino)
     }
 }
+
+#[inline]
+pub fn to_kernel_dev(u_dev: u64) -> u32 {
+    let major = ((u_dev >> 8) & 0xfff) as u32;
+    let minor = ((u_dev & 0xff) | ((u_dev >> 12) & 0xfff00)) as u32;
+    (major << 20) | minor
+}
+
 
 #[derive(Debug, Clone)]
 pub struct PendingEntry {
@@ -573,7 +586,7 @@ impl PendingEntry {
                 script_ino: req.script_ino,
                 script_path: req.raw_script.clone(),
                 applet_name: req.raw_applet.clone(),
-                program_hash: evidence::calculate_sha256(&req.raw_program).unwrap_or_else(|_| "HASH_CALC_FAILED".to_string()),
+                program_hash: req.prog_sha256.clone(),
                 lsm_label: decoded_lsm,
                 client_ip: None,
                 auth_method: None,
@@ -682,7 +695,7 @@ impl PendingEntry {
                 script_path: req.raw_script.clone(),
                 applet_name: req.raw_applet.clone(),
                 // teald側でのハッシュ計算
-                program_hash: evidence::calculate_sha256(&req.raw_program).unwrap_or_else(|_| "HASH_CALC_FAILED".to_string()),
+                program_hash: req.prog_sha256.clone(),
                 lsm_label: decoded_lsm,
                 client_ip: None,   // 後続のエンリッチ処理 (SSHコンテキスト解決) で埋める
                 auth_method: None, // 後続のエンリッチ処理で埋める
@@ -806,7 +819,7 @@ pub struct SubjectContext {
 
     // Integrity & Security Context (Section 6.7)
     /// 実行バイナリの事後計算ハッシュ (TOCTOU対策/監査用)
-    pub program_hash: String, 
+    pub program_hash: Option<String>, 
     /// SELinux/AppArmorラベル (Hexデコード済み)
     pub lsm_label: String,
 

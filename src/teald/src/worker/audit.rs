@@ -14,11 +14,12 @@ use crate::types::{next_audit_ticket_id, ACTIVE_TICKETS, is_drain};
 use crate::bundle::bundle;
 use crate::decide::request_to_ctx;
 use crate::evidence::EvidenceManager;
+use crate::evidence::{ensure_program_hash, invalidate_hash_cache_for_request};
 use crate::evidence::schema::LogType;
 use crate::netlink::{self, TealNetlinkMessage, TealReq, TealInfo};
 
 use teal_policy_engine::types::{Effect, RuleType};
-use teal_policy_engine::ir::Decision;
+use teal_policy_engine::ir::{Decision, CompiledRule};
 use teal_policy_engine::util::{uid_to_name, ktime_prefix};
 use teal_policy_engine::eval::evaluate;
 use teal_policy_engine::raw::{TEAL_TICKET_FLG_SILENT_IO, TEAL_TICKET_FLG_INHERIT};
@@ -113,10 +114,11 @@ pub async fn handle_internal_event(event: InternalEvent) {
 /// AUDITレーンから流れてきた REQ メッセージを処理し、ログを出力する
 pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
     // 1. 変換: Netlinkリクエストを内部の Request 型にマッピング
-    let req = Request::from_audit_teal_req(nl_req);
+    let mut req = Request::from_audit_teal_req(nl_req);
+    invalidate_hash_cache_for_request(&req);
 
     // 2. 評価: ポリシーの評価と、必要なチケット（キャッシュ）の準備
-    let eval_result = evaluate_audit_request(&req).await;
+    let eval_result = evaluate_audit_request(&mut req).await;
 
     // 3. 送信: チケットのカーネルへの送信（必要な場合のみ）
     let is_cache_issued = eval_result.ticket_to_send.is_some();
@@ -141,132 +143,203 @@ pub struct AuditEvalResult {
     pub issued_ticket_id: String,
 }
 
-/// ポリシーを評価し、発行すべきチケットがあれば生成する
-async fn evaluate_audit_request(req: &Request) -> AuditEvalResult {
-    let mut ticket_to_send: Option<TicketPayload> = None;
-    let mut issued_ticket_id = "0".to_string();
+enum AuditRoute {
+    Pass,
+    NoMatchManaged,
+    Matched(CompiledRule),
+}
 
+/// ポリシーを評価し、発行すべきチケットがあれば生成する
+async fn evaluate_audit_request(
+    req: &mut Request
+) -> AuditEvalResult {
     let compiled = bundle();
 
-    // 1. AppStateのロックを取得する *前* に、重い名前解決を非同期 (spawn_blocking) で済ませる
-    let target_uid = req.uid; 
+    let target_uid = req.uid;
 
     let request_user = tokio::task::spawn_blocking(move || {
-        uid_to_name(target_uid).ok() 
+        uid_to_name(target_uid).ok()
     })
     .await
-    .unwrap_or(None); // 万が一タスクがパニックしても None として安全に扱う
+    .unwrap_or(None);
 
-    // 2. ロックを取得し、瞬時に判定を行う
-    let state = app_state().lock().await;
-    let session_info = state.check_registered_session(&req.session_tty, req.uid, request_user.as_deref());
-    drop(state); 
-    
-    let ctx = request_to_ctx(req, &compiled.roles, session_info);
+    let session_info = {
+        let state = app_state().lock().await;
 
-    let (effect, rule_id) = match evaluate(&compiled.policy, &ctx) {
-        Decision::Pass => {
-            let payload = create_not_managed_ticket(req);
-            issued_ticket_id = payload.ticket_id.clone();
-            ticket_to_send = Some(payload);
-            (Effect::Allow, None)
-        },
-        Decision::NoMatchManaged => (Effect::Deny, None),
+        state.check_registered_session(
+            &req.session_tty,
+            req.uid,
+            request_user.as_deref()
+        )
+    };
+
+    let ctx = request_to_ctx(
+        req,
+        &compiled.roles,
+        session_info
+    );
+
+    //
+    // evaluate() が返したrule参照をawait越しに保持しないため、
+    // CompiledRuleをcloneしてownedにする
+    //
+    let route = match evaluate(&compiled.policy, &ctx) {
+        Decision::Pass => AuditRoute::Pass,
+
+        Decision::NoMatchManaged => {
+            AuditRoute::NoMatchManaged
+        }
+
         Decision::Matched(r) => {
-            let eff = match r.effect.as_str() {
-                "allow" => Effect::Allow,
-                "deny" => Effect::Deny,
-                "need_approval" => Effect::NeedApproval,
-                "audit_only" => Effect::AuditOnly,
-                _ => Effect::Deny,
-            };
-
-            if (eff == Effect::Allow || eff == Effect::AuditOnly) 
-                && r.ticket_profile.flags != 0 
-                && r.pre_approval.ttl_sec > 0 
-            {
-                let ticket_id = next_audit_ticket_id();
-                issued_ticket_id = ticket_id.clone();
-
-                let (target_dev, target_ino) = if r.rule_type == RuleType::SubjectOnly {
-                    (0, 0)
-                } else {
-                    (req.target_dev, req.target_ino)
-                };
-
-                let (new_target_dev, new_target_ino) = if r.rule_type == RuleType::SubjectOnly {
-                    (0, 0)
-                } else {
-                    (req.new_target_dev, req.new_target_ino)
-                };
-
-                let mut safe_flags = r.ticket_profile.flags;
-                if (safe_flags & TEAL_TICKET_FLG_INHERIT) != 0 && (safe_flags & TEAL_TICKET_FLG_SILENT_IO) == 0 {
-                    eprintln!("{}[WARN] Rule '{}' specifies INHERIT without SILENT_IO. Auto-appending SILENT_IO to prevent Netlink log storm.", ktime_prefix(), r.id);
-                    safe_flags |= TEAL_TICKET_FLG_SILENT_IO;
-                }
-
-                ticket_to_send = Some(TicketPayload {
-                    ticket_id: ticket_id.clone(),
-                    uid: req.uid,
-                    op: r.action_match.to_u32(),
-                    prog_dev: req.prog_dev,
-                    prog_ino: req.prog_ino,
-                    script_dev: req.script_dev,
-                    script_ino: req.script_ino,
-                    applet_hash: 0,
-                    target_dev,
-                    target_ino,
-                    new_target_dev,
-                    new_target_ino,
-                    expires_in_sec: r.pre_approval.ttl_sec,
-                    flags: safe_flags,
-                    uses_left: r.max_uses,
-                    epoch: 0,
-                    audit_flags: r.audit_level.to_u32(),
-                });
-
-                let origin_script_id = if req.script_dev != 0 || req.script_ino != 0 {
-                    Some(EntityId::new((req.script_dev, req.script_ino)))
-                } else {
-                    None
-                };
-
-                let approved_ticket = ApprovedTicket {
-                    ticket_id: ticket_id.clone(),
-                    rule_id: r.id.clone(),
-                    origin_program: req.raw_program.clone(),
-                    origin_script: req.raw_script.clone(),
-                    object: req.raw_target.clone(),
-                    new_object: req.raw_new_target.clone(),
-                    uid: req.uid,
-                    origin_program_id: EntityId::new((req.prog_dev, req.prog_ino)),
-                    origin_script_id,
-                    origin_applet: req.raw_applet.clone(),
-                    object_id: EntityId::new((req.target_dev, req.target_ino)),
-                    new_object_id: if req.new_target_dev != 0 || req.new_target_ino != 0 {
-                        Some(EntityId::new((req.new_target_dev, req.new_target_ino)))
-                    } else {
-                        None
-                    },
-                    op_mask: r.action_match.to_u32(),
-                    ttl_sec: r.pre_approval.ttl_sec,
-                    max_uses: r.max_uses,
-                };
-
-                ACTIVE_TICKETS.insert(ticket_id, approved_ticket);
-            }
-
-            (eff, Some(r.id.clone()))
+            AuditRoute::Matched(r.clone())
         }
     };
 
+    match route {
+        AuditRoute::Pass => {
+            build_audit_not_managed_result(req)
+        }
+
+        AuditRoute::NoMatchManaged => {
+            ensure_program_hash(req).await;
+
+            build_audit_no_match_result()
+        }
+
+        AuditRoute::Matched(rule) => {
+            if !rule.ticket_profile.is_silent_io() {
+                ensure_program_hash(req).await;
+            }
+
+            build_audit_matched_result(
+                req,
+                &rule,
+            )
+        }
+    }
+}
+
+fn build_audit_not_managed_result(
+    req: &Request
+) -> AuditEvalResult {
+    let payload = create_not_managed_ticket(req);
+
+    AuditEvalResult {
+        effect: Effect::Allow,
+        rule_id: None,
+        issued_ticket_id: payload.ticket_id.clone(),
+        ticket_to_send: Some(payload),
+    }
+}
+
+fn build_audit_no_match_result() -> AuditEvalResult {
+    AuditEvalResult {
+        effect: Effect::Deny,
+        rule_id: None,
+        ticket_to_send: None,
+        issued_ticket_id: "0".to_string(),
+    }
+}
+
+fn build_audit_matched_result(
+    req: &Request,
+    r: &CompiledRule,
+) -> AuditEvalResult {
+    let mut ticket_to_send = None;
+    let mut issued_ticket_id = "0".to_string();
+
+    let effect = match r.effect.as_str() {
+        "allow" => Effect::Allow,
+        "deny" => Effect::Deny,
+        "need_approval" => Effect::NeedApproval,
+        "audit_only" => Effect::AuditOnly,
+        _ => Effect::Deny,
+    };
+
+    if (effect == Effect::Allow || effect == Effect::AuditOnly) 
+        && r.ticket_profile.flags != 0 
+        && r.pre_approval.ttl_sec > 0 
+    {
+        let ticket_id = next_audit_ticket_id();
+        issued_ticket_id = ticket_id.clone();
+
+        let (target_dev, target_ino) = if r.rule_type == RuleType::SubjectOnly {
+            (0, 0)
+        } else {
+            (req.target_dev, req.target_ino)
+        };
+
+        let (new_target_dev, new_target_ino) = if r.rule_type == RuleType::SubjectOnly {
+            (0, 0)
+        } else {
+            (req.new_target_dev, req.new_target_ino)
+        };
+
+        let mut safe_flags = r.ticket_profile.flags;
+        if (safe_flags & TEAL_TICKET_FLG_INHERIT) != 0 && (safe_flags & TEAL_TICKET_FLG_SILENT_IO) == 0 {
+            eprintln!("{}[WARN] Rule '{}' specifies INHERIT without SILENT_IO. Auto-appending SILENT_IO to prevent Netlink log storm.", ktime_prefix(), r.id);
+            safe_flags |= TEAL_TICKET_FLG_SILENT_IO;
+        }
+
+        ticket_to_send = Some(TicketPayload {
+            ticket_id: ticket_id.clone(),
+            uid: req.uid,
+            op: r.action_match.to_u32(),
+            prog_dev: req.prog_dev,
+            prog_ino: req.prog_ino,
+            script_dev: req.script_dev,
+            script_ino: req.script_ino,
+            applet_hash: 0,
+            target_dev,
+            target_ino,
+            new_target_dev,
+            new_target_ino,
+            expires_in_sec: r.pre_approval.ttl_sec,
+            flags: safe_flags,
+            uses_left: r.max_uses,
+            epoch: 0,
+            audit_flags: r.audit_level.to_u32(),
+        });
+
+        let origin_script_id = if req.script_dev != 0 || req.script_ino != 0 {
+            Some(EntityId::new((req.script_dev, req.script_ino)))
+        } else {
+            None
+        };
+
+        let approved_ticket = ApprovedTicket {
+            ticket_id: ticket_id.clone(),
+            rule_id: r.id.clone(),
+            origin_program: req.raw_program.clone(),
+            origin_program_sha256: req.prog_sha256.clone(),
+            origin_script: req.raw_script.clone(),
+            object: req.raw_target.clone(),
+            new_object: req.raw_new_target.clone(),
+            uid: req.uid,
+            origin_program_id: EntityId::new((req.prog_dev, req.prog_ino)),
+            origin_script_id,
+            origin_applet: req.raw_applet.clone(),
+            object_id: EntityId::new((req.target_dev, req.target_ino)),
+            new_object_id: if req.new_target_dev != 0 || req.new_target_ino != 0 {
+                Some(EntityId::new((req.new_target_dev, req.new_target_ino)))
+            } else {
+                None
+            },
+            op_mask: r.action_match.to_u32(),
+            ttl_sec: r.pre_approval.ttl_sec,
+            max_uses: r.max_uses,
+        };
+
+        ACTIVE_TICKETS.insert(ticket_id, approved_ticket);
+    }
+
     AuditEvalResult {
         effect,
-        rule_id,
+        rule_id: Some(r.id.clone()),
         ticket_to_send,
         issued_ticket_id,
     }
+
 }
 
 /// ペンディングエントリを作成・エンリッチし、ディスクにログを記録する
