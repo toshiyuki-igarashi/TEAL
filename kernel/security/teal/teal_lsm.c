@@ -745,8 +745,8 @@ static struct teal_request *teal_req_build(const char *action,
     return req;
 }
 
-#define TEAL_DECISION_TIMEOUT_HZ    msecs_to_jiffies(3000) // 3000ms = 3秒
-#define TEAL_DECISION_APPROVE       0                       // 0 (ALLOW)
+#define TEAL_DECISION_TIMEOUT_HZ    msecs_to_jiffies(3000)  // 3000ms = 3秒
+#define TEAL_DECISION_APPROVE       1                       // 0 (ALLOW)
 
 int teal_req_wait(struct teal_request *req)
 {

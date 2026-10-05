@@ -409,6 +409,7 @@ pub async fn handle_kernel_info(info: TealInfo) -> Result<()> {
                 "CONSUMED" => info.uses_left == 0,
                 _ => false,
             };
+            drop(ticket);
             if should_remove {
                 ACTIVE_TICKETS.remove(&ticket_id);
             }
