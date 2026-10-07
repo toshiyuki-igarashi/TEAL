@@ -7,10 +7,6 @@ edition = "2021"
 name = "teald"
 path = "src/main.rs"
 
-[[bin]]
-name = "teal-bench"
-path = "src/bench.rs"
-
 [dependencies]
 anyhow = "1.0"              # エラーハンドリング (初期化時のファイルオープン失敗などの処理)
 serde = { version = "1.0", features = ["derive"] }      # JSONのシリアライズ・デシリアライズ

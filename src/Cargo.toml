@@ -5,6 +5,7 @@ members = [
   "pam_teal",
   "teal-cli",
   "teal-logview",
+  "teal-bench",
 ]  
 resolver = "2"
 

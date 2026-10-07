@@ -1,0 +1,10 @@
+[package]
+name = "teal-bench"
+version = "0.5.0"
+edition = "2021"
+
+[[bin]]
+name = "teal-bench"
+path = "src/main.rs"
+
+[dependencies]

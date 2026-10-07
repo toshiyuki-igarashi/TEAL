@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /*
- * TEAL Daemon (teald)
+ * TEAL bench (teal-bench)
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
