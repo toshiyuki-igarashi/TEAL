@@ -556,6 +556,119 @@ fn sort_rules_for_display(optimized_rules: &mut [RawRule]) {
     });
 }
 
+type ProfileEvents = HashMap<ProfileKey, Vec<DateTime<Utc>>>;
+
+/// 監査ログを読み込み、ProfileKey ごとにアクセス時刻を収集する
+fn collect_profile_events(
+    log_file: &Path,
+    since: Option<DateTime<Utc>>,
+    target: ProfileTarget,
+    deny_only: bool,
+    object_filter: Option<&str>,
+) -> Result<ProfileEvents> {
+    let log_reader = LogReader::new(log_file)?;
+    let mut index = TicketIndex::new();
+
+    // ProfileKey ごとにアクセス発生時刻を保存する
+    let mut profile_events: ProfileEvents = HashMap::new();
+
+    for line_result in log_reader.reader.lines() {
+        let line = line_result.context("Error reading line from log file")?;
+
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let entry = match process_log_line(&line, &mut index) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        // 1. 時間フィルタ (--since)
+        if let Some(since_time) = since {
+            if entry.ts < since_time {
+                continue;
+            }
+        }
+
+        // 2. deny-only フィルタ (--deny-only)
+        if deny_only && extract_result(&entry) != "DENY" {
+            continue;
+        }
+
+        // 3. ターゲット別フィルタ
+        match target {
+            ProfileTarget::AllowDraft => {
+                let result = extract_result(&entry);
+                let rule_id = extract_rule_id(&entry);
+
+                if result != "DENY" && !rule_id.is_empty() && rule_id != "-" {
+                    continue;
+                }
+            }
+
+            ProfileTarget::AntiStorm => {
+                // Anti-Storm はすべてのログを対象にする
+            }
+        }
+
+        // 4. パス解決
+        let (target_path, new_path_opt) =
+            resolve_target_path(&entry, &index);
+
+        // 5. object フィルタ
+        if let Some(filter_obj) = object_filter {
+            let is_target_match =
+                is_object_match(filter_obj, &target_path);
+
+            let is_new_path_match = new_path_opt
+                .as_ref()
+                .is_some_and(|np| is_object_match(filter_obj, np));
+
+            if !is_target_match && !is_new_path_match {
+                continue;
+            }
+        }
+
+        // 6. ProfileKey の生成
+        let key = ProfileKey {
+            user: entry.syscall_context.user.clone(),
+            subject_program: extract_subject_path(&entry).to_string(),
+            origin_applet: extract_applet(&entry).to_string(),
+            object_path: target_path,
+            new_path: new_path_opt,
+            action: entry.syscall_context.action.clone(),
+            login_context: extract_raw_login_context(&entry),
+        };
+
+        // 7. 件数ではなく発生時刻を保存
+        profile_events
+            .entry(key)
+            .or_default()
+            .push(entry.ts);
+    }
+
+    Ok(profile_events)
+}
+
+fn is_storm(
+    timestamps: &[DateTime<Utc>],
+    threshold: usize,
+    window: chrono::Duration,
+) -> bool {
+    if threshold == 0 || timestamps.len() < threshold {
+        return false;
+    }
+
+    for i in 0..=timestamps.len() - threshold {
+        if timestamps[i + threshold - 1] - timestamps[i] <= window {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// プロファイル生成のメイン処理
 pub fn run_profile(
     log_file: &Path,
@@ -568,86 +681,45 @@ pub fn run_profile(
 ) -> Result<()> {
     eprintln!("[INFO] Starting profile generation. Target: {:?}", target);
 
-    let log_reader = LogReader::new(log_file)?;
-    let mut index = TicketIndex::new();
-    let mut profile_counts: HashMap<ProfileKey, usize> = HashMap::new();
+    // 1. ログファイルの集計
+    let profile_events = collect_profile_events(
+        log_file,
+        since,
+        target,
+        deny_only,
+        object_filter.as_deref(),
+    )?;
 
-    // 1. ログファイルの一行ごとの集計
-    for line_result in log_reader.reader.lines() {
-        let line = line_result.context("Error reading line from log file")?;
-        if line.trim().is_empty() { continue; }
-
-        let entry = match process_log_line(&line, &mut index) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        // 1-1. 時間フィルタ (--since)
-        if let Some(since_time) = since {
-            if entry.ts < since_time { continue; }
-        }
-
-        // 1-2. deny-only フィルタ (--deny-only)
-        if deny_only && extract_result(&entry) != "DENY" {
-            continue;
-        }
-
-        // 1-3. ターゲット別フィルタ
-        match target {
-            ProfileTarget::AllowDraft => {
-                let result = extract_result(&entry);
-                let rule_id = extract_rule_id(&entry);
-                if result != "DENY" && !rule_id.is_empty() && rule_id != "-" {
-                    continue;
-                }
-            }
-            ProfileTarget::AntiStorm => {
-                // すべてのログを対象にする
-            }
-        }
-
-        // 1-4. パス解決と object フィルタ
-        let (target_path, new_path_opt) = resolve_target_path(&entry, &index);
-
-        if let Some(ref filter_obj) = object_filter {
-            let is_target_match = is_object_match(filter_obj, &target_path);
-            let is_new_path_match = new_path_opt
-                .as_ref()
-                .map_or(false, |np| is_object_match(filter_obj, np));
-
-            if !is_target_match && !is_new_path_match {
-                continue;
-            }
-        }
-
-        let key = ProfileKey {
-            user: entry.syscall_context.user.clone(),
-            subject_program: extract_subject_path(&entry).to_string(),
-            origin_applet: extract_applet(&entry).to_string(),
-            object_path: target_path,
-            new_path: new_path_opt,
-            action: entry.syscall_context.action.clone(),
-            login_context: extract_raw_login_context(&entry),
-        };
-
-        *profile_counts.entry(key).or_insert(0) += 1;
-    }
-
-    eprintln!("[INFO] Aggregation complete. Found {} unique raw patterns.", profile_counts.len());
+    eprintln!(
+        "[INFO] Aggregation complete. Found {} unique raw patterns.",
+        profile_events.len()
+    );
 
     // 2. AntiStorm の場合、親ディレクトリへの包括ロールアップを実施
-    if target == ProfileTarget::AntiStorm {
-        let before_count = profile_counts.len();
-        profile_counts = rollup_parent_directories_for_anti_storm(profile_counts, threshold);
+    let profile_events = if target == ProfileTarget::AntiStorm {
+        let before_count = profile_events.len();
+
+        let rolled_up =
+            rollup_parent_directories_for_anti_storm(profile_events);
+
         eprintln!(
             "[INFO] Anti-Storm clustering: Consolidated {} raw patterns into {} rules (parent-directory wildcards).",
             before_count,
-            profile_counts.len()
+            rolled_up.len()
         );
-    }
+
+        rolled_up
+    } else {
+        profile_events
+    };
 
     // 3. ルール生成 (JSON 出力)
-    generate_profile_json(profile_counts, target, threshold, optimize);
+    generate_profile_json(
+        profile_events,
+        target,
+        threshold,
+        optimize,
+    );
 
     Ok(())
 }
@@ -667,6 +739,8 @@ fn build_raw_rule(
     key: &ProfileKey,
     count: usize,
     target: &ProfileTarget,
+    threshold: usize,
+    window_secs: i64,
     rule_index: usize,
 ) -> RawRule {
     // 1. パスと new_path の抽象化
@@ -760,7 +834,12 @@ fn build_raw_rule(
                 inherit: true,
                 allow_nameless_ipc: allow_nameless_val,
             },
-            reason: Some(format!("Auto-generated suppress rule (count: {})", count)),
+            reason: Some(format!(
+                "Auto-generated suppress rule (storm threshold: {} accesses / {} sec, total observed: {})",
+                threshold,
+                window_secs,
+                count
+            )),
         },
     }
 }
@@ -784,34 +863,73 @@ fn sort_rules(rules: &mut Vec<RawRule>) {
     });
 }
 
+const ANTI_STORM_WINDOW_SECS: i64 = 10;
+
 // =====================================================================
 // メインルーチン：プロファイリング結果からポリシードラフトを生成し、標準出力へ書き出す
 // =====================================================================
 pub fn generate_profile_json(
-    profile_counts: HashMap<ProfileKey, usize>,
+    profile_events: ProfileEvents,
     target: ProfileTarget,
     threshold: usize,
     optimize: bool,
 ) {
     eprintln!("[INFO] Starting heuristic abstraction...");
 
-    // 1. ルールの生成
-    let mut generated_rules: Vec<RawRule> = profile_counts
+    let window = chrono::Duration::seconds(ANTI_STORM_WINDOW_SECS);
+
+    // 1. ルール生成対象を選別して RawRule に変換
+    let mut generated_rules: Vec<RawRule> = profile_events
         .into_iter()
-        .filter(|(_, count)| !(target == ProfileTarget::AntiStorm && *count < threshold))
+        .filter_map(|(key, mut timestamps)| {
+            // sliding window 判定の前提として時刻順にする
+            timestamps.sort_unstable();
+
+            match target {
+                ProfileTarget::AllowDraft => {
+                    let count = timestamps.len();
+                    Some((key, count))
+                }
+
+                ProfileTarget::AntiStorm => {
+                    if is_storm(&timestamps, threshold, window) {
+                        let count = timestamps.len();
+                        Some((key, count))
+                    } else {
+                        None
+                    }
+                }
+            }
+        })
         .enumerate()
-        .map(|(index, (key, count))| build_raw_rule(&key, count, &target, index))
+        .map(|(index, (key, count))| {
+            build_raw_rule(
+                &key,
+                count,
+                &target,
+                threshold,
+                ANTI_STORM_WINDOW_SECS,
+                index,
+            )
+        })
         .collect();
 
-    // 2. 包含マージの実行 (最適化オプション有効時)
+    // 2. 包含マージの実行
     if optimize {
         let before_count = generated_rules.len();
-        generated_rules = optimize_rules(generated_rules, true); 
+
+        generated_rules =
+            optimize_rules(generated_rules, true);
+
         let after_count = generated_rules.len();
-        
+
         if before_count != after_count {
-            eprintln!("[INFO] Optimization applied: {} rules merged/removed. ({} -> {})", 
-                      before_count - after_count, before_count, after_count);
+            eprintln!(
+                "[INFO] Optimization applied: {} rules merged/removed. ({} -> {})",
+                before_count - after_count,
+                before_count,
+                after_count
+            );
         }
     }
 
@@ -821,9 +939,11 @@ pub fn generate_profile_json(
     // 4. TEAL v1.4 スキーマ準拠の JSON オブジェクト出力
     let draft = RawPolicyV14 {
         version: "1.4".to_string(),
-        system_type: SystemType::Server, 
+        system_type: SystemType::Server,
         default_effect: Some(Effect::Allow),
-        default_reason: Some("No matching rule; default allow.".to_string()),
+        default_reason: Some(
+            "No matching rule; default allow.".to_string()
+        ),
         ttl_minutes: 60,
         sweep_minutes: 5,
         pre_approval_defaults: RawPreApprovalDefaults {
@@ -833,19 +953,20 @@ pub fn generate_profile_json(
         rules: generated_rules,
     };
 
-    let json_output = serde_json::to_string_pretty(&draft)
-        .expect("Failed to serialize generated rules");
+    let json_output =
+        serde_json::to_string_pretty(&draft)
+            .expect("Failed to serialize generated rules");
 
     println!("{}", json_output);
     eprintln!("[INFO] Profile generation complete.");
 }
 
-/// Anti-Storm 用: 同一親ディレクトリ配下に多数のファイルアクセスがある場合、
-/// prefix: 親ディレクトリ包括キーに統合する
+/// Anti-Storm 用:
+/// 同一親ディレクトリ配下に複数のファイルアクセスがある場合、
+/// prefix:<親ディレクトリ> のキーに統合し、timestamp も結合する。
 fn rollup_parent_directories_for_anti_storm(
-    profile_counts: HashMap<ProfileKey, usize>,
-    threshold: usize,
-) -> HashMap<ProfileKey, usize> {
+    profile_events: ProfileEvents,
+) -> ProfileEvents {
     #[derive(Hash, Eq, PartialEq, Clone)]
     struct GroupKey {
         user: String,
@@ -856,13 +977,22 @@ fn rollup_parent_directories_for_anti_storm(
         login_context: Option<RawLoginContext>,
     }
 
-    let mut dir_groups: HashMap<GroupKey, (usize, HashSet<String>, ProfileKey)> = HashMap::new();
-    let mut result_counts: HashMap<ProfileKey, usize> = HashMap::new();
+    // 親ディレクトリ単位の一時グループ
+    //
+    // Vec<DateTime<Utc>> : その親ディレクトリ配下で発生した全アクセス時刻
+    // HashSet<String>     : アクセスされた実ファイル
+    // ProfileKey          : 最終的な prefix: ルール用キー
+    let mut dir_groups:
+        HashMap<GroupKey, (Vec<DateTime<Utc>>, HashSet<String>, ProfileKey)> =
+        HashMap::new();
 
-    for (key, count) in profile_counts {
+    // 親ディレクトリ統合の対象外となるアクセス
+    let mut result_events: ProfileEvents = HashMap::new();
+
+    for (key, mut timestamps) in profile_events {
         let action_str = key.action.to_uppercase();
 
-        // ファイル操作系のアクションのみ対象とする（EXECUTE や CONNECT は親包括化しない）
+        // ファイル操作系のみ親ディレクトリへの包括化対象
         let is_file_op = action_str.contains("READ")
             || action_str.contains("WRITE")
             || action_str.contains("DELETE")
@@ -873,11 +1003,15 @@ fn rollup_parent_directories_for_anti_storm(
         let path_obj = Path::new(&key.object_path);
         let parent_opt = path_obj.parent().and_then(|p| p.to_str());
 
-        // ルート直下や浅すぎるパス (/tmp, /dev 等) を除外
-        let is_valid_parent = parent_opt.map_or(false, |p| p.len() > 4 && p != "/tmp" && p != "/dev");
+        // ルート直下と/devは除外
+        let is_valid_parent =
+            parent_opt.map_or(false, |p| {
+                p.len() > 1 && p != "/dev"
+            });
 
         if is_file_op && is_valid_parent {
             let parent_dir = parent_opt.unwrap().to_string();
+
             let group_key = GroupKey {
                 user: key.user.clone(),
                 subject_program: key.subject_program.clone(),
@@ -889,34 +1023,50 @@ fn rollup_parent_directories_for_anti_storm(
 
             let entry = dir_groups.entry(group_key).or_insert_with(|| {
                 let mut wildcard_key = key.clone();
-                // パスを "prefix:<親ディレクトリ>" に差し替え
-                wildcard_key.object_path = format!("prefix:{}", parent_dir);
+
+                wildcard_key.object_path =
+                    format!("prefix:{}", parent_dir);
+
                 wildcard_key.new_path = None;
-                (0, HashSet::new(), wildcard_key)
+
+                (
+                    Vec::new(),
+                    HashSet::new(),
+                    wildcard_key,
+                )
             });
 
-            entry.0 += count;
+            // timestamp を親ディレクトリグループへ統合
+            entry.0.append(&mut timestamps);
+
+            // 実際にアクセスされたファイルを記録
             entry.1.insert(key.object_path.clone());
         } else {
-            result_counts.insert(key, count);
+            result_events.insert(key, timestamps);
         }
     }
 
-    // 昇格条件: 同一親ディレクトリ配下に複数ファイルが存在するか、アクセス頻度が高い場合
-    for (_, (total_count, unique_files, wildcard_key)) in dir_groups {
-        if unique_files.len() >= 2 || total_count >= threshold {
-            *result_counts.entry(wildcard_key).or_insert(0) += total_count;
+    // 親ディレクトリ単位にまとめたグループを確定
+    for (_, (mut timestamps, unique_files, wildcard_key)) in dir_groups {
+        if unique_files.len() >= 2 {
+            // sliding window 判定に備えて時刻順に並べる
+            timestamps.sort_unstable();
+
+            result_events.insert(wildcard_key, timestamps);
         } else {
-            // 単一ファイルへのアクセスは個別ルールのまま戻す
-            for original_path in unique_files {
-                let mut single_key = wildcard_key.clone();
+            // 単一ファイルしか存在しなければ元のパスに戻す
+            if let Some(original_path) = unique_files.into_iter().next() {
+                let mut single_key = wildcard_key;
                 single_key.object_path = original_path;
-                result_counts.insert(single_key, total_count);
+
+                timestamps.sort_unstable();
+
+                result_events.insert(single_key, timestamps);
             }
         }
     }
 
-    result_counts
+    result_events
 }
 
 #[derive(Parser)]
