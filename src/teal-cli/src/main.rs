@@ -12,6 +12,7 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 
+use uuid::Uuid;
 use blst::min_pk::SecretKey;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
@@ -21,7 +22,7 @@ use teal_policy_engine::load::load_json_file;
 use teal_policy_engine::raw::RawPolicyV14;
 
 // teald クレートから共通型をインポート
-use teald::common::DecisionKind;
+use teald::common::{DecisionKind, is_mgmt_id};
 
 // teal-cli 内部に移した verify モジュール
 mod verify;
@@ -53,11 +54,17 @@ enum Commands {
     Approve {
         /// Request ID to approve
         id: String,
+
+        /// Audit ID for management commands
+        audit_id: Option<String>,
     },
     /// Reject request
     Deny {
         /// Request ID to deny
         id: String,
+
+        /// Audit ID for management commands
+        audit_id: Option<String>,
     },
     /// Request ticket request
     Ticket {
@@ -151,20 +158,29 @@ fn main() -> Result<()> {
         Commands::List => {
             send_command("LIST", true)?;
         }
-        Commands::Approve { id } => {
-            run_signed_decision(DecisionKind::Approve, id)?;
+        Commands::Approve { id, audit_id } => {
+            run_signed_decision(
+                DecisionKind::Approve,
+                id,
+                audit_id.as_deref(),
+            )?;
         }
-        Commands::Deny { id } => {
-            run_signed_decision(DecisionKind::Deny, id)?;
+
+        Commands::Deny { id, audit_id } => {
+            run_signed_decision(
+                DecisionKind::Deny,
+                id,
+                audit_id.as_deref(),
+            )?;
         }
         Commands::Ticket { rule_id } => {
-            run_signed_decision(DecisionKind::Ticket, rule_id)?;
+            run_signed_decision(DecisionKind::Ticket, rule_id, None)?;
         }
         Commands::Start => {
-            run_signed_decision(DecisionKind::Start, "")?;
+            run_signed_decision(DecisionKind::Start, "", None)?;
         }
         Commands::Stop => {
-            run_signed_decision(DecisionKind::Stop, "")?;
+            run_signed_decision(DecisionKind::Stop, "", None)?;
         }
         Commands::Diff { html } => {
             cmd::diff::run(html.clone())?;
@@ -252,41 +268,67 @@ fn run_verify(
 const TEAL_DST: &[u8] = b"TEAL_SYSTEM_V1_MPA_SIG";
 
 // 署名付きの決定コマンドを送る共通関数（user なし）
-fn run_signed_decision(kind: DecisionKind, id: &str) -> Result<()> {
-    // パス解決 (エラーならここでreturn)
+fn run_signed_decision(
+    kind: DecisionKind,
+    id: &str,
+    audit_id: Option<&str>,
+) -> Result<()> {
     let key_path = cmd::keygen::teal_private_key_path()?;
 
     if !key_path.exists() {
-        anyhow::bail!("TEAL identity not found. Please run 'teal-cli keygen' first.\nPath: {}", key_path.display());
+        anyhow::bail!(
+            "TEAL identity not found. Please run 'teal-cli keygen' first.\nPath: {}",
+            key_path.display()
+        );
     }
 
-    // --- BLS鍵の読み込み ---
     let key_bytes = fs::read(&key_path)
         .with_context(|| format!("Failed to read private key at {}", key_path.display()))?;
-    
+
     let signing_key = SecretKey::from_bytes(&key_bytes)
         .map_err(|e| anyhow::anyhow!("Invalid BLS private key format: {:?}", e))?;
 
-    // 1. 署名対象メッセージ (集約のため UID は含めない)
-    // 承認者全員がこの "APPROVE:req-123" という同一データに署名する
-    let message = format!("{}:{}", kind.as_str(), id);
+    let is_mgmt_decision =
+        matches!(kind, DecisionKind::Approve | DecisionKind::Deny)
+        && is_mgmt_id(id);
+    if is_mgmt_decision && audit_id.is_none() {
+        anyhow::bail!("audit_id is required for management commands");
+    }
 
-    // 2. 署名 (BLS)
+    if !is_mgmt_decision && audit_id.is_some() {
+        anyhow::bail!("audit_id is only valid for management APPROVE/DENY");
+    }
+    if let Some(value) = audit_id {
+        Uuid::parse_str(value)
+            .context("Invalid audit_id UUID")?;
+    }
+
+    // 署名対象と送信コマンドを同じ条件で生成する
+    let (message, command) = if is_mgmt_decision {
+        let audit_id = audit_id
+            .ok_or_else(|| anyhow::anyhow!("audit_id is required for management approval/denial"))?;
+
+        (
+            format!("{}:{}:{}", kind.as_str(), id, audit_id),
+            format!("{} {} {} ", kind.as_str(), id, audit_id),
+        )
+    } else {
+        (
+            format!("{}:{}", kind.as_str(), id),
+            format!("{} {} ", kind.as_str(), id),
+        )
+    };
+
     let signature = signing_key.sign(message.as_bytes(), TEAL_DST, &[]);
     let sig_hex = hex::encode(signature.to_bytes());
 
-    // 3. 送信コマンド (UID は送らない)
-    // Server側は peer_cred で誰からのコマンドかを特定する
-    // Format: <KIND> <ID> <SIGNATURE>
-    let cmd = format!("{} {} {}", kind.as_str(), id, sig_hex);
+    let cmd = format!("{}{}", command, sig_hex);
 
-    // 実際の送信処理 (実装済みと仮定)
     send_command(&cmd, true)?;
-    
+
     println!("Decision '{}' sent for request '{}'.", kind.as_str(), id);
     Ok(())
 }
-
 
 /// teald の管理ソケットにコマンドを送信する共通関数
 /// print_resp が true の場合は画面に出力し、いずれの場合もレスポンス文字列を返す

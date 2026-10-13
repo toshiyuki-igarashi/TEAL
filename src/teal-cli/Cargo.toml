@@ -17,6 +17,7 @@ blst = { version = "0.3", features = ["portable"] }
 sha2 = "0.10"
 hex = { version = "0.4", features = ["serde"] }
 rand = "=0.8.5"
+uuid = { version = "1.10", features = ["v4", "serde"] } # 監査ID (UUID v7/v4対応)
 
 # シリアライズ / スキーマ
 serde = { version = "1.0", features = ["derive"] }

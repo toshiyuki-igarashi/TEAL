@@ -39,7 +39,6 @@ pub async fn init_state() {
                 device_file: None, 
             },
             is_flushed: false,
-            current_epoch: 0,
         }))
     )
 }

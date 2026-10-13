@@ -6,16 +6,20 @@
  */
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::PathBuf;
 use uuid::Uuid;
 use blst::min_pk::{PublicKey, Signature};
 use blst::BLST_ERROR;
+use once_cell::sync::Lazy;
 
 use crate::state::app_state;
-use crate::bundle::{bundle, compute_directory_hash, DEFAULT_TEAL_DIR, STAGE_TEAL_DIR};
-use crate::management::management;
-use crate::common::{DecisionKind, TealStatus, NetlinkStatus, QueueStatus};
+use crate::bundle::{compute_directory_hash, DEFAULT_TEAL_DIR, STAGE_TEAL_DIR};
+use crate::bundle::{policy_snapshot, load_bundle_from_dir, update_bundle, advance_epoch};
+use crate::management::{management, prepare_management, commit_management};
+use crate::common::{DecisionKind, TealStatus, NetlinkStatus, QueueStatus, is_mgmt_id, find_rule};
 use crate::types::{InternalEvent, MgmtPendingCtl, MgmtCtlKind, MpaState, AppState, SignedCmdArgs, ApprovedTicket};
 use crate::types::{ACTIVE_TICKETS, DaemonMode, set_daemon_mode, is_enforce};
 use crate::ticket::{is_ticketable, draft_from_rule, preload_silent_directory_tickets};
@@ -25,6 +29,7 @@ use crate::netlink::get_netlink_socket_metrics;
 use teal_policy_engine::util::{uid_to_name, ktime_prefix};
 use teal_policy_engine::management::{CompiledManagement, CompiledMgmtMpa, CompiledMgmtMpaEnabled};
 use teal_policy_engine::ir::CompiledRule;
+use teal_policy_engine::ir::CompiledBundle;
 
 // --- ループとルーティング ---
 /// Admin Socket Worker (管理ソケット) のメインループ
@@ -77,7 +82,7 @@ async fn handle_admin_connection(mut stream: tokio::net::UnixStream, nl_tx: &NlW
         "NETLINK_STATUS" => (handle_netlink_status(), None),
         "LIST"          => handle_list(&cmd, uid).await,
         "REGISTER"      => handle_register(&cmd, uid).await,
-        "TICKET"        => handle_ticket(&cmd, uid).await,
+        "TICKET"        => handle_ticket(&cmd, uid, nl_tx).await,
         "APPROVE"       => handle_approve(&cmd, uid, nl_tx).await,
         "DENY"          => handle_deny(&cmd, uid, nl_tx).await,
 
@@ -111,11 +116,10 @@ fn record_drops_and_calc_delta(current_drops: u64) -> u64 {
 }
 
 async fn handle_status() -> (String, Option<InternalEvent>) {
-    let (is_flushed, current_epoch, pending_len) = {
+    let (is_flushed, pending_len) = {
         let st = app_state().lock().await;
         (
             st.is_flushed,
-            st.current_epoch,
             st.slow.pending_requests.len(),
         )
     };
@@ -132,7 +136,7 @@ async fn handle_status() -> (String, Option<InternalEvent>) {
         status: "ok".to_string(),
         is_enforce: is_enforce(),
         is_flushed,
-        current_epoch,
+        current_epoch: policy_snapshot().epoch,
         netlink: NetlinkStatus {
             buffer_usage_pct,
             drops,
@@ -214,13 +218,15 @@ async fn handle_list(_cmd: &str, _uid: u32) -> (String, Option<InternalEvent>) {
             MgmtCtlKind::Flush        => "FLUSH",
         };
 
-        s.push_str(&format!("ID: {} | UID: {} | Status: {} | MPA: {}/{} | Roles: {:?} | timeout_minutes: {}\n",
-            label, 
-            ctl.initiator_uid, 
-            ctl.mpa_state.is_fulfilled(), 
-            ctl.mpa_state.approvals.len(), 
-            ctl.mpa_state.threshold, 
-            ctl.mpa_state.required_roles, 
+        s.push_str(&format!(
+            "ID: {} | audit_id: {} | UID: {} | Status: {} | MPA: {}/{} | Roles: {:?} | timeout_minutes: {}\n",
+            label,
+            ctl.audit_id,
+            ctl.initiator_uid,
+            ctl.mpa_state.is_fulfilled(),
+            ctl.mpa_state.approvals.len(),
+            ctl.mpa_state.threshold,
+            ctl.mpa_state.required_roles,
             ctl.timeout_minutes,
         ));
     }
@@ -254,8 +260,11 @@ async fn handle_register(cmd: &str, uid: u32) -> (String, Option<InternalEvent>)
     ("OK\n".to_string(), None)
 }
 
-async fn handle_ticket(cmd: &str, uid: u32) -> (String, Option<InternalEvent>) {
-    handle_signed_decision(cmd, DecisionKind::Ticket, uid, None).await
+async fn handle_ticket(cmd: &str, uid: u32, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
+    if nl_tx.ticket_transition_active() {
+        return ("ERR policy epoch transition in progress\n".to_string(), None);
+    }
+    handle_signed_decision(cmd, DecisionKind::Ticket, uid, Some(nl_tx)).await
 }
 
 async fn handle_approve(cmd: &str, uid: u32, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
@@ -278,7 +287,7 @@ async fn handle_mgmt(
         "{}[INFO] {}: user={}",
         ktime_prefix(),
         ctl_kind.as_str(),
-        uid_to_name(uid).unwrap_or_else(|_| "".to_string())
+        resolve_account(uid).await
     );
     handle_signed_decision(cmd, decision_kind, uid, Some(nl_tx)).await
 }
@@ -290,7 +299,7 @@ async fn handle_signed_decision(
     uid: u32,
     nl_tx: Option<&NlWriter>
 ) -> (String, Option<InternalEvent>) {
-    let args = match parse_args(cmd, kind, uid) {
+    let mut args = match parse_args(cmd, kind, uid) {
         Ok(a) => a,
         Err(err_msg) => return (err_msg, None),
     };
@@ -299,25 +308,60 @@ async fn handle_signed_decision(
         return (err_msg, None);
     }
 
+    args.account = resolve_account(uid).await;
+
     apply_decision(kind, args, nl_tx).await
 }
 
-fn parse_args(cmd: &str, kind: DecisionKind, uid: u32) -> Result<SignedCmdArgs, String> {
+fn parse_args(
+    cmd: &str,
+    kind: DecisionKind,
+    uid: u32,
+) -> Result<SignedCmdArgs, String> {
     let mut it = cmd.split_whitespace();
-    let head = it.next().unwrap_or_else(|| "");
-    if head != kind.as_str() { return Err(format!("ERR bad cmd head (expected {})\n", kind.as_str())); }
 
-    let id: String = match kind {
-        DecisionKind::Approve | DecisionKind::Deny | DecisionKind::Ticket | DecisionKind::PolicyUpdate => {
-            it.next().ok_or("ERR missing/invalid id\n")?.to_string()
+    let head = it.next().unwrap_or("");
+    if head != kind.as_str() {
+        return Err(format!(
+            "ERR bad cmd head (expected {})\n", kind.as_str()
+        ));
+    }
+
+    let id = match kind {
+        DecisionKind::Approve
+        | DecisionKind::Deny
+        | DecisionKind::Ticket
+        | DecisionKind::PolicyUpdate => {
+            it.next().ok_or("ERR missing id\n")?.to_string()
         }
-        _ => "".to_string(),
+        _ => String::new(),
     };
 
-    let sig_hex = it.next().ok_or_else(|| "ERR missing signature\n".to_string())?.to_string();
-    if it.next().is_some() { return Err("ERR too many args\n".to_string()); }
+    let is_mgmt_decision =
+        matches!(kind, DecisionKind::Approve | DecisionKind::Deny)
+        && is_mgmt_id(&id);
 
-    Ok(SignedCmdArgs { id, uid, sig_hex })
+    let audit_id = if is_mgmt_decision {
+        Some(it.next().ok_or("ERR missing audit_id\n")?.to_string())
+    } else {
+        None
+    };
+
+    let sig_hex = it.next()
+        .ok_or("ERR missing signature\n")?
+        .to_string();
+
+    if it.next().is_some() {
+        return Err("ERR too many args\n".to_string());
+    }
+
+    Ok(SignedCmdArgs {
+        id,
+        uid,
+        account: String::new(),
+        sig_hex,
+        audit_id,
+    })
 }
 
 async fn fetch_public_key(uid: u32, kind: DecisionKind) -> Result<String, String> {
@@ -334,11 +378,7 @@ async fn fetch_public_key(uid: u32, kind: DecisionKind) -> Result<String, String
             // エラー時：ロックを持っていないので、どれだけ時間がかかってもデーモンは止まらない
             
             // 非同期でユーザー名を安全に解決
-            let username = tokio::task::spawn_blocking(move || {
-                uid_to_name(uid).unwrap_or_else(|_| "".to_string())
-            })
-            .await
-            .unwrap_or_default();
+            let username = resolve_account(uid).await;
 
             // ロックなしで安全にログ出力
             eprintln!("{}[WARN] {} user={} not registered", ktime_prefix(), kind.as_str(), username);
@@ -348,18 +388,47 @@ async fn fetch_public_key(uid: u32, kind: DecisionKind) -> Result<String, String
     }
 }
 
-fn verify_request(pubkey_hex: &str, kind: DecisionKind, args: &SignedCmdArgs) -> Result<(), String> {
-    if let Err(e) = verify_decision_signature(pubkey_hex, kind.as_str(), &args.id, &args.sig_hex) {
-        eprintln!("{}[WARN] {} verify failed: ID={} user={} err={}", ktime_prefix(), kind.as_str(), args.id, uid_to_name(args.uid).unwrap_or_else(|_| "".to_string()), e);
-        return Err("ERR invalid signature\n".to_string());
+fn decision_message(
+    kind: DecisionKind,
+    args: &SignedCmdArgs,
+) -> Result<String, String> {
+    if matches!(kind, DecisionKind::Approve | DecisionKind::Deny)
+        && is_mgmt_id(&args.id)
+    {
+        let audit_id = args.audit_id.as_deref()
+            .ok_or("Missing audit_id")?;
+
+        Ok(format!(
+            "{}:{}:{}",
+            kind.as_str(),
+            args.id,
+            audit_id
+        ))
+    } else {
+        Ok(format!("{}:{}", kind.as_str(), args.id))
     }
-    eprintln!("{}[INFO] {} verified: ID={} user={}", ktime_prefix(), kind.as_str(), args.id, uid_to_name(args.uid).unwrap_or_else(|_| "".to_string()));
-    Ok(())
 }
 
-fn verify_decision_signature(pubkey_hex: &str, kind: &str, id: &str, sig_hex: &str) -> Result<(), String> {
-    let msg_str = format!("{}:{}", kind, id);
-    verify_signature_message(pubkey_hex, msg_str.as_bytes(), sig_hex)
+fn verify_request(
+    pubkey_hex: &str,
+    kind: DecisionKind,
+    args: &SignedCmdArgs,
+) -> Result<(), String> {
+    let message = decision_message(kind, args)?;
+
+    verify_signature_message(
+        pubkey_hex,
+        message.as_bytes(),
+        &args.sig_hex,
+    ).map_err(|e| {
+        eprintln!(
+            "{}[WARN] {} verify failed: ID={} uid={} err={}",
+            ktime_prefix(), kind.as_str(), args.id, args.uid, e
+        );
+        "ERR invalid signature\n".to_string()
+    })?;
+
+    Ok(())
 }
 
 fn verify_signature_message(pubkey_hex: &str, msg: &[u8], sig_hex: &str) -> Result<(), String> {
@@ -391,7 +460,7 @@ async fn apply_decision(
     match kind {
         DecisionKind::Approve => process_approval(args, nl_tx.unwrap()).await,
         DecisionKind::Deny    => process_deny(args, nl_tx.unwrap()).await,
-        DecisionKind::Ticket  => process_ticket(&args.id, args.uid).await,
+        DecisionKind::Ticket  => process_ticket(&args.id, args.uid, nl_tx.unwrap()).await,
         
         DecisionKind::Start => {
             let mgmt = management();
@@ -408,170 +477,205 @@ async fn apply_decision(
     }
 }
 
-async fn process_approval(args: SignedCmdArgs, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
-    match record_approval(&args).await {
-        Ok(true) => {
-            eprintln!("{}[INFO] APPROVE record finalized: ID={} user={}",
-                ktime_prefix(), args.id, uid_to_name(args.uid).unwrap_or_else(|_| "".to_string())
-            );
-            let event = finalize_approval(&args, nl_tx).await;
-            ("OK\n".to_string(), event)
+enum ApprovalResult {
+    Pending,
+    CtlReady(MgmtPendingCtl),
+    DraftReady,
+    EntryReady,
+}
+
+async fn process_approval(
+    args: SignedCmdArgs,
+    nl_tx: &NlWriter,
+) -> (String, Option<InternalEvent>) {
+    let result = match record_approval(&args).await {
+        Ok(result) => result,
+        Err(e) => return (format!("ERR {}\n", e), None),
+    };
+
+    let event = match result {
+        ApprovalResult::Pending => {
+            return ("PENDING\n".to_string(), None);
         }
-        Ok(false) => {
-            eprintln!("{}[INFO] APPROVE record pending: ID={} user={}",
-                ktime_prefix(), args.id, uid_to_name(args.uid).unwrap_or_else(|_| "".to_string())
-            );
-            ("PENDING\n".to_string(), None)
+
+        ApprovalResult::CtlReady(pending_ctl) => {
+            finalize_ctl_approval(pending_ctl, nl_tx)
+                .await
+                .map(Some)
         }
-        Err(e) => {
-            eprintln!("{}[INFO] APPROVE record failed: ID={} user={} err={}",
-                ktime_prefix(), args.id, uid_to_name(args.uid).unwrap_or_else(|_| "".to_string()), e
-            );
-            (format!("ERR {}\n", e), None)
+
+        ApprovalResult::DraftReady => {
+            Ok(finalize_draft_approval(&args.id).await)
         }
+
+        ApprovalResult::EntryReady => {
+            Ok(finalize_entry_approval(&args, nl_tx).await)
+        }
+    };
+
+    match event {
+        Ok(Some(event)) => ("OK\n".to_string(), Some(event)),
+        Ok(None) => (
+            "ERR approval finalization failed\n".to_string(),
+            None,
+        ),
+        Err(e) => (format!("ERR {}\n", e), None),
     }
 }
 
-fn is_mgmt_id(id: &str) -> bool {
-    let id_upper = id.to_uppercase();
-    matches!(id_upper.as_str(), "START" | "STOP" | "RELOAD" | "POLICY_UPDATE" | "FLUSH")
+async fn process_approve_entry(
+    args: &SignedCmdArgs,
+) -> Result<bool, String> {
+    let id_num = args.id.parse::<u64>()
+        .map_err(|_| "ERR invalid pending id".to_string())?;
+
+    let mut st = app_state().lock().await;
+
+    let pending = st.slow.pending_requests.get_mut(&id_num)
+        .ok_or_else(|| "ERR no such pending id".to_string())?;
+
+    check_fully_approved(
+        args,
+        &mut pending.mpa_state,
+        pending.policy_epoch,
+    )
 }
 
-async fn finalize_approval(args: &SignedCmdArgs, nl_tx: &NlWriter) -> Option<InternalEvent> {
-    if is_mgmt_id(&args.id) {
-        finalize_ctl_approval(nl_tx).await
-    } else if is_draft_id(&args.id) {
-        finalize_draft_approval(&args.id).await
-    } else {
-        finalize_entry_approval(args, nl_tx).await
+async fn process_approve_draft(
+    args: &SignedCmdArgs,
+) -> Result<bool, String> {
+    let mut st = app_state().lock().await;
+
+    let pending = st.fast.drafts.get_mut(&args.id)
+        .ok_or("ERR no such pending ticket")?;
+
+    let expected_epoch = pending.epoch;
+
+    if policy_snapshot().epoch != expected_epoch {
+        return Err("Policy epoch changed".to_string());
     }
+
+    check_fully_approved(
+        args,
+        &mut pending.mpa_state,
+        expected_epoch,
+    )
 }
 
-async fn process_approve_entry(args: &SignedCmdArgs) -> Result<bool, String> {
-    let id_num = args.id.parse().unwrap_or(0);
+async fn process_approve_ctl(
+    args: &SignedCmdArgs,
+) -> Result<Option<MgmtPendingCtl>, String> {
+    let mut st = app_state().lock().await;
 
-    // 1. 必要なデータ（MpaState）だけをクローンして取り出し、即座にロックを解除する
-    let mut current_mpa_state = {
-        let lock = app_state().lock().await;
-        let pending = lock.slow.pending_requests.get(&id_num)
-            .ok_or_else(|| "no such pending id".to_string())?;
-        pending.mpa_state.clone() // 状態のコピーをもらう
-    }; // ここでスコープを抜け、ロック解除！
+    let pending = st.slow.pending_ctl.as_mut()
+        .ok_or("ERR no pending management command")?;
 
-    // 2. ロックを持たない安全な状態で、CPU計算（ロールチェックや要素の削除）を行う
-    let is_fulfilled = check_fully_approved(args, &mut current_mpa_state)?;
+    if !args.id.eq_ignore_ascii_case(pending.kind.as_str()) {
+        return Err("Management command mismatch".to_string());
+    }
 
-    // 3. 計算結果（更新されたMpaState）を、もう一度一瞬だけロックを取って書き戻す
-    {
-        let mut lock = app_state().lock().await;
-        if let Some(pending) = lock.slow.pending_requests.get_mut(&id_num) {
-            pending.mpa_state = current_mpa_state; // 結果を反映
-        }
-    } // 即解除
+    if args.audit_id.as_deref() != Some(pending.audit_id.as_str()) {
+        return Err("Management audit_id mismatch".to_string());
+    }
 
-    Ok(is_fulfilled)
-}
+    let fulfilled = check_fully_approved(
+        args,
+        &mut pending.mpa_state,
+        pending.epoch,
+    )?;
 
-async fn process_approve_draft(args: &SignedCmdArgs) -> Result<bool, String> {
-    // 1. 必要なデータ（MpaState）だけをクローンして取り出し、即座にロックを解除する
-    let mut current_mpa_state = {
-        let lock = app_state().lock().await; // ロック取得
-        let pending = lock.fast.drafts.get(&args.id)
-            .ok_or_else(|| "no such pending ticket".to_string())?;
-        pending.mpa_state.clone() // 状態のコピーをもらう
-    }; // ここでスコープを抜け、即座にロック解除！
+    if !fulfilled {
+        return Ok(None);
+    }
 
-    // 2. ロックを持たない安全な状態で、CPU計算（ロールチェックや要素の削除）を行う
-    let is_fulfilled = check_fully_approved(args, &mut current_mpa_state)?;
-
-    // 3. 計算結果（更新されたMpaState）を、もう一度一瞬だけロックを取って書き戻す
-    {
-        let mut lock = app_state().lock().await; // ロック再取得
-        // ※書き戻す前に、対象がまだ存在するか確認する（競合対策）
-        if let Some(pending) = lock.fast.drafts.get_mut(&args.id) {
-            pending.mpa_state = current_mpa_state; // 結果を反映
-        }
-    } // 即解除
-
-    Ok(is_fulfilled)
-}
-
-async fn process_approve_ctl(args: &SignedCmdArgs) -> Result<bool, String> {
-    // 1. 必要なデータ（MpaState）だけをクローンして取り出し、即座にロックを解除
-    let mut current_mpa_state = {
-        let st = app_state().lock().await;
-        match &st.slow.pending_ctl {
-            Some(p) => p.mpa_state.clone(),
-            None => return Err("ERR no pending management command\n".to_string()),
-        }
-    }; // ここでスコープを抜け、確実にロック解放！
-
-    // 2. ロックを持たない安全な状態で、CPU計算（ロールチェックや要素の追加）を行う
-    let is_fulfilled = check_fully_approved(args, &mut current_mpa_state)?;
-
-    // 3. 計算結果を、もう一度一瞬だけロックを取って書き戻す
-    {
-        let mut st = app_state().lock().await;
-        if let Some(pending) = st.slow.pending_ctl.as_mut() {
-            pending.mpa_state = current_mpa_state; // 署名追加・状態更新結果を反映
-        }
-    } // 即解放
-
-    Ok(is_fulfilled)
+    // MPA成立とPendingの取得を同一Mutex内で実行
+    Ok(st.slow.pending_ctl.take())
 }
 
 /// 管理コマンドの最終決裁共通関数
 async fn finalize_ctl_approval(
+    mut pending_ctl: MgmtPendingCtl,
     nl_tx: &NlWriter,
-) -> Option<InternalEvent> {
-    // 1. まず所有権を取り出す (try_aggregate で内部状態を変更するため mut を付与)
-    let mut pending_ctl = {
-        let mut st = app_state().lock().await;
-        st.slow.pending_ctl.take()?
-    };
+) -> Result<InternalEvent, String> {
+    // epoch整合性
+    if pending_ctl.epoch != policy_snapshot().epoch {
+        return Err("Policy epoch changed".to_string());
+    }
 
-    let kind = pending_ctl.kind.clone();
-    let uid = pending_ctl.initiator_uid;
+    // MPA成立確認
+    if !pending_ctl.mpa_state.is_fulfilled() {
+        return Err("MPA requirements are not fulfilled".to_string());
+    }
 
-    // 2. 暗号計算 (BLS集約) はロック外で実行
-    // (受け取る側はその後可変操作を行わないため mut は不要)
-    let pending_ctl = tokio::task::spawn_blocking(move || {
-        let _ = pending_ctl.mpa_state.try_aggregate();
-        pending_ctl
+    // BLS署名集約（AppState Mutex外）
+    pending_ctl = tokio::task::spawn_blocking(move || {
+        pending_ctl.mpa_state.try_aggregate()?;
+        Ok::<_, String>(pending_ctl)
     })
     .await
-    .ok()?;
+    .map_err(|e| format!("Aggregation task failed: {}", e))??;
 
-    // 3. kind に応じた実行ロジックへ委約
-    execute_mgmt_ctl(kind, uid, &pending_ctl.target_hash, nl_tx).await;
+    // 管理コマンド実行
+    // epochはexecute_mgmt_ctl_core()でロック取得後に再確認
+    execute_mgmt_ctl_core(
+        pending_ctl.kind.clone(),
+        &pending_ctl.target_hash,
+        pending_ctl.epoch,
+        nl_tx,
+    )
+    .await?;
 
-    // 4. 承認イベントを返す
-    Some(InternalEvent::CtlApproved { pending_ctl })
+    Ok(InternalEvent::CtlApproved { pending_ctl })
 }
 
 async fn finalize_draft_approval(id: &str) -> Option<InternalEvent> {
-    let mut event = None;
-    let mut draft;
+    // 1. Draftを取得し、Mutexを即座に解放
+    let mut draft = {
+        let mut st = app_state().lock().await;
+        st.fast.drafts.remove(id)?
+    };
 
-    {
-        let mut lock = app_state().lock().await;
-        draft = lock.fast.drafts.remove(id)?;
+    // 2. ENFORCEモード以外では終了
+    if !is_enforce() {
+        return None;
     }
 
-    if is_enforce() {
-        let _ = draft.mpa_state.try_aggregate();
+    // 3. BLS署名の集約（Mutex外）
+    if let Err(e) = draft.mpa_state.try_aggregate() {
+        eprintln!(
+            "{}[ERROR] Draft {}: signature aggregation failed: {}",
+            ktime_prefix(), id, e
+        );
+        return None;
+    }
 
-        if let Some(ticket) = ApprovedTicket::from_draft(&draft) {
-            event = Some(InternalEvent::MpaApproved { draft: draft.clone(), ticket: ticket.clone() });
-            let mut lock = app_state().lock().await;
-            lock.fast.approved.insert(draft.draft_id.clone(), ticket);
-        } else {
-            eprintln!("{}[ERROR] can't generate ticket for draft={}", ktime_prefix(), draft.draft_id);
+    // 4. Ticketを生成（Mutex外）
+    let ticket = match ApprovedTicket::from_draft(&draft) {
+        Some(ticket) => ticket,
+        None => {
+            eprintln!(
+                "{}[ERROR] can't generate ticket for draft={}",
+                ktime_prefix(), draft.draft_id
+            );
             return None;
         }
-        eprintln!("{}[INFO] Draft {} approved. Ticket cached to kernel (Lazy Binding).", ktime_prefix(), id);
+    };
+
+    // 5. 承認済みTicketを登録（Mutex内）
+    {
+        let mut st = app_state().lock().await;
+        st.fast.approved.insert(
+            draft.draft_id.clone(),
+            ticket.clone(),
+        );
     }
-    event
+
+    eprintln!(
+        "{}[INFO] Draft {} approved (Lazy Binding).",
+        ktime_prefix(), id
+    );
+
+    Some(InternalEvent::MpaApproved { draft, ticket })
 }
 
 async fn finalize_entry_approval(args: &SignedCmdArgs, nl_tx: &NlWriter) -> Option<InternalEvent> {
@@ -586,15 +690,24 @@ async fn finalize_entry_approval(args: &SignedCmdArgs, nl_tx: &NlWriter) -> Opti
     let (cacheable, ticket_payload) = match entry {
         Some(mut removed_request) => {
             let rule_id = removed_request.rule_id.clone().unwrap_or_else(|| "".to_string());
-            let (cacheable, ticket_payload, ticket_id) = match find_rule(&rule_id) {
-                Ok(rule) => {
-                    match removed_request.is_cacheable(&rule).await {
+            let (cacheable, ticket_payload, ticket_id) = match find_rule(Some(&rule_id)) {
+                Ok((Some(rule), epoch)) => {
+                    match removed_request.is_cacheable(&rule, epoch).await {
                         Ok(t) => t,
                         Err(msg) => {
                             eprintln!("{}[ERROR]{}", ktime_prefix(), msg);
                             (false, None, "".to_string())
                         }
                     }
+                }
+                Ok((None, epoch)) => {
+                    eprintln!(
+                        "{}[WARN] Cannot create cache: Rule is None, request_id={}, epoch={}",
+                        ktime_prefix(),
+                        id_num,
+                        epoch
+                    );
+                    (false, None, "".to_string())
                 }
                 Err(msg) => {
                     eprintln!("{}[ERROR]{}", ktime_prefix(), msg);
@@ -627,113 +740,154 @@ async fn finalize_entry_approval(args: &SignedCmdArgs, nl_tx: &NlWriter) -> Opti
     event
 }
 
-async fn record_approval(args: &SignedCmdArgs) -> Result<bool, String> {
+async fn record_approval(
+    args: &SignedCmdArgs,
+) -> Result<ApprovalResult, String> {
     if is_mgmt_id(&args.id) {
-        process_approve_ctl(args).await
-    } else if is_draft_id(&args.id) {
-        process_approve_draft(args).await
+        return match process_approve_ctl(args).await? {
+            Some(pending_ctl) => Ok(ApprovalResult::CtlReady(pending_ctl)),
+            None => Ok(ApprovalResult::Pending),
+        };
+    }
+
+    if is_draft_id(&args.id) {
+        return if process_approve_draft(args).await? {
+            Ok(ApprovalResult::DraftReady)
+        } else {
+            Ok(ApprovalResult::Pending)
+        };
+    }
+
+    if process_approve_entry(args).await? {
+        Ok(ApprovalResult::EntryReady)
     } else {
-        process_approve_entry(args).await
+        Ok(ApprovalResult::Pending)
     }
 }
 
-fn check_fully_approved(args: &SignedCmdArgs, mpa_state: &mut MpaState) -> Result<bool, String> {
-    let (has_permission, uid_roles) = check_permission(args.uid, &mpa_state.approver_roles);
-    if has_permission { 
-        for r in uid_roles { mpa_state.required_roles.retain(|role| role != &r); } 
-    } else { return Err("user are not allowed to approve\n".to_string()); } 
-    mpa_state.insert_approver(args);
+fn check_fully_approved(
+    args: &SignedCmdArgs,
+    mpa_state: &mut MpaState,
+    expected_epoch: u32,
+) -> Result<bool, String> {
+    mpa_state.insert_approver(args, expected_epoch)?;
+
     Ok(mpa_state.is_fulfilled())
 }
 
-async fn process_deny(args: SignedCmdArgs, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
-    if is_mgmt_id(&args.id) { 
-        process_deny_ctl(&args.id, args.uid).await 
+async fn process_deny(
+    args: SignedCmdArgs,
+    nl_tx: &NlWriter,
+) -> (String, Option<InternalEvent>) {
+    if is_mgmt_id(&args.id) {
+        process_deny_ctl(&args).await
+    } else if is_draft_id(&args.id) {
+        process_deny_draft(&args.id, args.uid).await
+    } else {
+        process_deny_entry(&args, nl_tx).await
     }
-    else if is_draft_id(&args.id) { process_deny_draft(&args.id, args.uid).await }
-    else { process_deny_entry(&args, nl_tx).await }
 }
 
 /// 保留中の管理コマンド要求を拒否する
-async fn process_deny_ctl(cmd_id: &str, uid: u32) -> (String, Option<InternalEvent>) {
-    // 1. 引数(cmd_id)から、ユーザーが何を拒否しようとしているか推測する
-    let expected_kind = match cmd_id {
-        "start" => MgmtCtlKind::Start,
-        "stop" => MgmtCtlKind::Stop,
-        "policy_update" | "reload" => MgmtCtlKind::PolicyUpdate,
-        "flush" => MgmtCtlKind::Flush,
-        _ => return (format!("ERR unknown management command {}\n", cmd_id), None),
+async fn process_deny_ctl(
+    args: &SignedCmdArgs,
+) -> (String, Option<InternalEvent>) {
+    let mut st = app_state().lock().await;
+
+    // 1. Pending管理コマンドを取得
+    let pending = match st.slow.pending_ctl.as_ref() {
+        Some(p) => p,
+        None => {
+            return (
+                "ERR no pending management command\n".to_string(),
+                None,
+            );
+        }
     };
 
-    // 2. 必要なデータ（検証用のロール）を一瞬でコピーしてロック解放
-    let (approver_roles, kind) = {
-        let st = app_state().lock().await;
-        match st.slow.pending_ctl.as_ref() {
-            Some(p) if p.kind == expected_kind => {
-                // 要求されたコマンドと、実際に保留中のコマンドが完全に一致！
-                (p.mpa_state.approver_roles.clone(), p.kind.clone())
-            },
-            Some(p) => {
-                // 誤爆防止: 要求と実際の保留状態が食い違っている
-                return (format!("ERR pending command is {}, not {}\n", p.kind.as_str(), expected_kind.as_str()), None);
-            },
-            None => {
-                return (format!("ERR no pending {} command\n", expected_kind.as_str()), None);
-            }
-        }
-    }; // 即解放
-
-    // 3. ロックを持たない安全な状態で権限チェック
-    let has_permission = check_permission(uid, &approver_roles).0;
-
-    // 4. 権限があれば再度ロックを取って対象を取り除く (take)
-    if has_permission {
-        let pending = {
-            let mut st = app_state().lock().await;
-            // 競合状態を防ぐため、取り出す直前に再度 kind の一致を確認して take()
-            if st.slow.pending_ctl.as_ref().map(|p| &p.kind) == Some(&kind) {
-                st.slow.pending_ctl.take()
-            } else {
-                None
-            }
-        }; // 即解放
-
-        if let Some(pending_ctl) = pending {
-            let event = Some(InternalEvent::CtlDenied {
-                pending_ctl,
-                denier_uid: uid,
-            });
-            (format!("OK {} denied\n", kind.as_str()), event)
-        } else {
-            ("ERR pending command was already processed\n".to_string(), None)
-        }
-    } else {
-        ("ERR user is not allowed to deny\n".to_string(), None)
+    // 2. コマンド種別の照合
+    if !args.id.eq_ignore_ascii_case(pending.kind.as_str()) {
+        return (
+            format!(
+                "ERR pending command is {}, not {}\n",
+                pending.kind.as_str(),
+                args.id,
+            ),
+            None,
+        );
     }
+
+    // 3. audit_idの照合
+    if args.audit_id.as_deref() != Some(pending.audit_id.as_str()) {
+        return (
+            "ERR management audit_id mismatch\n".to_string(),
+            None,
+        );
+    }
+
+    // 4. 拒否権限の確認
+    let (has_permission, _) = match check_permission(
+        args.uid,
+        &pending.mpa_state.required_roles,
+        pending.epoch,
+    ) {
+        Ok(result) => result,
+        Err(e) => return (format!("ERR {}\n", e), None),
+    };
+
+    if !has_permission {
+        return (
+            "ERR user is not allowed to deny\n".to_string(),
+            None,
+        );
+    }
+
+    // 5. 権限確認済みのPendingを取り出す
+    let pending_ctl = st.slow.pending_ctl.take()
+        .expect("pending_ctl was checked above");
+
+    // Mutexはここで明示的に解放
+    drop(st);
+
+    let kind = pending_ctl.kind.clone();
+
+    let event = Some(InternalEvent::CtlDenied {
+        pending_ctl,
+        denier_uid: args.uid,
+    });
+
+    (format!("OK {} denied\n", kind.as_str()), event)
 }
 
 async fn process_deny_draft(id: &str, uid: u32) -> (String, Option<InternalEvent>) {
-    // 1. まず一瞬だけロックを取り、判定に必要な「ロール」だけをコピーする
-    let approver_roles = {
+    let (required_roles, expected_epoch) = {
         let lock = app_state().lock().await;
-        match lock.fast.drafts.get(id) {
-            Some(p) => p.mpa_state.approver_roles.clone(),
-            None => return ("ERR no such pending ticket\n".to_string(), None),
-        }
-    }; // ここで即座にロック解放！
 
-    // 2. ロックを持たない安全な状態で、1回だけ権限チェックを行う
-    let (has_permission, _uid_roles) = check_permission(uid, &approver_roles);
+        match lock.fast.drafts.get(id) {
+            Some(p) => (
+                p.mpa_state.required_roles.clone(),
+                p.epoch,
+            ),
+            None => {
+                return ("ERR no such pending ticket\n".to_string(), None);
+            }
+        }
+    };
+
+    let (has_permission, _uid_roles) =
+        match check_permission(uid, &required_roles, expected_epoch) {
+            Ok(result) => result,
+            Err(err) => return (format!("ERR {}\n", err), None),
+        };
 
     if !has_permission {
         return ("ERR user are not allowed to deny\n".to_string(), None);
     }
 
-    // 3. 権限がある場合のみ、再度一瞬だけロックを取って「削除 (remove)」する
     let mut event = None;
     let existed = {
-        let mut lock = app_state().lock().await; // ロック再取得
-        
+        let mut lock = app_state().lock().await;
+
         // draft が存在していれば削除し、紐づく ticket も削除する
         if let Some(draft) = lock.fast.drafts.remove(id) {
             let ticket = ACTIVE_TICKETS.remove(id).map(|(_, ticket)| ticket).unwrap_or_default();
@@ -742,59 +896,56 @@ async fn process_deny_draft(id: &str, uid: u32) -> (String, Option<InternalEvent
         } else {
             false // チェック直後に他の人が処理済みだった場合
         }
-    }; // 即解放！
+    };
 
     if !existed { 
         return ("ERR no such pending ticket\n".to_string(), None); 
     }
-    
+
     ("DENIED\n".to_string(), event)
 }
 
 async fn process_deny_entry(args: &SignedCmdArgs, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
     let id = args.id.parse().unwrap_or(0);
     
-    // 1. まず一瞬だけロックを取り、判定に必要な「ロール」と「ENFORCE状態」だけをコピーする
-    let approver_roles = {
+    let (required_roles, expected_epoch) = {
         let lock = app_state().lock().await;
-        let entry = match lock.slow.pending_requests.get(&id) {
-            Some(p) => p,
-            None => return ("ERR no such pending id\n".to_string(), None),
-        };
-        entry.mpa_state.approver_roles.clone()
-    }; // ここで即座にロック解放！
 
-    // 2. ロックを持たない安全な状態で、1回だけ権限チェックを行う
-    let (has_permission, uid_roles) = check_permission(args.uid, &approver_roles);
+        match lock.slow.pending_requests.get(&id) {
+            Some(p) => (
+                p.mpa_state.required_roles.clone(),
+                p.policy_epoch,
+            ),
+            None => {
+                return ("ERR no such pending ticket\n".to_string(), None);
+            }
+        }
+    };
+
+    let (has_permission, _uid_roles) =
+        match check_permission(args.uid, &required_roles, expected_epoch) {
+            Ok(result) => result,
+            Err(err) => return (format!("ERR {}\n", err), None),
+        };
 
     if !has_permission {
         return ("ERR user are not allowed to deny\n".to_string(), None);
     }
 
-    // 3. 権限がある場合のみ、再度一瞬だけロックを取って「削除 (remove)」する
     let removed_request_opt = {
         let mut lock = app_state().lock().await;
         lock.slow.pending_requests.remove(&id)
-    }; // 即解放！
+    };
 
-    // 4. 削除できた要素に対して、ロックなしで変更（履歴の追加）を加え、イベントを生成
-    let Some(mut removed_request) = removed_request_opt else {
-        // チェック直後に他の人が処理済みだった場合
+    let Some(removed_request) = removed_request_opt else {
         return ("ERR no such pending id\n".to_string(), None);
     };
 
-    // ここまで到達したということは削除成功 (removed_request) が確定している
-    for r in uid_roles { 
-        removed_request.mpa_state.required_roles.retain(|role| role != &r); 
-    } 
-    removed_request.mpa_state.insert_approver(args);
-    
     let event = Some(InternalEvent::EntryDenied { 
         entry: removed_request, 
         denier_uid: args.uid 
     });
 
-    // 5. I/O処理（カーネルへの通知）
     if is_enforce() {
         let _ = nl_tx.send_deny(id).await;
     }
@@ -802,15 +953,34 @@ async fn process_deny_entry(args: &SignedCmdArgs, nl_tx: &NlWriter) -> (String, 
     ("DENIED\n".to_string(), event)
 }
 
-async fn process_ticket(id: &str, uid: u32) -> (String, Option<InternalEvent>) {
-    let rule = match find_rule(id) { Ok(r) => r, Err(err) => return (format!("ERR {}\n", err), None) };
+async fn process_ticket(id: &str, uid: u32, nl_tx: &NlWriter) -> (String, Option<InternalEvent>) {
+    if nl_tx.ticket_transition_active() {
+        return ("ERR policy epoch transition in progress\n".to_string(), None);
+    }
+    let (rule, epoch) = match find_rule(Some(id)) {
+        Ok((Some(rule), epoch)) => (rule, epoch),
+        Ok((None, epoch)) => return (format!("ERR Rule id={} is None in policy epoch={}\n", id, epoch), None),
+        Err(err) => return (format!("ERR {}\n", err), None),
+    };
+
     if let Err(err) = is_ticketable(&rule) { return (format!("ERR {}\n", err), None); }
-    let draft = match draft_from_rule(&rule, uid).await { Ok(d) => d, Err(err) => return (format!("ERR {}\n", err), None) };
-    if !is_allowed_user(uid, &rule) { return ("ERR user is not allowed to ticket this rule\n".to_string(), None); }
-    
+    let draft = match draft_from_rule(&rule, uid, epoch).await { Ok(d) => d, Err(err) => return (format!("ERR {}\n", err), None) };
+    match is_allowed_user(uid, &rule, epoch) {
+        Ok(true) => {}
+        Ok(false) => {
+            return ("ERR user is not allowed to ticket this rule\n".to_string(), None);
+        }
+        Err(err) => {
+            return (format!("ERR {}\n", err), None);
+        }
+    }
+
     {
         let mut state = app_state().lock().await;
         if state.fast.has_draft_for_rule(&rule.id) { return ("ERR ticket is already in waiting list for approval\n".to_string(), None); }
+        if policy_snapshot().epoch != epoch || nl_tx.ticket_transition_active() {
+            return ("ERR policy epoch transition in progress\n".to_string(), None);
+        }
         state.fast.drafts.insert(draft.draft_id.clone(), draft);
     }
     ("OK\n".to_string(), None)
@@ -889,12 +1059,8 @@ async fn create_mgmt_pending(
     mpa: &CompiledMgmtMpaEnabled
 ) -> (String, Option<InternalEvent>) {
     // 1. 事前準備：重い処理（名前解決とUUID生成）をロックの外で完全に終わらせる
-    let initiator_user = tokio::task::spawn_blocking(move || {
-        uid_to_name(uid).unwrap_or_else(|_| "".to_string())
-    })
-    .await
-    .unwrap_or_default();
-    
+    let initiator_user = resolve_account(uid).await;
+
     let audit_id = Uuid::new_v4().to_string();
 
     // 2. 具材が揃ったら、一瞬だけロックを取って状態を更新する
@@ -905,7 +1071,7 @@ async fn create_mgmt_pending(
         if let Some(existing) = &st.slow.pending_ctl { 
             return (format!("ERR {} is already pending\n", existing.kind.as_str()), None); 
         }
-        
+        let epoch = policy_snapshot().epoch;
         st.slow.pending_ctl = Some(
             MgmtPendingCtl {
                 kind: kind.clone(),
@@ -913,173 +1079,318 @@ async fn create_mgmt_pending(
                 initiator_user,
                 audit_id,
                 target_hash: target_hash.to_string(),
+                epoch,
                 mpa_state: MpaState {
                     threshold: mpa.threshold,
-                    approver_roles: mpa.approver_roles.clone(),
                     required_roles: mpa.approver_roles.clone(),
                     approvals: HashMap::new(),
-                    aggregated_signature: None
+                    aggregated_signature: None,
                 },
-                timeout_minutes: mpa.timeout_minutes
+                timeout_minutes: mpa.timeout_minutes,
             }
         );
     } // ここで即座にロック解放！
-    
+
     ("PENDING\n".to_string(), None)
 }
 
 /// 管理コマンドの即時実行、またはMPA承認完了後の状態変更とカーネル通知を行う
+
+static MGMT_EXEC_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+type MgmtResult<T> = Result<T, String>;
+
+/// Kernel Epoch の成否が判定不能になった場合、通常処理を即時停止する。
+/// panic! では管理タスクだけが終了してワーカーが動き続けるため使用しない。
+/// プロセスのFDはOSにより閉じられ、Netlink切断通知から再登録が可能になる。
+/// 注意: 現行カーネルの切断時Fail-Open動作までは変更しない。
+fn terminate_on_epoch_uncertainty(operation: &str, old_epoch: u32, new_epoch: u32, cause: &str) -> ! {
+    eprintln!(
+        concat!(
+            "{}[CRITICAL] {}: kernel epoch result UNKNOWN ({} -> {}): {}. ",
+            "Stopping teald; policy files will NOT be rolled back. ",
+            "Recovery requires REGISTER and a fresh Epoch synchronization."
+        ),
+        ktime_prefix(), operation, old_epoch, new_epoch, cause
+    );
+    std::process::exit(1);
+}
+
+struct MgmtOutcome {
+    epoch: u32,
+    // The caller may retain the original MPA-approved MgmtPendingCtl for audit.
+}
+
+struct PreparedPolicyUpdate {
+    old_epoch: u32,
+    new_epoch: u32,
+    new_bundle: CompiledBundle,
+    new_management: CompiledManagement,
+    backup_dir: PathBuf,
+}
+
 async fn execute_mgmt_ctl(
     kind: MgmtCtlKind,
     uid: u32,
     target_hash: &str,
     nl_tx: &NlWriter,
 ) -> (String, Option<InternalEvent>) {
-    let target_hash_owned = target_hash.to_string();
-    let kind_clone = kind.clone();
+    // Serialize lifecycle operations. Other policy decision/ticket paths must
+    // independently enforce epoch and transition safety.
+    let request_epoch = policy_snapshot().epoch;
 
-    // 世代退避ディレクトリ名を作るため、ロックを取って現在のエポックだけ先に取得しておく
-    let current_epoch = app_state().lock().await.current_epoch;
+    let result = execute_mgmt_ctl_core(
+        kind.clone(),
+        target_hash,
+        request_epoch,
+        nl_tx,
+    ).await;
 
-    // 1. ロック前に重い処理（ファイルI/O・TOCTOU検証・ロールバック制御）を実行
-    // 戻り値: (実行ユーザー名, 成功フラグ, エラーメッセージ)
-    let (initiator_user_str, toctou_ok, err_msg) = tokio::task::spawn_blocking(move || {
-        let user = uid_to_name(uid).unwrap_or_default();
-
-        if kind_clone == MgmtCtlKind::PolicyUpdate {
-            // [c] TOCTOU検証
-            let actual_hash = compute_directory_hash(STAGE_TEAL_DIR).unwrap_or_default();
-            if actual_hash != target_hash_owned {
-                return (user, false, "ERR TOCTOU validation failed: hash mismatch\n".to_string());
-            }
-
-            // タイムスタンプ（UTC）を取得してディレクトリ名に組み込む
-            // 例: epoch_0_20260905_173000
-            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-            let backup_dir = format!("/var/lib/teal/epochs/epoch_{}_{}", current_epoch, timestamp);
-            let moved_stage_dir = format!("{}/new", backup_dir);
-
-            // 親ディレクトリが無ければ作成
-            if let Err(e) = std::fs::create_dir_all("/var/lib/teal/epochs") {
-                return (user, false, format!("ERR failed to create epochs dir: {}\n", e));
-            }
-
-            // [d] 世代退避 (WORM)
-            if let Err(e) = std::fs::rename(DEFAULT_TEAL_DIR, &backup_dir) {
-                return (user, false, format!("ERR failed to backup current policy: {}\n", e));
-            }
-
-            // [e] ステージング反映
-            if let Err(e) = std::fs::rename(&moved_stage_dir, DEFAULT_TEAL_DIR) {
-                if let Err(rollback_err) = std::fs::rename(&backup_dir, DEFAULT_TEAL_DIR) {
-                    eprintln!("{}[FATAL] Policy rollback failed! System is in inconsistent state: {}", ktime_prefix(), rollback_err);
-                }
-                return (user, false, format!("ERR failed to apply new policy (rolled back): {}\n", e));
-            }
+    match result {
+        Ok(outcome) => {
+            let pending_ctl = MgmtPendingCtl {
+                kind: kind.clone(),
+                initiator_uid: uid,
+                initiator_user: resolve_account(uid).await,
+                audit_id: Uuid::new_v4().to_string(),
+                target_hash: target_hash.to_string(),
+                epoch: request_epoch,
+                mpa_state: MpaState::default(),
+                timeout_minutes: 0,
+            };
+            (
+                format!("OK {} executed (Epoch: {})\n", kind.as_str(), outcome.epoch),
+                Some(InternalEvent::CtlApproved { pending_ctl }),
+            )
         }
-        (user, true, "".to_string())
-    }).await.unwrap_or_default();
+        Err(e) => (format!("ERR {}: {}\n", kind.as_str(), e), None),
+    }
+}
 
-    // 失敗時はここで安全にAbort（後続のインメモリ更新やカーネル同期は一切走らない）
-    if !toctou_ok {
-        return (err_msg, None);
+async fn execute_mgmt_ctl_core(
+    kind: MgmtCtlKind,
+    target_hash: &str,
+    expected_epoch: u32,
+    nl_tx: &NlWriter,
+) -> MgmtResult<MgmtOutcome> {
+    let _guard = MGMT_EXEC_LOCK.lock().await;
+
+    // 管理コマンドの実行直前にepoch確認
+    let current_epoch = policy_snapshot().epoch;
+
+    if current_epoch != expected_epoch {
+        return Err(format!(
+            "Policy epoch changed before management execution: expected={}, current={}",
+            expected_epoch,
+            current_epoch
+        ));
     }
 
-    let generated_audit_id = Uuid::new_v4().to_string();
-
-    // 即時実行用の監査イベント生成 (承認情報はデフォルトで空)
-    let pending_ctl = MgmtPendingCtl {
-        kind: kind.clone(),
-        initiator_uid: uid,
-        initiator_user: initiator_user_str,
-        audit_id: generated_audit_id,
-        target_hash: target_hash.to_string(),
-        
-        mpa_state: MpaState::default(),
-        timeout_minutes: 0,
-    };
-    let event = Some(InternalEvent::CtlApproved {
-        pending_ctl: pending_ctl.clone(),
-    });
-
-    let mut pending_deny_ids = Vec::new();
-    let current_epoch: u32;
-
-    // 2. ロックを取得してインメモリ状態を更新 (フェーズ1)
-    {
-        let mut st = app_state().lock().await;
-
-        match kind {
-            MgmtCtlKind::Start => {
-                if st.is_flushed {
-                    st.is_flushed = false; // ネットワーク復旧
-                }
-                if !st.slow.pending_requests.is_empty() {
-                    pending_deny_ids = st.slow.pending_requests.keys().cloned().collect();
-                    eprintln!(
-                        "{}[WARN] Auto-denying {} pending requests before ENFORCE start.",
-                        ktime_prefix(),
-                        pending_deny_ids.len()
-                    );
-                }
-                clear_ephemeral_state_for_enforce(&mut st);
-                set_daemon_mode(DaemonMode::Enforce);
-            }
-            MgmtCtlKind::Stop => {
-                set_daemon_mode(DaemonMode::Audit);
-                clear_ephemeral_state_for_enforce(&mut st);
-            }
-            MgmtCtlKind::PolicyUpdate => {
-                st.current_epoch = st.current_epoch.wrapping_add(1);
-                st.fast.drafts.clear();
-                st.fast.approved.clear();
-                ACTIVE_TICKETS.clear();
-            }
-            MgmtCtlKind::Flush => {
-                st.is_flushed = true;
-                st.current_epoch = st.current_epoch.wrapping_add(1);
-                clear_ephemeral_state_for_enforce(&mut st);
-            }
-        }
-
-        current_epoch = st.current_epoch;
-        st.slow.pending_ctl = None; // 管理コマンドの承認待ち状態を解除
-    } // ロック解放
-
-    // 3. ロック外で安全に外部I/O（Netlink送信など）を実行 (フェーズ2)
     match kind {
-        MgmtCtlKind::Start => {
-            for id in pending_deny_ids {
-                let _ = nl_tx.send_deny(id).await;
-            }
-            let _ = nl_tx.send_mode_switch(1).await;
-
-            eprintln!("{}[INFO] Re-loading silent_io tickets for ENFORCE mode...", ktime_prefix());
-            if let Err(e) = preload_silent_directory_tickets(nl_tx).await {
-                eprintln!("{}[WARN] Failed to preload silent tickets: {}", ktime_prefix(), e);
-            }
-        }
-        MgmtCtlKind::Stop => {
-            let _ = nl_tx.send_mode_switch(0).await;
-        }
+        MgmtCtlKind::Start => execute_start(nl_tx).await,
+        MgmtCtlKind::Stop => execute_stop(nl_tx).await,
         MgmtCtlKind::PolicyUpdate => {
-            let _ = nl_tx.send_sync_epoch(current_epoch).await;
-
-            eprintln!("{}[INFO] Re-loading silent_io tickets for new policy...", ktime_prefix());
-            if let Err(e) = preload_silent_directory_tickets(nl_tx).await {
-                eprintln!("{}[WARN] Failed to preload silent tickets: {}", ktime_prefix(), e);
-            }
+            execute_policy_update(target_hash, nl_tx).await
         }
-        MgmtCtlKind::Flush => {
-            // TODO: カーネルへ Epoch 更新メッセージを送る本実装時に有効化
-            // let _ = nl_tx.send_sync_epoch(current_epoch).await;
+        MgmtCtlKind::Flush => execute_flush(nl_tx).await,
+    }
+}
+
+async fn execute_start(nl_tx: &NlWriter) -> MgmtResult<MgmtOutcome> {
+    // Switch the kernel first. A send success may not imply kernel ACK.
+    nl_tx.send_mode_switch(1).await.map_err(|e| e.to_string())?;
+
+    let ids = {
+        let mut state = app_state().lock().await;
+        let ids = state.slow.pending_requests.keys().copied().collect::<Vec<_>>();
+        clear_ephemeral_state_for_enforce(&mut state);
+        state.is_flushed = false;
+        set_daemon_mode(DaemonMode::Enforce);
+        ids
+    };
+    for id in ids {
+        if let Err(e) = nl_tx.send_deny(id).await {
+            eprintln!("{}[WARN] failed to deny pending request {}: {}", ktime_prefix(), id, e);
         }
     }
+    if let Err(e) = preload_silent_directory_tickets(nl_tx).await {
+        eprintln!("{}[WARN] START succeeded, but preloading tickets failed: {}", ktime_prefix(), e);
+    }
+    Ok(MgmtOutcome { epoch: policy_snapshot().epoch })
+}
 
-    (
-        format!("OK {} executed (Epoch: {})\n", kind.as_str(), current_epoch),
-        event,
-    )
+async fn execute_stop(nl_tx: &NlWriter) -> MgmtResult<MgmtOutcome> {
+    nl_tx.send_mode_switch(0).await.map_err(|e| e.to_string())?;
+    {
+        let mut state = app_state().lock().await;
+        clear_ephemeral_state_for_enforce(&mut state);
+        set_daemon_mode(DaemonMode::Audit);
+    }
+    Ok(MgmtOutcome { epoch: policy_snapshot().epoch })
+}
+
+async fn execute_policy_update(
+    target_hash: &str,
+    nl_tx: &NlWriter,
+) -> MgmtResult<MgmtOutcome> {
+    // Stop new ticket dispatch before validation / directory switching.
+    // The guard is released on all ordinary returns; fatal paths exit teald.
+    let ticket_guard = nl_tx.begin_ticket_transition().map_err(|e| e.to_string())?;
+    let prepared = prepare_policy_update(target_hash).await?;
+    let old_epoch = prepared.old_epoch;
+
+    // The caller must ensure other kernel ticket-producing paths cannot race
+    // through this transition; see integration notes.
+    switch_policy_directory(&prepared).await?;
+
+    if let Err(e) = synchronize_kernel_epoch(nl_tx, prepared.new_epoch).await {
+        // ACKが欠落していても、kernelでは更新が完了している可能性がある。
+        // /etc/teal.dを旧版に戻さず、処理を停止してREGISTER同期から復旧する。
+        terminate_on_epoch_uncertainty(
+            "POLICY_UPDATE", old_epoch, prepared.new_epoch, &e
+        );
+    }
+
+    // ACK成功後にユーザー空間のSnapshot確定に失敗した場合も同期不整合。
+    let new_epoch = match commit_policy_snapshot(
+        prepared.new_bundle, old_epoch, prepared.new_epoch
+    ) {
+        Ok(epoch) => epoch,
+        Err(e) => terminate_on_epoch_uncertainty(
+            "POLICY_UPDATE snapshot commit", old_epoch, prepared.new_epoch, &e
+        ),
+    };
+
+    // Prepared together with the staged bundle. Publication is infallible.
+    // Both snapshots are switched while the ticket transition gate is held.
+    commit_management(prepared.new_management);
+
+    invalidate_old_approvals().await;
+    drop(ticket_guard);
+    if let Err(e) = preload_silent_directory_tickets(nl_tx).await {
+        // Policy is committed. Never claim that the update was rolled back.
+        eprintln!("{}[WARN] policy updated, but preloading tickets failed: {}", ktime_prefix(), e);
+    }
+    Ok(MgmtOutcome { epoch: new_epoch })
+}
+
+async fn prepare_policy_update(target_hash: &str) -> MgmtResult<PreparedPolicyUpdate> {
+    let old_epoch = policy_snapshot().epoch;
+    let new_epoch = old_epoch.checked_add(1).ok_or("epoch overflow")?;
+    let target_hash = target_hash.to_owned();
+
+    tokio::task::spawn_blocking(move || {
+        validate_staged_policy(&target_hash)?;
+        let new_bundle = compile_staged_bundle()?;
+        let staged_management_path = std::path::Path::new(STAGE_TEAL_DIR)
+            .join("management.json");
+        let new_management = prepare_management(
+            &staged_management_path, &new_bundle.roles
+        ).map_err(|e| format!("staged management validation failed: {:#}", e))?;
+        // Unique suffix prevents backup-directory collisions.
+        let backup_dir = PathBuf::from(format!(
+            "/var/lib/teal/epochs/epoch_{}_{}_{}",
+            old_epoch,
+            chrono::Utc::now().format("%Y%m%d_%H%M%S"),
+            Uuid::new_v4()
+        ));
+        Ok(PreparedPolicyUpdate { old_epoch, new_epoch, new_bundle, new_management, backup_dir })
+    })
+    .await
+    .map_err(|e| format!("policy preparation task failed: {}", e))?
+}
+
+fn validate_staged_policy(expected_hash: &str) -> MgmtResult<()> {
+    let actual = compute_directory_hash(STAGE_TEAL_DIR)
+        .map_err(|e| format!("staged policy hash failed: {}", e))?;
+    if actual != expected_hash {
+        return Err("TOCTOU validation failed: hash mismatch".into());
+    }
+    Ok(())
+}
+
+fn compile_staged_bundle() -> MgmtResult<CompiledBundle> {
+    load_bundle_from_dir(STAGE_TEAL_DIR)
+        .map_err(|e| format!("staged bundle compilation failed: {:#}", e))
+}
+
+async fn switch_policy_directory(update: &PreparedPolicyUpdate) -> MgmtResult<()> {
+    let backup = update.backup_dir.clone();
+    tokio::task::spawn_blocking(move || {
+        let base = std::path::Path::new(DEFAULT_TEAL_DIR);
+        let stage_child = backup.join("new");
+        std::fs::create_dir_all("/var/lib/teal/epochs")
+            .map_err(|e| format!("create backup parent: {}", e))?;
+        // /etc/teal.d/new travels to backup/new with its parent.
+        std::fs::rename(base, &backup)
+            .map_err(|e| format!("backup current policy: {}", e))?;
+        if let Err(e) = std::fs::rename(&stage_child, base) {
+            std::fs::rename(&backup, base)
+                .map_err(|rollback| format!("FATAL: apply failed ({e}), rollback failed ({rollback})"))?;
+            return Err(format!("apply staged policy: {}", e));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("directory switch task failed: {}", e))?
+}
+
+async fn synchronize_kernel_epoch(nl_tx: &NlWriter, epoch: u32) -> MgmtResult<()> {
+    // send_sync_epoch() waits for the kernel NLMSG_ERROR(success ACK).
+    nl_tx.send_sync_epoch(epoch).await.map_err(|e| format!("send epoch {}: {}", epoch, e))?;
+    Ok(())
+}
+
+fn commit_policy_snapshot(
+    new_bundle: CompiledBundle,
+    expected_old_epoch: u32,
+    expected_new_epoch: u32,
+) -> MgmtResult<u32> {
+    if policy_snapshot().epoch != expected_old_epoch {
+        return Err("policy epoch changed during update".into());
+    }
+    let actual = update_bundle(new_bundle, expected_old_epoch)
+        .map_err(|e| e.to_string())?;
+    if actual != expected_new_epoch {
+        return Err(format!("unexpected committed epoch {} != {}", actual, expected_new_epoch));
+    }
+    Ok(actual)
+}
+
+async fn invalidate_old_approvals() {
+    let mut state = app_state().lock().await;
+    state.fast.drafts.clear();
+    state.fast.approved.clear();
+    state.slow.pending_requests.clear();
+    state.slow.pending_ctl = None;
+    ACTIVE_TICKETS.clear();
+}
+
+async fn execute_flush(nl_tx: &NlWriter) -> MgmtResult<MgmtOutcome> {
+    let ticket_guard = nl_tx.begin_ticket_transition().map_err(|e| e.to_string())?;
+    let old_epoch = policy_snapshot().epoch;
+    let new_epoch = old_epoch.checked_add(1).ok_or("epoch overflow")?;
+    if let Err(e) = synchronize_kernel_epoch(nl_tx, new_epoch).await {
+        terminate_on_epoch_uncertainty("FLUSH", old_epoch, new_epoch, &e);
+    }
+    let actual_epoch = match advance_epoch(old_epoch) {
+        Ok(epoch) if epoch == new_epoch => epoch,
+        Ok(epoch) => terminate_on_epoch_uncertainty(
+            "FLUSH snapshot commit", old_epoch, new_epoch,
+            &format!("committed unexpected epoch {}", epoch)
+        ),
+        Err(e) => terminate_on_epoch_uncertainty(
+            "FLUSH snapshot commit", old_epoch, new_epoch, &e.to_string()
+        ),
+    };
+    {
+        let mut state = app_state().lock().await;
+        state.is_flushed = true;
+        clear_ephemeral_state_for_enforce(&mut state);
+        state.fast.approved.clear();
+    }
+    drop(ticket_guard);
+    Ok(MgmtOutcome { epoch: actual_epoch })
 }
 
 fn clear_ephemeral_state_for_enforce(state: &mut AppState) {
@@ -1090,30 +1401,84 @@ fn clear_ephemeral_state_for_enforce(state: &mut AppState) {
 }
 
 // --- ヘルパー関数 ---
-fn check_permission(uid: u32, approver_roles: &HashSet<String>) -> (bool, HashSet<String>) {
-    let b = bundle();
-    let user_roles = b.roles.assignments.uid_roles.get(&uid).cloned().unwrap_or_default();
-    let has_permission = !user_roles.is_disjoint(approver_roles);
-    (has_permission, user_roles)
+fn check_permission(
+    uid: u32,
+    required_roles: &HashSet<String>,
+    expected_epoch: u32,
+) -> Result<(bool, HashSet<String>), String> {
+    let snapshot = policy_snapshot();
+
+    if snapshot.epoch != expected_epoch {
+        return Err(format!(
+            "Policy epoch changed: expected={}, current={}",
+            expected_epoch,
+            snapshot.epoch
+        ));
+    }
+
+    let user_roles = snapshot.bundle.roles
+        .assignments
+        .uid_roles
+        .get(&uid)
+        .cloned()
+        .unwrap_or_default();
+
+    let has_permission = !user_roles.is_disjoint(required_roles);
+
+    Ok((has_permission, user_roles))
 }
 
 fn is_draft_id(id: &str) -> bool { id.starts_with("T-") }
 
-pub fn find_rule(id: &str) -> Result<CompiledRule, String> {
-    let b = bundle();
-    for rule in &b.policy.rules { if rule.id == id { return Ok(rule.clone()); } }
-    Err(format!("Rule id={} is not found", id))
-}
+pub fn is_allowed_user(
+    uid: u32,
+    rule: &CompiledRule,
+    expected_epoch: u32,
+) -> Result<bool, String> {
+    let snapshot = policy_snapshot();
 
-pub fn is_allowed_user(uid: u32, rule: &CompiledRule) -> bool {
+    if snapshot.epoch != expected_epoch {
+        return Err(format!(
+            "Policy epoch changed: expected={}, current={}",
+            expected_epoch,
+            snapshot.epoch
+        ));
+    }
+
     let m = &rule.subject;
-    let uid_roles = &bundle().roles.assignments.uid_roles;
+    let uid_roles = &snapshot.bundle.roles.assignments.uid_roles;
     let subject_roles = uid_roles.get(&uid).cloned().unwrap_or_default();
 
-    if let Some(rule_uid) = m.uid { if uid != rule_uid { return false; } }
-    if !m.required_roles.is_empty() {
-        if m.required_roles.iter().any(|r| subject_roles.contains(r)) { return true; } 
-        else { return false; }
+    if let Some(rule_uid) = m.uid {
+        if uid != rule_uid {
+            return Ok(false);
+        }
     }
-    true
+
+    if !m.required_roles.is_empty() {
+        return Ok(
+            m.required_roles.iter()
+                .any(|r| subject_roles.contains(r))
+        );
+    }
+
+    Ok(true)
+}
+
+static ACCOUNT_CACHE: Lazy<dashmap::DashMap<u32, String>> =
+    Lazy::new(dashmap::DashMap::new);
+
+async fn resolve_account(uid: u32) -> String {
+    if let Some(name) = ACCOUNT_CACHE.get(&uid) {
+        return name.value().clone();
+    }
+
+    let account = tokio::task::spawn_blocking(move || {
+        uid_to_name(uid).unwrap_or_else(|_| uid.to_string())
+    })
+    .await
+    .unwrap_or_else(|_| uid.to_string());
+
+    ACCOUNT_CACHE.insert(uid, account.clone());
+    account
 }

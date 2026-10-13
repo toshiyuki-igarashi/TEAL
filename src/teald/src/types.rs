@@ -20,14 +20,14 @@ use hex;
 use blst::min_pk::{Signature, AggregateSignature};
 
 use teal_policy_engine::ir::{CompiledRule, RegisteredSession};
-use teal_policy_engine::util::{uid_to_name, normalize_opt_field, normalize_tty_name, ktime_prefix};
+use teal_policy_engine::util::{normalize_opt_field, normalize_tty_name};
 use teal_policy_engine::types::{Effect, RuleType};
 
 use crate::state::app_state;
-use crate::bundle::bundle;
+use crate::bundle::policy_snapshot;
 use crate::ticket::{is_ticketable, ticket_from_entry};
 use crate::netlink::TealReq;
-use crate::worker::admin::find_rule;
+use crate::common::find_rule;
 
 // ==============================================================
 // 1. ロックフリーなチケットIDジェネレーター（アトミック操作）
@@ -172,7 +172,6 @@ pub struct AppState {
     pub slow: SlowState,
     pub dev: TealDeviceState,
     pub is_flushed: bool,
-    pub current_epoch: u32, // カーネル側の定義(u32)に合わせる
 }
 
 impl AppState {
@@ -253,6 +252,7 @@ pub struct MgmtPendingCtl {
     pub initiator_user: String,
     pub audit_id: String,       // 監査用ID (UUID v7推奨)
     pub target_hash: String,	// update-policy用
+    pub epoch: u32,
     pub mpa_state: MpaState,    // MPAの承認状態
     pub timeout_minutes: u32,
 }
@@ -278,6 +278,7 @@ pub struct TealDeviceState {
 #[derive(Debug, Clone)]
 pub struct PreApprovalDraft {
     pub draft_id: String,
+    pub epoch: u32,  // 判定に適用されたポリシーのepoch
 
     /// 監査用ID (UUID v7推奨)。ログやSIEMでの検索キー。
     pub audit_id: String,
@@ -310,6 +311,7 @@ pub struct PreApprovalDraft {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApprovedTicket {
     pub ticket_id: String,
+    pub epoch: u32,  // 判定に適用されたポリシーのepoch
 
     // 監査・説明用
     pub rule_id: String,
@@ -338,35 +340,32 @@ impl ApprovedTicket {
         result: &PolicyResult,
         ticket: &TicketPayload,
         req: &Request,
-    ) -> Self {
-        let rule_id = result.rule_id.clone().unwrap_or_default();
+    ) -> Option<Self> {
+        let rule_id = result.rule_id.as_deref()?;
+        let (Some(rule), rule_epoch) = find_rule(Some(rule_id)).ok()? else {
+            return None;
+        };
+        if rule_epoch != ticket.epoch {
+            return None;
+        }
 
         // find_rule が成功すればメタデータを使い、失敗しても req の事実情報でフォールバック
-        let (origin_program, origin_script, object, new_object, origin_applet, ttl_sec, max_uses) =
-            if let Ok(rule) = find_rule(&rule_id) {
-                (
-                    rule.subject.origin_program.as_ref().map(|p| p.to_string()).unwrap_or_else(|| req.raw_program.clone()),
-                    rule.subject.origin_script.as_ref().map(|p| p.to_string()).or_else(|| req.raw_script.clone()),
-                    rule.object.as_ref().and_then(|o| o.path.as_ref()).map(|p| p.to_string()).unwrap_or_else(|| req.raw_target.clone()),
-                    rule.object.as_ref().and_then(|o| o.new_path.as_ref()).map(|p| p.to_string()).or_else(|| req.raw_new_target.clone()),
-                    rule.subject.origin_applet.clone().or_else(|| req.raw_applet.clone()),
-                    rule.pre_approval.ttl_sec,
-                    rule.max_uses,
-                )
-            } else {
-                (
-                    req.raw_program.clone(),
-                    req.raw_script.clone(),
-                    req.raw_target.clone(),
-                    req.raw_new_target.clone(),
-                    req.raw_applet.clone(),
-                    ticket.expires_in_sec,
-                    ticket.uses_left,
-                )
-            };
+        let (epoch, rule_id, origin_program, origin_script, object, new_object, origin_applet, ttl_sec, max_uses) =
+            (
+                rule_epoch,
+                rule.id.clone(),
+                rule.subject.origin_program.as_ref().map(|p| p.to_string()).unwrap_or_else(|| req.raw_program.clone()),
+                rule.subject.origin_script.as_ref().map(|p| p.to_string()).or_else(|| req.raw_script.clone()),
+                rule.object.as_ref().and_then(|o| o.path.as_ref()).map(|p| p.to_string()).unwrap_or_else(|| req.raw_target.clone()),
+                rule.object.as_ref().and_then(|o| o.new_path.as_ref()).map(|p| p.to_string()).or_else(|| req.raw_new_target.clone()),
+                rule.subject.origin_applet.clone().or_else(|| req.raw_applet.clone()),
+                rule.pre_approval.ttl_sec,
+                rule.max_uses,
+            );
 
-        ApprovedTicket {
+        Some(ApprovedTicket {
             ticket_id: ticket.ticket_id.clone(),
+            epoch,
             rule_id,
             origin_program,
             origin_script,
@@ -390,53 +389,57 @@ impl ApprovedTicket {
             op_mask: ticket.op,
             ttl_sec,
             max_uses,
-        }
+        })
     }
 
     pub fn from_draft(draft: &PreApprovalDraft) -> Option<Self> {
-        if let Ok(rule) = find_rule(&draft.rule_id) {
-            let origin_program = rule.subject.origin_program
-                .as_ref()
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "ANY".to_string());
+        let (Some(rule), rule_epoch) = find_rule(Some(&draft.rule_id)).ok()? else {
+            return None;
+        };
 
-            let origin_script = rule.subject.origin_script
-                .as_ref()
-                .map(|p| p.to_string());
-
-            let object = rule.object.as_ref()
-                .and_then(|obj| obj.path.as_ref())
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            
-            // new_object の抽出
-            let new_object = rule.object.as_ref()
-                .and_then(|obj| obj.new_path.as_ref())
-                .map(|p| p.to_string());
-
-            Some(ApprovedTicket {
-                ticket_id: draft.draft_id.clone(),
-                rule_id: rule.id,
-                origin_program,
-                origin_program_sha256: None,
-                origin_script,
-                object,
-                new_object,
-                
-                uid: draft.uid,
-                origin_program_id: draft.origin_program_id,
-                origin_script_id: draft.origin_script_id,
-                origin_applet: draft.origin_applet.clone(),
-                object_id: draft.object_id,
-                new_object_id: draft.new_object_id,
-                op_mask: draft.op_mask,
-
-                ttl_sec: rule.pre_approval.ttl_sec,
-                max_uses: rule.max_uses,
-            })
-        } else {
-            None
+        if rule_epoch != draft.epoch {
+            return None;
         }
+
+        let origin_program = rule.subject.origin_program
+            .as_ref()
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "ANY".to_string());
+
+        let origin_script = rule.subject.origin_script
+            .as_ref()
+            .map(|p| p.to_string());
+
+        let object = rule.object.as_ref()
+            .and_then(|obj| obj.path.as_ref())
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        
+        let new_object = rule.object.as_ref()
+            .and_then(|obj| obj.new_path.as_ref())
+            .map(|p| p.to_string());
+
+        Some(ApprovedTicket {
+            ticket_id: draft.draft_id.clone(),
+            epoch: draft.epoch,
+            rule_id: rule.id,
+            origin_program,
+            origin_program_sha256: None,
+            origin_script,
+            object,
+            new_object,
+            
+            uid: draft.uid,
+            origin_program_id: draft.origin_program_id,
+            origin_script_id: draft.origin_script_id,
+            origin_applet: draft.origin_applet.clone(),
+            object_id: draft.object_id,
+            new_object_id: draft.new_object_id,
+            op_mask: draft.op_mask,
+
+            ttl_sec: rule.pre_approval.ttl_sec,
+            max_uses: rule.max_uses,
+        })
     }
 
     pub async fn from_entry(entry: &PendingEntry) -> Option<Self> {
@@ -460,6 +463,7 @@ impl ApprovedTicket {
 
         Some(ApprovedTicket {
             ticket_id: next_audit_ticket_id(),
+            epoch: entry.policy_epoch,
             rule_id,
             
             origin_program: entry.subject.program_path.clone(),
@@ -562,7 +566,7 @@ pub fn str_to_mask(action: &String) -> u32 {
 
 impl PendingEntry {
     /// 内部ヘルパー: Request からルール非依存のベース部分だけを構築する
-    fn from_base_req(req: &Request) -> Self {
+    fn from_base_req(req: &Request, epoch: u32) -> Self {
         let decoded_lsm = match hex::decode(&req.lsm_label_hex) {
             Ok(bytes) => String::from_utf8(bytes).unwrap_or_else(|_| req.lsm_label_hex.clone()),
             Err(_) => req.lsm_label_hex.clone(),
@@ -609,7 +613,7 @@ impl PendingEntry {
             op: str_to_mask(&req.raw_action),
             rule_id: None,
             reason: "".to_string(),
-            policy_epoch: 0,
+            policy_epoch: epoch,
             ttl_seconds: u64::MAX,
             max_uses: 1,
             mpa_state: MpaState::default(),
@@ -617,8 +621,8 @@ impl PendingEntry {
     }
 
     /// Control Lane 用: ルールにマッチした場合 (NeedApproval など) に生成する
-    pub fn from_rule(rule: &CompiledRule, req: &Request) -> Self {
-        let mut entry = Self::from_base_req(req);
+    pub fn from_rule(rule: &CompiledRule, req: &Request, epoch: u32) -> Self {
+        let mut entry = Self::from_base_req(req, epoch);
         
         entry.op = rule.action_match.to_u32();
         entry.rule_id = Some(rule.id.clone());
@@ -627,7 +631,6 @@ impl PendingEntry {
         entry.max_uses = rule.max_uses;
         entry.mpa_state = MpaState {
             threshold: rule.threshold(),
-            approver_roles: rule.approver_roles(),
             required_roles: rule.approver_roles(),
             approvals: HashMap::new(),
             aggregated_signature: None,
@@ -637,18 +640,16 @@ impl PendingEntry {
     }
 
     /// Audit Lane 用: ルールの有無に関わらず、判定結果 (Effect) を元に生成する
-    pub fn from_audit(req: &Request, rule_id: Option<String>, effect: Effect) -> Self {
-        let mut entry = Self::from_base_req(req);
-        
-        entry.rule_id = rule_id;
-        if let Some(ref id) = entry.rule_id {
-            if let Ok(rule) = find_rule(&id) {
-                entry.op = rule.action_match.to_u32();
-                entry.ttl_seconds = rule.pre_approval.ttl_sec;
-                entry.max_uses = rule.max_uses;
-            }
+    pub fn from_audit(req: &Request, rule: Option<CompiledRule>, effect: Effect, epoch: u32) -> Self {
+        let mut entry = Self::from_base_req(req, epoch);
+
+        if let Some(r) = rule {
+            entry.rule_id = Some(r.id.clone());
+            entry.op = r.action_match.to_u32();
+            entry.ttl_seconds = r.pre_approval.ttl_sec;
+            entry.max_uses = r.max_uses;
         }
-        
+
         // Effect に応じてダミーの操作マスクや理由を詰める
         // ※AUDITモードでは実際のアクセスはすべて通っているため、
         // 「本来はどう判定されるべきだったか(Effect)」を reason 等に記録する
@@ -670,68 +671,19 @@ impl PendingEntry {
         entry
     }
 
-    pub fn from(rule: CompiledRule, req: &Request) -> Self {
-        // カーネルから受け取ったHex文字列をデコードする
-        let decoded_lsm = match hex::decode(&req.lsm_label_hex) {
-            Ok(bytes) => String::from_utf8(bytes).unwrap_or_else(|_| req.lsm_label_hex.clone()),
-            Err(_) => req.lsm_label_hex.clone(),
-        };
-
-        PendingEntry {
-            audit_id: Uuid::new_v4().to_string(), 
-            transport_id: req.id, // カーネル通信用のIDを保持
-            timestamp: Utc::now(),
-            subject: SubjectContext {
-                pid: req.pid,
-                ppid: req.ppid,               // カーネルから渡された値をそのまま使用
-                uid: req.uid,
-                gid: req.gid,                 // カーネルから渡された値をそのまま使用
-                session_id: req.session_id,   // カーネルから渡された値をそのまま使用
-                prog_dev: req.prog_dev,
-                prog_ino: req.prog_ino,
-                program_path: req.raw_program.clone(),
-                script_dev: req.script_dev,
-                script_ino: req.script_ino,
-                script_path: req.raw_script.clone(),
-                applet_name: req.raw_applet.clone(),
-                // teald側でのハッシュ計算
-                program_hash: req.prog_sha256.clone(),
-                lsm_label: decoded_lsm,
-                client_ip: None,   // 後続のエンリッチ処理 (SSHコンテキスト解決) で埋める
-                auth_method: None, // 後続のエンリッチ処理で埋める
-                session_tty: req.session_tty.clone(),
-                cmd_args: req.args_head.clone(),
-            },
-            object: ObjectContext {
-                path: req.raw_target.clone(),
-                // TOCTOU対策: teald側で解決せず、カーネルから受信した不変の値を必ず使う
-                inode: req.target_ino,       
-                device_id: req.target_dev,   
-
-                // RENAME 時のみ有効な情報を変換
-                // 値が 0 なら None にする（カーネルが「無し」を示す一般的な値が 0 の場合）
-                new_path: req.raw_new_target.clone(),
-                new_inode: if req.new_target_ino != 0 { Some(req.new_target_ino) } else { None },
-                new_device_id: if req.new_target_dev != 0 { Some(req.new_target_dev) } else { None },
-            },
-            op: rule.action_match.to_u32(),
-            rule_id: Some(rule.id.clone()),
-            reason: rule.out_reason.clone(),
-            policy_epoch: 0,
-            ttl_seconds: rule.pre_approval.ttl_sec,
-            max_uses: rule.max_uses,
-            mpa_state: MpaState {
-                threshold: rule.threshold(),
-                approver_roles: rule.approver_roles(),
-                required_roles: rule.approver_roles(),
-                approvals: HashMap::new(),
-                aggregated_signature: None,
-            },
-        }
-    }
-
     /// is_cacheable は Rule を受け取り、draft, ticketを作成、TicketPayloadを返す (Lazy Binding)
-    pub async fn is_cacheable(&self, rule: &CompiledRule) -> Result<(bool, Option<TicketPayload>, String), String> {
+    pub async fn is_cacheable(&self, rule: &CompiledRule, epoch: u32) -> Result<(bool, Option<TicketPayload>, String), String> {
+        let current_epoch = policy_snapshot().epoch;
+
+        if self.policy_epoch != epoch || epoch != current_epoch {
+            return Err(format!(
+                "Policy epoch mismatch: entry={}, rule={}, current={}",
+                self.policy_epoch,
+                epoch,
+                current_epoch
+            ));
+        }
+
         if rule.pre_approval.ttl_sec > 0 {
             match is_ticketable(rule) {
                 Ok(_) => (),
@@ -864,14 +816,10 @@ pub struct MpaState {
     /// ※ ロジック判定用には u32 が必須。ログ出力で "2-of-3"
     pub threshold: u32,
 
-    /// 承認可能なロールのセット (例: {"admin", "sre_lead"})
+    /// 承認可能/必須なロールのセット (例: {"admin", "sre_lead"})
     /// ※ ここに含まれるロールを持つユーザーのみが approvals に追加できる
-    pub approver_roles: HashSet<String>,
-
-    /// 必須ロール (例: {"security_manager"})
-    /// ※ ここにあるロールが approvals 内に揃わないと完了しない (AND条件)
+    /// ※ また、ここにあるロールが approvals 内に揃わないと完了しない (AND条件)
     pub required_roles: HashSet<String>,
-
 
     // --- 2. Current State & Evidence (承認の事実) ---
 
@@ -891,58 +839,58 @@ pub struct MpaState {
 impl MpaState {
     /// 承認要件を満たしているか判定する
     pub fn is_fulfilled(&self) -> bool {
-        // 1. 数（しきい値）のチェック
         if self.approvals.len() < self.threshold as usize {
             return false;
         }
 
-        // 2. 必須ロールのチェック (Required Roles)
-        if !self.required_roles.is_empty() {
-            let provided_roles: HashSet<&String> = self.approvals.values()
-                .map(|a| &a.role)
-                .collect();
-            
-            for req in &self.required_roles {
-                if !provided_roles.contains(req) {
-                    return false; // 必須ロールが不足
-                }
-            }
-        }
+        let provided_roles: HashSet<&String> = self.approvals
+            .values()
+            .flat_map(|a| a.roles.iter())
+            .collect();
 
-        true
+        self.required_roles.iter()
+            .all(|role| provided_roles.contains(role))
     }
 
-    pub fn insert_approver(&mut self, args: &SignedCmdArgs) {
-        let b = bundle();
+    pub fn insert_approver(&mut self, args: &SignedCmdArgs, expected_epoch: u32) -> Result<(), String> {
+        let snapshot = policy_snapshot();
+        if snapshot.epoch != expected_epoch {
+            return Err(format!(
+                "Policy epoch changed: expected={}, current={}",
+                expected_epoch,
+                snapshot.epoch
+            ));
+        }
+
+        let b = &snapshot.bundle;
         let user_roles = b.roles
             .assignments
             .uid_roles
-            .get(&args.uid)                           
+            .get(&args.uid)
             .cloned()
             .unwrap_or_default();
-        let mut approver_role = "".to_string();
+        let mut roles: HashSet<String> = HashSet::new();
         for role in user_roles {
-            if self.approver_roles.contains(&role) {
-                self.required_roles.remove(&role);
-                approver_role = role.clone();
+            if self.required_roles.contains(&role) {
+                roles.insert(role.clone());
             }
         }
+        if roles.is_empty() {
+            return Err("User does not have an authorized approver role".to_string());
+        }
+        let signature = hex::decode(&args.sig_hex)
+            .map_err(|e| format!("Invalid signature encoding: {}", e))?;
         let approver = ApproverAction {
-            account: uid_to_name(args.uid).unwrap_or_else(|_| "".to_string()),
-            role: approver_role,
+            account: args.account.clone(),
+            roles,
             approved_at: Utc::now(),
             method: "".to_string(),
             comment: None,
-            signature: 
-                match hex::decode(args.sig_hex.clone()) {
-                    Ok(signature) => signature,
-                    Err(msg) => {
-                        eprintln!("{}[ERROR] {}", ktime_prefix(), msg);
-                        Vec::new()
-                    }
-                }
+            signature,
+            epoch: snapshot.epoch
         };
         self.approvals.insert(args.uid, approver);
+        Ok(())
     }
 
 // -------------------------------------------------------------------
@@ -995,7 +943,7 @@ pub struct ApproverAction {
     pub account: String,
 
     /// 承認時のロール (例: "ops_admin")
-    pub role: String,
+    pub roles: HashSet<String>,
 
     /// 承認日時
     #[serde(rename = "ts")] // JSON出力時は "ts" (timestamp)
@@ -1012,6 +960,9 @@ pub struct ApproverAction {
     /// 個別のBLS署名シェア (圧縮形式 96bytes)
     #[serde(with = "hex")]
     pub signature: Vec<u8>,
+
+    /// 承認時に使用されたポリシー版数
+    pub epoch: u32,
 }
 
 // --- ヘルパーモジュール ---
@@ -1077,6 +1028,7 @@ pub enum InternalEvent {
         decision: PolicyDecision,
         rule_id: Option<String>,
         ticket_id: Option<String>,
+        epoch: u32,
     },
     MpaApproved {
         draft: PreApprovalDraft,
@@ -1118,7 +1070,9 @@ pub enum InternalEvent {
 pub struct SignedCmdArgs {
     pub id: String,
     pub uid: u32,
+    pub account: String,
     pub sig_hex: String,
+    pub audit_id: Option<String>,
 }
 
 // --- ポリシー評価と型 ---
@@ -1132,6 +1086,9 @@ pub struct PolicyResult {
     
     /// TICKET発行に必要なペイロード（Allow の場合のみ Some）
     pub ticket: Option<TicketPayload>,
+
+    /// 評価に使われたポリシーの世代
+    pub current_epoch: u32,
 }
 
 /// チケット生成用データ（仕様書 v1.7 準拠）

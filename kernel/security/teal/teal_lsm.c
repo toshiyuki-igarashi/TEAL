@@ -259,6 +259,48 @@ static struct genl_family teal_nl_family = {
 /* tealdのポートID (0は未接続状態) */
 static atomic_t teal_daemon_portid = ATOMIC_INIT(0);
 
+/*
+ * REGISTER / NETLINK_URELEASE の状態遷移はこのspinlockで直列化する。
+ * notifierからも呼ばれるため、spinlock区間ではsleepしない。
+ */
+static DEFINE_SPINLOCK(teal_daemon_state_lock);
+
+/* REGISTERと切断後cleanupを直列化する（sleep可能な処理専用）。 */
+static DEFINE_MUTEX(teal_daemon_lifecycle_mutex);
+static void teal_daemon_disconnect_workfn(struct work_struct *work);
+static DECLARE_WORK(teal_daemon_disconnect_work,
+                    teal_daemon_disconnect_workfn);
+
+/*
+ * 登録済みtealdのNetlinkソケットから
+ * 送信された制御コマンドだけを許可する。
+ */
+static inline int
+teal_nl_check_authorized(const struct genl_info *info)
+{
+    u32 registered_portid;
+
+    if (!info)
+        return -EINVAL;
+
+    /* TEALはinit_netでのみ通信する */
+    if (genl_info_net(info) != &init_net)
+        return -EPERM;
+
+    registered_portid =
+        (u32)atomic_read(&teal_daemon_portid);
+
+    /* tealdが未登録 */
+    if (registered_portid == 0)
+        return -ENOTCONN;
+
+    /* 登録済みtealdとは異なるソケット */
+    if (info->snd_portid != registered_portid)
+        return -EPERM;
+
+    return 0;
+}
+
 // --- プロトタイプ宣言 ---
 void teal_register_decision_maker(int (*callback)(int, void*));
 void teal_unregister_decision_maker(void);
@@ -351,8 +393,11 @@ struct teal_ticket_add_payload {
     __u32 audit_flags;
     __u32 flags;
 
+    struct rcu_head rcu;
     // 削除時にハッシュテーブルからも消せるようにするためのポインタ
     void *cache_entry; 
+
+    bool invalidated;
 };
 
 // ==========================================
@@ -378,7 +423,7 @@ static const struct rhashtable_params teal_cache_params = {
 static LIST_HEAD(teal_ticket_list);
 
 /* リスト操作を守るためのスピンロック */
-static DEFINE_SPINLOCK(teal_ticket_lock);
+static DEFINE_MUTEX(teal_ticket_update_mutex);
 
 enum ticket_event_type {
     TICKET_CONSUMED = 1,
@@ -408,26 +453,44 @@ struct teal_log_entry {
 #define TEAL_TICKET_FLG_INHERIT    0x02
 #define TEAL_TICKET_FLG_NAMELESS_IPC    0x04
 
-// current_cred()->security に割り当てるTEAL独自のコンテキスト構造体
-struct teal_cred_ctx {
-    u32 ticket_flags; // SILENT_IO, INHERIT 等のフラグを保持
+// per-task exec meta（task->security 直置き）
+#define TEAL_TASK_META_MAGIC 0x5445414Cull /* 'TEAL' */
+
+struct teal_task_meta {
+    unsigned long magic;
+    char program[TEAL_PATH_MAX];
+    char script[TEAL_SCRIPT_MAX];
+    char args_head[TEAL_ARGS_MAX];
+    struct teal_id_pair program_id;
+    struct teal_id_pair script_id;
+
+    /* 上位32bit: epoch、下位32bit: flags */
+    atomic64_t privilege_state;
+
+    /* EXEC確定待ち: bprm_checkでは旧メタデータを変更しない */
+    char pending_program[TEAL_PATH_MAX];
+    char pending_script[TEAL_SCRIPT_MAX];
+    char pending_args[TEAL_ARGS_MAX];
+    struct teal_id_pair pending_program_id;
+    struct teal_id_pair pending_script_id;
+    bool pending_exec_valid;
 };
 
 // TEALが必要とするBlobサイズを定義
 struct lsm_blob_sizes teal_blob_sizes __ro_after_init = {
-    .lbs_cred = sizeof(struct teal_cred_ctx),
+    .lbs_task = sizeof(struct teal_task_meta),
 };
 
-// TEAL専用のクレデンシャル領域を取得するヘルパー
-static inline struct teal_cred_ctx *teal_cred(const struct cred *cred)
+static inline struct teal_task_meta *
+teal_task_meta_of(const struct task_struct *task)
 {
-    // 起動時のごく初期など、まだ確保されていない場合のフェイルセーフ
-    if (unlikely(!cred || !cred->security))
+    if (!task || !task->security)
         return NULL;
-    
-    // カーネルが計算したオフセットを足してTEALの領域を返す
-    return cred->security + teal_blob_sizes.lbs_cred;
+
+    return (struct teal_task_meta *)
+        ((char *)task->security + teal_blob_sizes.lbs_task);
 }
+
 
 // --- Rust連携用ポインタ ---
 static int (*teal_decision_maker)(int event_type, void *ctx) = NULL;
@@ -480,6 +543,14 @@ void teal_get_current_comm(char *buf, size_t len)
 EXPORT_SYMBOL(teal_get_current_comm);
 
 static atomic_t teal_daemon_tgid = ATOMIC_INIT(-1);
+
+/* tealdとの同期が成立した現在のPolicy Epoch */
+static atomic_t teal_current_epoch = ATOMIC_INIT(0);
+/* 最後に確定したEpoch。切断・REGISTERではリセットしない。
+ * teal_ticket_update_mutexで保護する。0は未使用。
+ */
+static u32 teal_last_epoch;
+
 
 // --- 待機キュー & JIT管理 ---
 // teal_request.flags definition
@@ -592,21 +663,142 @@ int teal_wait_for_approval(const char *action,
 }
 EXPORT_SYMBOL(teal_wait_for_approval);
 
-// per-task exec meta（task->security 直置き）
-#define TEAL_TASK_META_MAGIC 0x5445414Cull /* 'TEAL' */
-
-struct teal_task_meta {
-    unsigned long magic;
-    char program[TEAL_PATH_MAX];
-    char script[TEAL_SCRIPT_MAX];
-    char args_head[TEAL_ARGS_MAX];              /* 引数の先頭部分の実体バッファ */
-    struct teal_id_pair program_id;
-    struct teal_id_pair script_id;
-};
-
 static inline struct teal_task_meta *teal_task_meta_current(void)
 {
-    return (struct teal_task_meta *)current->security;
+    return teal_task_meta_of(current);
+}
+
+/*
+ * 現在のPolicy Epochで有効なSelf-Baking権限を取得する。
+ *
+ * privilege_state:
+ *   upper 32 bits: epoch
+ *   lower 32 bits: flags
+ *
+ * Return:
+ *   有効な権限フラグ、または0
+ */
+static inline u32 teal_get_active_ticket_flags(void)
+{
+    struct teal_task_meta *meta;
+    u64 state;
+    u32 epoch;
+    u32 flags;
+    u32 current_epoch;
+
+    meta = teal_task_meta_current();
+
+    if (!meta || meta->magic != TEAL_TASK_META_MAGIC)
+        return 0;
+
+    state = (u64)atomic64_read(&meta->privilege_state);
+
+    epoch = (u32)(state >> 32);
+    flags = (u32)state;
+
+    current_epoch = (u32)atomic_read(&teal_current_epoch);
+
+    /* 未同期、または旧epochの権限は使用しない */
+    if (current_epoch == 0 || epoch != current_epoch)
+        return 0;
+
+    return flags;
+}
+
+#define TEAL_BAKE_FLAGS_MASK \
+    (TEAL_TICKET_FLG_SILENT_IO | \
+     TEAL_TICKET_FLG_NAMELESS_IPC | \
+     TEAL_TICKET_FLG_INHERIT)
+
+/*
+ * チケットのSelf-Baking権限を現在のタスクに記録する。
+ *
+ * 通常チケット:
+ *   uses_leftの減算が成功した後に呼び出す。
+ *
+ * ticket_id == 0:
+ *   管理対象外チケットなので回数消費なしで呼び出す。
+ *
+ * 同一epoch:
+ *   フラグをOR結合する。
+ *
+ * epoch不一致:
+ *   古いフラグを引き継がない。
+ */
+static inline void teal_bake_ticket_flags(
+    const struct teal_ticket_add_payload *ticket)
+{
+    struct teal_task_meta *meta;
+    u64 old_state;
+    u64 new_state;
+    u64 prev;
+    u32 old_epoch;
+    u32 old_flags;
+    u32 current_epoch;
+    u32 new_flags;
+    u32 bake_flags;
+
+    if (!ticket)
+        return;
+
+    bake_flags = ticket->flags & TEAL_BAKE_FLAGS_MASK;
+
+    if (!bake_flags)
+        return;
+
+    meta = teal_task_meta_current();
+
+    if (!meta || meta->magic != TEAL_TASK_META_MAGIC)
+        return;
+
+    current_epoch = (u32)atomic_read(&teal_current_epoch);
+
+    if (current_epoch == 0 ||
+        READ_ONCE(ticket->epoch) != current_epoch)
+        return;
+
+    for (;;) {
+        old_state =
+            (u64)atomic64_read(&meta->privilege_state);
+
+        old_epoch = (u32)(old_state >> 32);
+        old_flags = (u32)old_state;
+
+        /*
+         * 同一epochなら既存フラグを継承。
+         * 異なるepochなら旧フラグを破棄。
+         */
+        if (old_epoch == current_epoch)
+            new_flags = old_flags | bake_flags;
+        else
+            new_flags = bake_flags;
+
+        new_state =
+            ((u64)current_epoch << 32) | new_flags;
+
+        /*
+         * POLICY_UPDATEによってepochが変更された
+         * 場合は、新しい状態を書き込まない。
+         */
+        if ((u32)atomic_read(&teal_current_epoch) !=
+            current_epoch)
+            return;
+
+        /*
+         * CASによる原子的な状態更新。
+         * 複数の更新が競合してもフラグを失わない。
+         */
+        prev = (u64)atomic64_cmpxchg(
+            &meta->privilege_state,
+            (s64)old_state,
+            (s64)new_state
+        );
+
+        if (prev == old_state)
+            return;
+
+        cpu_relax();
+    }
 }
 
 static struct teal_request *teal_req_build(const char *action,
@@ -854,38 +1046,62 @@ static int handle_approve_deny(u64 id, bool approve)
  */
 static int handle_ticket_add(struct teal_ticket_add_payload *ticket)
 {
-    unsigned long flags;
+    struct teal_inode_cache *entry;
+    int ret;
 
     if (!ticket)
         return -EINVAL;
 
     if (atomic_read(&ticket->uses_left) == 0) {
         kfree(ticket);
-        // ★防波堤: 万が一tealdが0で送ってきても、プロセスだけは解放してフリーズを防ぐ
         wake_up_all(&teal_ctl_wait_queue);
         return 0;
     }
 
-    spin_lock_irqsave(&teal_ticket_lock, flags);
-    list_add_tail(&ticket->list, &teal_ticket_list);
-    spin_unlock_irqrestore(&teal_ticket_lock, flags);
-
-    struct teal_inode_cache *entry = kmalloc(sizeof(*entry), GFP_KERNEL);
-    if (entry) {
-        entry->obj_key = ticket->obj;
-        entry->ticket = ticket;
-        ticket->cache_entry = entry; 
-        
-        rhltable_insert(&teal_ticket_ht, &entry->node, teal_cache_params);
+    /* 1. キャッシュエントリを先に確保 */
+    entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+    if (!entry) {
+        kfree(ticket);
+        return -ENOMEM;
     }
 
-    // チケットが登録されたので、待機中のプロセスを起こして
-    // 再度キャッシュ（Fast Path）を確認させる！
+    entry->obj_key = ticket->obj;
+    entry->ticket = ticket;
+
+    /* 2. チケット更新処理の排他制御 */
+    mutex_lock(&teal_ticket_update_mutex);
+
+    /* 3. epochの最終確認 */
+    if (ticket->epoch == 0 ||
+        ticket->epoch != (u32)atomic_read(&teal_current_epoch)) {
+        ret = -ESTALE;
+        goto err_unlock;
+    }
+
+    /* 4. ハッシュテーブルへの登録 */
+    ret = rhltable_insert(&teal_ticket_ht,
+                         &entry->node,
+                         teal_cache_params);
+    if (ret)
+        goto err_unlock;
+
+    /* 5. リストへの登録 */
+    ticket->cache_entry = entry;
+    list_add_tail(&ticket->list, &teal_ticket_list);
+
+    mutex_unlock(&teal_ticket_update_mutex);
+
+    /* 6. 正常に登録できた場合だけ待機プロセスへ通知 */
     wake_up_all(&teal_ctl_wait_queue);
 
     return 0;
-}
 
+err_unlock:
+    mutex_unlock(&teal_ticket_update_mutex);
+    kfree(entry);
+    kfree(ticket);
+    return ret;
+}
 
 // ==========================================
 // TEAL Generic Netlink: 受信 (User -> Kernel)
@@ -896,10 +1112,9 @@ static int handle_ticket_add(struct teal_ticket_add_payload *ticket)
  * teald のアタッチ(起動)時やデタッチ時に、カーネル内に残っている
  * 古いリクエストや未送信ログを安全に破棄する。
  */
-static void teal_flush_all_queues(void) {
+static void teal_flush_all_queues_locked(void) {
     struct teal_request *req, *tmp_req;
     struct teal_ticket_add_payload *ticket, *tmp_tick;
-    unsigned long flags;
 
     /* 1. 承認待ちリクエスト（Control Lane）の解放 */
     spin_lock(&teal_ctl_lock);
@@ -914,71 +1129,201 @@ static void teal_flush_all_queues(void) {
     wake_up_all(&teal_ctl_wait_queue);
 
     /* 2. チケットキャッシュ（Fast Path）の全解放 */
-    spin_lock_irqsave(&teal_ticket_lock, flags);
     list_for_each_entry_safe(ticket, tmp_tick, &teal_ticket_list, list) {
         // ハッシュテーブル（索引）からの削除
         if (ticket->cache_entry) {
             struct teal_inode_cache *entry = ticket->cache_entry;
-            rhltable_remove(&teal_ticket_ht, &entry->node, teal_cache_params);
-            kfree_rcu(entry, rcu);                  // RCUの安全性を確保
+            int ret;
+
+            ret = rhltable_remove(
+                &teal_ticket_ht,
+                &entry->node,
+                teal_cache_params
+            );
+
+            if (ret) {
+                pr_err_ratelimited(
+                    "TEAL: rhltable_remove failed (ret=%d, ticket_id=%llu)\n",
+                    ret,
+                    (unsigned long long)ticket->ticket_id
+                );
+                continue;
+            }
+
+            kfree_rcu(entry, rcu);
         }
-        // リスト（本体）からの削除と解放
+
         list_del(&ticket->list);
-        kfree(ticket);
+        kfree_rcu(ticket, rcu);
     }
-    spin_unlock_irqrestore(&teal_ticket_lock, flags);
 
     pr_info("TEAL: All queues and ticket caches flushed. Falling back to slow path.\n");
+}
+
+static void teal_flush_all_queues(void)
+{
+    mutex_lock(&teal_ticket_update_mutex);
+    teal_flush_all_queues_locked();
+    mutex_unlock(&teal_ticket_update_mutex);
 }
 
 /*
  * コマンド: TEAL_CMD_REGISTER
  * teald が起動した際の一番最初の挨拶。ここでポートIDを登録し、監査ループを回避する。
  */
-static int teal_nl_recv_register(struct sk_buff *skb, struct genl_info *info)
+/*
+ * 切断通知では状態を即時無効化し、キャッシュ破棄はworkqueueへ委譲する。
+ * 新しいREGISTERが先行した場合はREGISTER側がフラッシュ済みなので、
+ * cleanup workerが新セッションのチケットを消さないよう判定する。
+ */
+/* REGISTERへの通常応答。TEAL_ATTR_EPOCHは次に使用すべきEpoch。 */
+static int teal_nl_send_register_reply(struct genl_info *info, u32 next_epoch)
 {
-    u32 portid = info->snd_portid;
+    struct sk_buff *reply;
+    void *hdr;
+    int ret;
 
-    /* 1. 権限チェック */
+    reply = genlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
+    if (!reply)
+        return -ENOMEM;
+
+    hdr = genlmsg_put_reply(reply, info, &teal_nl_family,
+                            0, TEAL_CMD_REGISTER);
+    if (!hdr) {
+        nlmsg_free(reply);
+        return -EMSGSIZE;
+    }
+
+    ret = nla_put_u32(reply, TEAL_ATTR_EPOCH, next_epoch);
+    if (ret) {
+        genlmsg_cancel(reply, hdr);
+        nlmsg_free(reply);
+        return ret;
+    }
+
+    genlmsg_end(reply, hdr);
+    return genlmsg_reply(reply, info);
+}
+
+static void teal_daemon_disconnect_workfn(struct work_struct *work)
+{
+    unsigned long flags;
+    bool disconnected;
+
+    mutex_lock(&teal_daemon_lifecycle_mutex);
+    spin_lock_irqsave(&teal_daemon_state_lock, flags);
+    disconnected = atomic_read(&teal_daemon_portid) == 0;
+    spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
+
+    if (disconnected)
+        teal_flush_all_queues();
+
+    mutex_unlock(&teal_daemon_lifecycle_mutex);
+}
+
+static int teal_nl_recv_register(struct sk_buff *skb,
+                                 struct genl_info *info)
+{
+    unsigned long flags;
+    u32 portid, next_epoch;
+    int ret = 0;
+
+    if (!info)
+        return -EINVAL;
+
+    portid = info->snd_portid;
+    if (genl_info_net(info) != &init_net)
+        return -EPERM;
+    if (!portid)
+        return -EINVAL;
     if (!capable(CAP_MAC_ADMIN) && !capable(CAP_SYS_ADMIN))
         return -EPERM;
 
-    /* 2. 二重登録の防止 (脆弱性対策) */
-    // 席が空いていない（0以外）なら、上書きを拒否する
+    /* REGISTERと旧セッションのcleanupを直列化する。 */
+    mutex_lock(&teal_daemon_lifecycle_mutex);
+    mutex_lock(&teal_ticket_update_mutex);
+
+    spin_lock_irqsave(&teal_daemon_state_lock, flags);
+    if (atomic_read(&teal_daemon_portid) != 0)
+        ret = -EBUSY;
+    spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
+    if (ret)
+        goto out_ticket_unlock;
+
+    /* 32bit Epochは再利用しない。使い切ったら再起動等が必要。 */
+    if (teal_last_epoch == U32_MAX) {
+        ret = -EOVERFLOW;
+        goto out_ticket_unlock;
+    }
+    next_epoch = teal_last_epoch + 1;
+
+    /* 次の登録を公開する前にキャッシュと待機要求を破棄。 */
+    atomic_set(&teal_current_epoch, 0);
+    teal_flush_all_queues_locked();
+
+    spin_lock_irqsave(&teal_daemon_state_lock, flags);
     if (atomic_read(&teal_daemon_portid) != 0) {
-        pr_warn("TEAL: Registration rejected. Another daemon is already active (PortID: %u).\n",
-                atomic_read(&teal_daemon_portid));
-        return -EBUSY; // 「使用中」というエラーを返す
+        ret = -EBUSY;
+    } else {
+        atomic_set(&teal_daemon_tgid, current->tgid);
+        atomic_set(&teal_daemon_portid, portid);
+    }
+    spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
+
+out_ticket_unlock:
+    mutex_unlock(&teal_ticket_update_mutex);
+    if (ret)
+        goto out_lifecycle_unlock;
+
+    /* 通常のNetlink応答。NLM_F_ACKのACKとは別メッセージ。 */
+    ret = teal_nl_send_register_reply(info, next_epoch);
+    if (ret) {
+        /* 応答不能時は、この登録がまだ生きていれば取り消す。 */
+        spin_lock_irqsave(&teal_daemon_state_lock, flags);
+        if ((u32)atomic_read(&teal_daemon_portid) == portid) {
+            atomic_set(&teal_daemon_portid, 0);
+            atomic_set(&teal_daemon_tgid, 0);
+            atomic_set(&teal_current_epoch, 0);
+        }
+        spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
+        goto out_lifecycle_unlock;
     }
 
-    /* 3. 登録処理 */
-    teal_flush_all_queues();
-    atomic_set(&teal_daemon_portid, portid);
-    atomic_set(&teal_daemon_tgid, current->tgid);
+    pr_info("TEAL: teald registered: portid=%u tgid=%d next_epoch=%u\n",
+            portid, current->tgid, next_epoch);
 
-    pr_info("TEAL: teald attached (portid: %u, tgid: %d). System ready.\n", 
-            portid, current->tgid);
-
-    return 0;
+out_lifecycle_unlock:
+    mutex_unlock(&teal_daemon_lifecycle_mutex);
+    return ret;
 }
 
-/* Netlink ソケットの終了を監視するハンドラ */
-static int teal_nl_notifier(struct notifier_block *nb, unsigned long event, void *_ptr)
+/* Netlinkソケットの解放通知。ここではsleepしない。 */
+static int teal_nl_notifier(struct notifier_block *nb,
+                            unsigned long event, void *_ptr)
 {
     struct netlink_notify *n = _ptr;
+    unsigned long flags;
+    bool disconnected = false;
 
-    /* * NETLINK_URELEASE: ユーザー空間のソケットが閉じられた（またはプロセスが死んだ） 
-     * かつ、その PortID が現在登録されている teald のものと一致するか確認
-     */
-    if (event == NETLINK_URELEASE && n->portid == atomic_read(&teal_daemon_portid)) {
-        pr_info("TEAL: teald (portid: %u) connection lost. Resetting registration.\n", n->portid);
-        
-        // 次の teald が REGISTER できるように席を空ける
+    if (event != NETLINK_URELEASE || !n ||
+        n->protocol != NETLINK_GENERIC || n->net != &init_net)
+        return NOTIFY_DONE;
+
+    spin_lock_irqsave(&teal_daemon_state_lock, flags);
+    if (n->portid &&
+        n->portid == (u32)atomic_read(&teal_daemon_portid)) {
+        /* 先に失効させ、以後のPort ID認証を拒否する。 */
         atomic_set(&teal_daemon_portid, 0);
         atomic_set(&teal_daemon_tgid, 0);
-        
-        // 処理待ちのキューがあれば一掃する
-        teal_flush_all_queues();
+        /* FAST PATHの旧チケット/Self-Bakingを即時失効する。 */
+        atomic_set(&teal_current_epoch, 0);
+        disconnected = true;
+    }
+    spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
+
+    if (disconnected) {
+        pr_info("TEAL: teald portid=%u disconnected\n", n->portid);
+        schedule_work(&teal_daemon_disconnect_work);
     }
     return NOTIFY_DONE;
 }
@@ -993,6 +1338,12 @@ static struct notifier_block teal_nl_nb = {
 static int teal_nl_recv_approve(struct sk_buff *skb, struct genl_info *info)
 {
     u64 trans_id;
+    int rc;
+
+    /* 送信元認証 */
+    rc = teal_nl_check_authorized(info);
+    if (rc)
+        return rc;
 
     if (!info->attrs[TEAL_ATTR_TRANS_ID])
         return -EINVAL;
@@ -1009,6 +1360,12 @@ static int teal_nl_recv_approve(struct sk_buff *skb, struct genl_info *info)
 static int teal_nl_recv_deny(struct sk_buff *skb, struct genl_info *info)
 {
     u64 trans_id;
+    int rc;
+
+    /* 送信元認証 */
+    rc = teal_nl_check_authorized(info);
+    if (rc)
+        return rc;
 
     if (!info->attrs[TEAL_ATTR_TRANS_ID])
         return -EINVAL;
@@ -1025,11 +1382,29 @@ static int teal_nl_recv_deny(struct sk_buff *skb, struct genl_info *info)
 static int teal_nl_recv_ticket_add(struct sk_buff *skb, struct genl_info *info)
 {
     struct teal_ticket_add_payload *ticket;
+    int rc;
+
+    /* 送信元認証 */
+    rc = teal_nl_check_authorized(info);
+    if (rc)
+        return rc;
 
     /* 必須属性がすべて揃っているかチェック */
-    if (!info->attrs[TEAL_ATTR_UID] || !info->attrs[TEAL_ATTR_OP] ||
-        !info->attrs[TEAL_ATTR_PROG_INO] || !info->attrs[TEAL_ATTR_TARGET_INO] ||
-        !info->attrs[TEAL_ATTR_EXPIRES_AT] || !info->attrs[TEAL_ATTR_TICKET_ID]) {
+    if (!info->attrs[TEAL_ATTR_UID] ||
+        !info->attrs[TEAL_ATTR_OP] ||
+        !info->attrs[TEAL_ATTR_PROG_INO] ||
+        !info->attrs[TEAL_ATTR_PROG_DEV] ||
+        !info->attrs[TEAL_ATTR_TARGET_INO] ||
+        !info->attrs[TEAL_ATTR_TARGET_DEV] ||
+        !info->attrs[TEAL_ATTR_EXPIRES_AT] ||
+        !info->attrs[TEAL_ATTR_TICKET_ID] ||
+        !info->attrs[TEAL_ATTR_EPOCH] ||
+        !info->attrs[TEAL_ATTR_SCRIPT_DEV] ||
+        !info->attrs[TEAL_ATTR_SCRIPT_INO] ||
+        !info->attrs[TEAL_ATTR_APPLET_HASH] ||
+        !info->attrs[TEAL_ATTR_USES_LEFT] ||
+        !info->attrs[TEAL_ATTR_AUDIT_FLG]
+    ) {
         pr_warn("TEAL: TICKET_ADD missing required attributes\n");
         return -EINVAL;
     }
@@ -1089,6 +1464,12 @@ static int teal_nl_recv_ticket_add(struct sk_buff *skb, struct genl_info *info)
 static int teal_nl_recv_mode_switch(struct sk_buff *skb, struct genl_info *info)
 {
     u32 mode;
+    int rc;
+
+    /* 送信元認証 */
+    rc = teal_nl_check_authorized(info);
+    if (rc)
+        return rc;
 
     /* モードフラグが属性として含まれているかチェック */
     if (!info->attrs[TEAL_ATTR_FLAGS])
@@ -1112,22 +1493,52 @@ static int teal_nl_recv_mode_switch(struct sk_buff *skb, struct genl_info *info)
  * teald から新しい Epoch を受け取り、カーネル内のチケットキャッシュおよび
  * 保留中リクエストキューを一括フラッシュして Fast Path を初期化する。
  */
- static int teal_nl_recv_policy_update(struct sk_buff *skb, struct genl_info *info) {
-    u32 new_epoch = 0;
+static int teal_nl_recv_policy_update(struct sk_buff *skb,
+                                       struct genl_info *info)
+{
+    unsigned long flags;
+    u32 new_epoch, old_epoch;
+    int rc;
 
-    // 1. 送られてきた新しい Epoch 番号を取得 (主に監査ログ・デバッグ出力用)
-    if (info->attrs[TEAL_ATTR_EPOCH]) {
-        new_epoch = nla_get_u32(info->attrs[TEAL_ATTR_EPOCH]);
+    rc = teal_nl_check_authorized(info);
+    if (rc)
+        return rc;
+    if (!info->attrs[TEAL_ATTR_EPOCH])
+        return -EINVAL;
+
+    new_epoch = nla_get_u32(info->attrs[TEAL_ATTR_EPOCH]);
+    mutex_lock(&teal_ticket_update_mutex);
+
+    old_epoch = (u32)atomic_read(&teal_current_epoch);
+    /* 0(未同期)からもlast_epoch+1のみ許す。旧番号を再使用しない。 */
+    if (new_epoch == 0 || teal_last_epoch == U32_MAX ||
+        new_epoch != teal_last_epoch + 1) {
+        rc = -EINVAL;
+        goto out_unlock;
     }
 
-    pr_info("TEAL: Received POLICY_UPDATE (Epoch: %u). Flushing all caches...\n", new_epoch);
+    /* 切断との競合に備え、セッションの照合とEpoch公開を
+     * notifierと同じspinlockで不可分に行う。
+     */
+    spin_lock_irqsave(&teal_daemon_state_lock, flags);
+    if (genl_info_net(info) != &init_net ||
+        (u32)atomic_read(&teal_daemon_portid) != info->snd_portid) {
+        rc = -ENOTCONN;
+    } else {
+        teal_last_epoch = new_epoch;
+        atomic_set(&teal_current_epoch, new_epoch);
+        rc = 0;
+    }
+    spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
+    if (rc)
+        goto out_unlock;
 
-    // 2. 既存のフラッシュ関数を呼び出す
-    // これにより、teal_ctl_list (判定待ち) と teal_ticket_ht (キャッシュ) が
-    // ロックとRCUの安全性を保ったまま完全に初期化・破棄される
-    teal_flush_all_queues();
+    teal_flush_all_queues_locked();
+    pr_info("TEAL: Policy epoch %u -> %u\n", old_epoch, new_epoch);
 
-    return 0;
+out_unlock:
+    mutex_unlock(&teal_ticket_update_mutex);
+    return rc;
 }
 
 // ==========================================
@@ -1323,6 +1734,13 @@ static bool is_ticket_matched(struct teal_ticket_add_payload *ticket, u64 now,
                              struct inode *obj_inode, struct teal_id_pair *org_id,
                              enum teal_event_type ev, struct teal_id_pair *new_id)
 {
+    u32 current_epoch = (u32)atomic_read(&teal_current_epoch);
+
+    if (current_epoch == 0 ||
+        READ_ONCE(ticket->epoch) != current_epoch) {
+        return false;
+    }
+
     // A) 有効期限チェック
     if (now > ticket->expires_at) {
         return false;
@@ -1413,54 +1831,54 @@ static bool __check_ticket_for_inode(struct inode *target_inode, enum teal_event
     list = rhltable_lookup(&teal_ticket_ht, &key, teal_cache_params);
 
     rhl_for_each_entry_rcu(entry, tmp, list, node) {
+        struct teal_ticket_add_payload *ticket = entry->ticket;
 
-        // ★ 親ディレクトリ照合の場合、チケットが包括フラグを持っていなければスキップ
-        if (is_parent_check && !(entry->ticket->flags & TEAL_TICKET_FLG_PARENT_MATCH)) {
+        if (is_parent_check &&
+            !(ticket->flags & TEAL_TICKET_FLG_PARENT_MATCH))
             continue;
+
+        if (!is_ticket_matched(ticket, now, target_inode,
+                               org_id, ev, new_id))
+            continue;
+
+        if (ticket->ticket_id == 0) {
+            /* EXECチケットで旧タスクへ権限を焼き付けない */
+            if (ev != TEAL_EVENT_EXECUTE)
+                teal_bake_ticket_flags(ticket);
+            match = true;
+            break;
         }
 
-        // 【ステップ1 & 2】 Epochと有効期限、属性の検証
-        if (is_ticket_matched(entry->ticket, now, target_inode, org_id, ev, new_id)) {
+        int current_uses =
+            atomic_dec_if_positive(&ticket->uses_left);
 
-            // 【特権の昇格 (Self-Baking)】
-            struct teal_cred_ctx *ctx = teal_cred(current_cred());
-            if (ctx && entry->ticket->flags) {
-                ctx->ticket_flags |= entry->ticket->flags;
-            }
+        if (current_uses >= 0) {
+            /* EXECはexec確定後に旧権限を全クリアする */
+            if (ev != TEAL_EVENT_EXECUTE)
+                teal_bake_ticket_flags(ticket);
+            match = true;
 
-            // 【ステップ3】 Silent & Unlimited モード判定 (ID: 0)
-            if (entry->ticket->ticket_id == 0) {
-                match = true;
-                break;
-            }
+            if (entry->ticket->audit_flags == 2 || 
+               (entry->ticket->audit_flags == 0 && current_uses == 0)) {
+                struct teal_log_entry *log = kmalloc(sizeof(*log), GFP_ATOMIC);
+                if (log) {
+                    log->type = TICKET_CONSUMED;
+                    log->ticket_id = entry->ticket->ticket_id;
+                    log->uid = entry->ticket->uid;
+                    log->uses_left_snapshot = (u32)current_uses;
+                    log->timestamp = now;
+                    log->org_ino = entry->ticket->org.ino;
+                    log->org_dev = entry->ticket->org.dev;
+                    log->obj_ino = entry->ticket->obj.ino;
+                    log->obj_dev = entry->ticket->obj.dev;
+                    log->new_obj_ino = entry->ticket->new_obj.ino;
+                    log->new_obj_dev = entry->ticket->new_obj.dev;
 
-            // 【ステップ4】 通常チケットの消費処理
-            int current_uses = atomic_dec_if_positive(&entry->ticket->uses_left);
-            if (current_uses >= 0) {
-                match = true;
-
-                if (entry->ticket->audit_flags == 2 || 
-                   (entry->ticket->audit_flags == 0 && current_uses == 0)) {
-                    struct teal_log_entry *log = kmalloc(sizeof(*log), GFP_ATOMIC);
-                    if (log) {
-                        log->type = TICKET_CONSUMED;
-                        log->ticket_id = entry->ticket->ticket_id;
-                        log->uid = entry->ticket->uid;
-                        log->uses_left_snapshot = (u32)current_uses;
-                        log->timestamp = now;
-                        log->org_ino = entry->ticket->org.ino;
-                        log->org_dev = entry->ticket->org.dev;
-                        log->obj_ino = entry->ticket->obj.ino;
-                        log->obj_dev = entry->ticket->obj.dev;
-                        log->new_obj_ino = entry->ticket->new_obj.ino;
-                        log->new_obj_dev = entry->ticket->new_obj.dev;
-
-                        teal_genl_send_info(log);
-                        kfree(log);
-                    }
+                    teal_genl_send_info(log);
+                    kfree(log);
                 }
-                break;
             }
+            break;
         }
     }
     rcu_read_unlock();
@@ -1520,132 +1938,253 @@ static DECLARE_DELAYED_WORK(teal_gc_work, teal_gc_worker);
 static void teal_gc_worker(struct work_struct *work)
 {
     struct teal_ticket_add_payload *ticket, *tmp;
-    u64 now = ktime_get_real_seconds();
     struct teal_log_entry *log;
+    struct teal_log_entry *log_tmp;
+    LIST_HEAD(log_list);
 
-    spin_lock(&teal_ticket_lock);
+    u64 now = ktime_get_real_seconds();
+    u32 current_epoch;
+
+    /*
+     * TICKET_ADD / POLICY_UPDATE / GC の直列化
+     */
+    mutex_lock(&teal_ticket_update_mutex);
+
+    current_epoch = (u32)atomic_read(&teal_current_epoch);
 
     list_for_each_entry_safe(ticket, tmp, &teal_ticket_list, list) {
-        // チケットが死んでいるか（期限切れ OR 使い切った）を判定
-        if (now > ticket->expires_at || atomic_read(&ticket->uses_left) == 0) {
-            
-            // ログ生成の条件: 
-            // 1. Silentモード (ticket_id == 0) ではない
-            // 2. まだ使用回数が残っているのに期限が切れた (EXPIRED)
-            // ※ uses_left == 0 の場合は、Fast PathでCONSUMEDログ出力済みなので何もしない
-            if (ticket->ticket_id != 0 && atomic_read(&ticket->uses_left) > 0 && now > ticket->expires_at && ticket->audit_flags != 1) {
-                log = kmalloc(sizeof(*log), GFP_ATOMIC);
-                if (log) {
-                    log->type = TICKET_EXPIRED;
-                    log->ticket_id = ticket->ticket_id;
-                    log->uid = ticket->uid;
-                    log->uses_left_snapshot = (u32)atomic_read(&ticket->uses_left);
-                    log->timestamp = now;
 
-                    // teald (ユーザー空間) がFast Pathログを正しく再現できるように、
-                    // チケットに紐づくすべての物理オブジェクト情報を詰め直す
-                    log->org_ino = ticket->org.ino;
-                    log->org_dev = ticket->org.dev;
-                    log->obj_ino = ticket->obj.ino;
-                    log->obj_dev = ticket->obj.dev;
-                    
-                    // RENAME対応: 移動先情報もコピー
-                    log->new_obj_ino = ticket->new_obj.ino;
-                    log->new_obj_dev = ticket->new_obj.dev;
+        bool epoch_mismatch =
+            ticket->epoch != current_epoch;
 
-                    teal_genl_send_info(log);
-                    kfree(log);
-                }
+        bool expired =
+            now > ticket->expires_at;
+
+        bool consumed =
+            atomic_read(&ticket->uses_left) == 0;
+
+        if (!epoch_mismatch && !expired && !consumed)
+            continue;
+
+        /*
+         * 有効期限切れの場合のみ EXPIRED ログを生成
+         */
+        if (!epoch_mismatch &&
+            expired &&
+            !consumed &&
+            ticket->ticket_id != 0 &&
+            ticket->audit_flags != 1) {
+
+            log = kmalloc(sizeof(*log), GFP_ATOMIC);
+
+            if (log) {
+                memset(log, 0, sizeof(*log));
+
+                log->type = TICKET_EXPIRED;
+                log->ticket_id = ticket->ticket_id;
+                log->uid = ticket->uid;
+                log->uses_left_snapshot =
+                    (u32)atomic_read(&ticket->uses_left);
+
+                log->timestamp = now;
+
+                log->org_ino = ticket->org.ino;
+                log->org_dev = ticket->org.dev;
+
+                log->obj_ino = ticket->obj.ino;
+                log->obj_dev = ticket->obj.dev;
+
+                log->new_obj_ino = ticket->new_obj.ino;
+                log->new_obj_dev = ticket->new_obj.dev;
+
+                list_add_tail(&log->list, &log_list);
             }
-
-            // --- メモリとハッシュからの安全な削除 ---
-            if (ticket->cache_entry) {
-                struct teal_inode_cache *entry = ticket->cache_entry;
-                rhltable_remove(&teal_ticket_ht, &entry->node, teal_cache_params);
-                kfree_rcu(entry, rcu);
-            }
-
-            list_del(&ticket->list);
-            kfree(ticket);
         }
-    }
-    
-    spin_unlock(&teal_ticket_lock);
 
-    queue_delayed_work(teal_wq, &teal_gc_work, msecs_to_jiffies(60000));
+        /*
+         * ハッシュテーブルから削除
+         */
+        if (ticket->cache_entry) {
+            struct teal_inode_cache *entry = ticket->cache_entry;
+            int ret;
+
+            ret = rhltable_remove(
+                &teal_ticket_ht,
+                &entry->node,
+                teal_cache_params
+            );
+
+            if (ret) {
+                pr_err_ratelimited(
+                    "TEAL: GC rhltable_remove failed: %d\n",
+                    ret
+                );
+                continue;
+            }
+
+            kfree_rcu(entry, rcu);
+        }
+
+        list_del(&ticket->list);
+        kfree_rcu(ticket, rcu);
+    }
+
+    mutex_unlock(&teal_ticket_update_mutex);
+
+    /*
+     * Netlink送信はロック解除後に実行
+     */
+    list_for_each_entry_safe(log, log_tmp, &log_list, list) {
+        list_del(&log->list);
+        teal_genl_send_info(log);
+        kfree(log);
+    }
+
+    queue_delayed_work(
+        teal_wq,
+        &teal_gc_work,
+        msecs_to_jiffies(60000)
+    );
 }
 
-static inline void teal_exec_meta_set_current(const char *program, const char *script,
-                                              const char *args,
-                                              dev_t prog_dev, unsigned long prog_ino,
-                                              dev_t script_dev, unsigned long script_ino)
+/* bprm_check_securityで候補情報を記録する。実行元の現行値は触らない。 */
+static void teal_exec_meta_stage(const char *program, const char *script,
+                                 const char *args, dev_t prog_dev,
+                                 unsigned long prog_ino)
 {
     struct teal_task_meta *m = teal_task_meta_current();
-    if (!m)
+
+    if (!m || m->magic != TEAL_TASK_META_MAGIC)
         return;
 
-    strscpy(m->program,   program ? program : "-", sizeof(m->program));
-    strscpy(m->script,    script  ? script  : "-", sizeof(m->script));
-    strscpy(m->args_head, args    ? args    : "-", sizeof(m->args_head));
-    m->program_id.dev = prog_dev;
-    m->program_id.ino = prog_ino;
-    m->script_id.dev  = script_dev;
-    m->script_id.ino  = script_ino;
+    WRITE_ONCE(m->pending_exec_valid, false);
+    strscpy(m->pending_program, program ? program : "-",
+            sizeof(m->pending_program));
+    strscpy(m->pending_script, script ? script : "-",
+            sizeof(m->pending_script));
+    strscpy(m->pending_args, args ? args : "-",
+            sizeof(m->pending_args));
+    m->pending_program_id.dev = prog_dev;
+    m->pending_program_id.ino = prog_ino;
+    m->pending_script_id.dev = 0;
+    m->pending_script_id.ino = 0;
+    WRITE_ONCE(m->pending_exec_valid, true);
 }
 
-static int teal_task_alloc(struct task_struct *task, unsigned long clone_flags)
+/* 資格情報がcommitされた実行移行時にのみ、旧権限を失効させる。 */
+static void teal_bprm_committed_creds(const struct linux_binprm *bprm)
+{
+    struct teal_task_meta *m = teal_task_meta_current();
+
+    if (!m || m->magic != TEAL_TASK_META_MAGIC)
+        return;
+
+    /* execによる別プログラムへのSelf-Baking権限の持ち越しを禁止 */
+    atomic64_set(&m->privilege_state, 0);
+
+    if (READ_ONCE(m->pending_exec_valid)) {
+        strscpy(m->program, m->pending_program, sizeof(m->program));
+        strscpy(m->script, m->pending_script, sizeof(m->script));
+        strscpy(m->args_head, m->pending_args, sizeof(m->args_head));
+        m->program_id = m->pending_program_id;
+        m->script_id = m->pending_script_id;
+    } else {
+        /* check hookを通らない特殊経路のフェイルセーフ */
+        struct inode *inode = bprm && bprm->file ?
+                              file_inode(bprm->file) : NULL;
+        strscpy(m->program, bprm && bprm->filename ?
+                bprm->filename : "-", sizeof(m->program));
+        strscpy(m->script, "-", sizeof(m->script));
+        strscpy(m->args_head, "-", sizeof(m->args_head));
+        m->program_id.dev = inode ? inode->i_sb->s_dev : 0;
+        m->program_id.ino = inode ? inode->i_ino : 0;
+        m->script_id.dev = 0;
+        m->script_id.ino = 0;
+    }
+
+    WRITE_ONCE(m->pending_exec_valid, false);
+}
+
+static int teal_task_alloc(
+    struct task_struct *task,
+    unsigned long clone_flags)
 {
     struct teal_task_meta *child_m;
     struct teal_task_meta *parent_m;
+    u64 parent_state;
+    u32 parent_epoch;
+    u32 parent_flags;
+    u32 current_epoch;
 
-    if (teal_is_disabled())
-        return 0;
-
-    if (task->flags & PF_KTHREAD)
-        return 0;
-
-    if (task->security) {
-        teal_disable_once("detected another LSM (or subsystem) using task->security");
-        return 0; 
-    }
-
-    child_m = kzalloc(sizeof(*child_m), GFP_KERNEL);
+    child_m = teal_task_meta_of(task);
     if (!child_m)
-        return 0;
+        return -ENOMEM;
+
+    parent_m = teal_task_meta_current();
+
+    /*
+     * LSMが割り当てたTEAL領域を初期化
+     * task->security自体は変更しない
+     */
+    memset(child_m, 0, sizeof(*child_m));
 
     child_m->magic = TEAL_TASK_META_MAGIC;
-    parent_m = (struct teal_task_meta *)current->security;
 
-    if (parent_m && parent_m->magic == TEAL_TASK_META_MAGIC) {                      /* ★親から継承 */
-        strscpy(child_m->program, parent_m->program, sizeof(child_m->program));
-        strscpy(child_m->script,  parent_m->script,  sizeof(child_m->script));
-        strscpy(child_m->args_head, parent_m->args_head, sizeof(child_m->args_head));
+    strscpy(child_m->program, "-",
+            sizeof(child_m->program));
+    strscpy(child_m->script, "-",
+            sizeof(child_m->script));
+    strscpy(child_m->args_head, "-",
+            sizeof(child_m->args_head));
+
+    atomic64_set(&child_m->privilege_state, 0);
+
+    /*
+     * 親タスクから実行元情報を継承
+     */
+    if (parent_m &&
+        parent_m->magic == TEAL_TASK_META_MAGIC) {
+
+        strscpy(child_m->program,
+                parent_m->program,
+                sizeof(child_m->program));
+
+        strscpy(child_m->script,
+                parent_m->script,
+                sizeof(child_m->script));
+
+        strscpy(child_m->args_head,
+                parent_m->args_head,
+                sizeof(child_m->args_head));
+
         child_m->program_id = parent_m->program_id;
-        child_m->script_id  = parent_m->script_id;
-    } else {                                                                        /* ★初期値 */
-        strscpy(child_m->program, "-", sizeof(child_m->program));
-        strscpy(child_m->script,  "-", sizeof(child_m->script));
-        strscpy(child_m->args_head, "-", sizeof(child_m->args_head));
-        child_m->program_id.dev = 0;
-        child_m->program_id.ino = 0;
-        child_m->script_id.dev = 0;
-        child_m->script_id.ino = 0;
-    }
+        child_m->script_id = parent_m->script_id;
 
-    task->security = child_m;
+        /*
+         * Self-Baking権限の継承
+         */
+        parent_state =
+            (u64)atomic64_read(
+                &parent_m->privilege_state);
+
+        parent_epoch = (u32)(parent_state >> 32);
+        parent_flags = (u32)parent_state;
+
+        current_epoch =
+            (u32)atomic_read(&teal_current_epoch);
+
+        if (current_epoch != 0 &&
+            parent_epoch == current_epoch &&
+            (parent_flags & TEAL_TICKET_FLG_INHERIT)) {
+
+            atomic64_set(
+                &child_m->privilege_state,
+                parent_state
+            );
+        }
+    }
 
     return 0;
-}
-
-static void teal_task_free(struct task_struct *task)
-{
-    struct teal_task_meta *m = (struct teal_task_meta *)task->security;
-
-    if (m && m->magic == TEAL_TASK_META_MAGIC) {
-        m->magic = 0;
-        task->security = NULL;
-        kfree(m);
-    }
 }
 
 static void teal_get_bprm_args_head(struct linux_binprm *bprm, char *out, size_t out_len)
@@ -1698,66 +2237,61 @@ static int teal_bprm_check(struct linux_binprm *bprm)
 {
     int rc = 0;
     char args_buf[TEAL_ARGS_MAX] = "-";
-
-    if (teal_should_bypass_all()) {
-        return 0;
-    }
-
-    if (bprm && bprm->file) {
-        if (teal_check_ticket_match(file_inode(bprm->file), NULL, TEAL_EVENT_EXECUTE, NULL)) {
-            return 0;
-        }
-    }
-
-    char *buf = __getname();
-    if (!buf) {
-        return 0; 
-    }
-
+    char *buf = NULL;
     const char *target = "unknown";
-    dev_t prog_dev = 0;
-    unsigned long prog_ino = 0;
-
-    if (bprm && bprm->file) {
-        struct inode *inode = file_inode(bprm->file);
-        prog_dev = inode->i_sb->s_dev;
-        prog_ino = inode->i_ino;
-
-        char *p = d_path(&bprm->file->f_path, buf, PATH_MAX);
-        if (!IS_ERR_OR_NULL(p)) {
-            target = p; 
-        }
-        
-        /* ★ bprm から起動引数の先頭を取得 */
-        teal_get_bprm_args_head(bprm, args_buf, sizeof(args_buf));
-    }
-
     const char *exec_path = "-";
     const char *script_path = "-";
-    struct teal_task_meta *meta = teal_task_meta_current();
-    if (meta) {
+    dev_t prog_dev = 0;
+    unsigned long prog_ino = 0;
+    struct teal_task_meta *meta;
+    struct teal_rs_ctx rctx;
+
+    if (!bprm || !bprm->file)
+        return 0;
+
+    /* check時点の実行元を保持してEXEC判定に使う */
+    meta = teal_task_meta_current();
+    if (meta && meta->magic == TEAL_TASK_META_MAGIC) {
         exec_path = meta->program;
         script_path = meta->script;
     }
 
-    struct teal_rs_ctx rctx = {
-        .target     = target,
-        .program    = exec_path,
-        .script     = script_path,
-        .args       = args_buf,
-        .target_dev = prog_dev, 
-        .target_ino = prog_ino,
-    };
+    prog_dev = file_inode(bprm->file)->i_sb->s_dev;
+    prog_ino = file_inode(bprm->file)->i_ino;
 
-    /* 先に teald による判定を実行する */
-    rc = teal_decision_maker(TEAL_EVENT_EXECUTE, (void *)&rctx);
-
-    /* 判定が許可 (rc == 0) の場合のみ、メタデータを更新して args もキャッシュする */
-    if (rc == 0) {
-        teal_exec_meta_set_current(target, script_path, args_buf, prog_dev, prog_ino, 0, 0);
+    buf = __getname();
+    if (buf) {
+        char *p = d_path(&bprm->file->f_path, buf, PATH_MAX);
+        if (!IS_ERR(p))
+            target = p;
+    } else if (bprm->filename) {
+        target = bprm->filename;
     }
 
-    __putname(buf);
+    teal_get_bprm_args_head(bprm, args_buf, sizeof(args_buf));
+
+    if (!teal_should_bypass_all() &&
+        !teal_check_ticket_match(file_inode(bprm->file), NULL,
+                                 TEAL_EVENT_EXECUTE, NULL)) {
+        rctx.target = target;
+        rctx.program = exec_path;
+        rctx.script = script_path;
+        rctx.args = args_buf;
+        rctx.target_dev = prog_dev;
+        rctx.target_ino = prog_ino;
+
+        rc = teal_decision_maker(TEAL_EVENT_EXECUTE, (void *)&rctx);
+    }
+
+    if (rc == 0) {
+        /* 複数回checkされた場合は最後の許可候補で更新する */
+        teal_exec_meta_stage(target, "-", args_buf, prog_dev, prog_ino);
+    } else if (meta && meta->magic == TEAL_TASK_META_MAGIC) {
+        WRITE_ONCE(meta->pending_exec_valid, false);
+    }
+
+    if (buf)
+        __putname(buf);
     return rc;
 }
 
@@ -1810,7 +2344,6 @@ static int teal_file_open(struct file *file)
     const char *target_path = "unknown";
     
     struct inode *inode;
-    struct teal_cred_ctx *ctx;
     dev_t target_dev = 0;
     unsigned long target_ino = 0;
 
@@ -1844,9 +2377,9 @@ static int teal_file_open(struct file *file)
     // ==========================================================
     // 【Tier 2】SILENT_IO 特権プロセス専用バイパス (v1.9)
     // ==========================================================
-    ctx = teal_cred(current_cred());
-    if (ctx && (ctx->ticket_flags & TEAL_TICKET_FLG_SILENT_IO)) {
-        
+    if (teal_get_active_ticket_flags() &
+        TEAL_TICKET_FLG_SILENT_IO) {
+
         if (magic == TMPFS_MAGIC ||      // /tmp, /dev/shm 等
             magic == SOCKFS_MAGIC ||     // UNIXドメインソケット等
             magic == PROC_SUPER_MAGIC || // /proc へのアクセスを特権プロセスのみバイパス
@@ -1979,7 +2512,17 @@ static bool teal_check_socket_ticket_match(struct socket *sock, struct sockaddr 
     list = rhltable_lookup(&teal_ticket_ht, &key, teal_cache_params);
     
     rhl_for_each_entry_rcu(entry, tmp, list, node) {
-        
+
+        struct teal_ticket_add_payload *ticket = entry->ticket;
+        int current_uses;
+        struct teal_log_entry *log;
+        u32 current_epoch =
+            (u32)atomic_read(&teal_current_epoch);
+
+        if (current_epoch == 0 ||
+            READ_ONCE(ticket->epoch) != current_epoch)
+            continue;
+
         // ==========================================================
         //  安全なインライン・マッチング (obj_inode を使わない)
         // ==========================================================
@@ -1996,25 +2539,20 @@ static bool teal_check_socket_ticket_match(struct socket *sock, struct sockaddr 
         // ↑ すべての条件をクリアした場合、マッチ成功！
 
         // ==========================================================
-        // ★ 自己上書き (Self-Baking) ★
-        // ==========================================================
-        struct teal_cred_ctx *ctx = teal_cred(current_cred());
-        if (ctx && entry->ticket->flags) {
-            ctx->ticket_flags |= entry->ticket->flags;
-            // これで ctx_flags に 0x04 が焼き付きました！
-        }
-
-        // ==========================================================
         // 以降は消費(Consume)ロジック
         // ==========================================================
-        if (entry->ticket->ticket_id == 0) {
+        /* ticket_id == 0: 管理対象外 */
+        if (ticket->ticket_id == 0) {
+            teal_bake_ticket_flags(ticket);
             match = true;
             break;
         }
 
-        int current_uses = atomic_dec_if_positive(&entry->ticket->uses_left);
+        /* 通常チケット */
+        current_uses = atomic_dec_if_positive(&ticket->uses_left);
+
         if (current_uses >= 0) {
-            struct teal_log_entry *log;
+            teal_bake_ticket_flags(ticket);
             match = true;
 
             if (entry->ticket->audit_flags == 2 || (entry->ticket->audit_flags == 0 && current_uses == 0)) {
@@ -2052,7 +2590,6 @@ static bool teal_check_socket_ticket_match(struct socket *sock, struct sockaddr 
 static int teal_socket_connect(struct socket *sock, struct sockaddr *address, int addrlen)
 {
     int rc = 0;
-    struct teal_cred_ctx *ctx;
     
     // ★ デフォルトの安全な値を設定
     const char *exec_path = "-";
@@ -2069,20 +2606,13 @@ static int teal_socket_connect(struct socket *sock, struct sockaddr *address, in
     // ==========================================================
     // 【Tier 2】NAMELESS_IPC / SILENT_IO 特権プロセス専用バイパス
     // ==========================================================
-    ctx = teal_cred(current_cred());
-    if (ctx) {
-        /*
-         * TEAL_TICKET_FLG_NAMELESS_IPC (0x04) または SILENT_IO (0x01) 
-         * のフラグを持つプロセス（MozcやLibreOfficeなど）の場合、
-         * UNIXドメインソケット (AF_UNIX) 経由のローカル通信を無条件で許可する。
-         */
-        if ((ctx->ticket_flags & TEAL_TICKET_FLG_NAMELESS_IPC) || 
-            (ctx->ticket_flags & TEAL_TICKET_FLG_SILENT_IO)) {
-            
-            // AF_UNIX (ローカルIPC) であれば即座にバイパス
-            if (sock && sock->sk && sock->sk->sk_family == AF_UNIX) {
-                return 0; 
-            }
+    u32 flags = teal_get_active_ticket_flags();
+
+    if (flags & (TEAL_TICKET_FLG_NAMELESS_IPC |
+                 TEAL_TICKET_FLG_SILENT_IO)) {
+        // AF_UNIX (ローカルIPC) であれば即座にバイパス
+        if (sock && sock->sk && sock->sk->sk_family == AF_UNIX) {
+            return 0; 
         }
     }
 
@@ -2125,23 +2655,6 @@ static int teal_socket_connect(struct socket *sock, struct sockaddr *address, in
 
     rc = teal_decision_maker(TEAL_EVENT_CONNECT, (void *)&rctx);
     return rc;
-}
-
-// クレデンシャル生成時のフック（親から子へのコピー）
-static int teal_cred_prepare(struct cred *new, const struct cred *old, gfp_t gfp)
-{
-    struct teal_cred_ctx *old_ctx = teal_cred(old);
-    struct teal_cred_ctx *new_ctx = teal_cred(new);
-
-    if (!old_ctx || !new_ctx)
-        return 0;
-
-    // 親のフラグを引き継ぐ処理のみ行う (new->security への代入は絶対にしないこと)
-    if (old_ctx->ticket_flags & TEAL_TICKET_FLG_INHERIT) {
-        new_ctx->ticket_flags = old_ctx->ticket_flags;
-    }
-
-    return 0;
 }
 
 /**
@@ -2496,27 +3009,57 @@ static const struct lsm_id teal_lsmid = {
  * ========================================== */
 static struct security_hook_list teal_hooks[] __ro_after_init = {
     LSM_HOOK_INIT(task_alloc, teal_task_alloc),
-    LSM_HOOK_INIT(task_free,  teal_task_free),
     LSM_HOOK_INIT(file_open, teal_file_open),
     LSM_HOOK_INIT(socket_connect, teal_socket_connect),
     LSM_HOOK_INIT(bprm_check_security, teal_bprm_check),
-    LSM_HOOK_INIT(cred_prepare, teal_cred_prepare),
+    LSM_HOOK_INIT(bprm_committed_creds, teal_bprm_committed_creds),
     LSM_HOOK_INIT(path_unlink, teal_path_unlink),
     LSM_HOOK_INIT(path_rmdir, teal_path_rmdir),
     LSM_HOOK_INIT(path_rename, teal_path_rename),
     LSM_HOOK_INIT(inode_setattr, teal_inode_setattr),
 };
 
+static void teal_task_meta_init_current(void)
+{
+    struct teal_task_meta *m =
+        teal_task_meta_current();
+
+    if (!m)
+        return;
+
+    memset(m, 0, sizeof(*m));
+
+    m->magic = TEAL_TASK_META_MAGIC;
+
+    strscpy(m->program, "-",
+            sizeof(m->program));
+    strscpy(m->script, "-",
+            sizeof(m->script));
+    strscpy(m->args_head, "-",
+            sizeof(m->args_head));
+
+    atomic64_set(&m->privilege_state, 0);
+}
+
 static int __init teal_lsm_init(void)
 {
     int rc;
 
-    rc = rhltable_init(&teal_ticket_ht, &teal_cache_params);
-    if (rc) return rc;
+    rc = rhltable_init(
+        &teal_ticket_ht,
+        &teal_cache_params
+    );
+    if (rc)
+        return rc;
 
-    security_add_hooks(teal_hooks, ARRAY_SIZE(teal_hooks), &teal_lsmid);
-    
-    // Netlink 通知の登録
+    teal_task_meta_init_current();
+
+    security_add_hooks(
+        teal_hooks,
+        ARRAY_SIZE(teal_hooks),
+        &teal_lsmid
+    );
+
     netlink_register_notifier(&teal_nl_nb);
 
     return 0;
@@ -2556,7 +3099,8 @@ static void __exit teal_exit(void)
 
     // 2. Netlink 通知の解除
     netlink_unregister_notifier(&teal_nl_nb);
-    
+    cancel_work_sync(&teal_daemon_disconnect_work);
+
     cancel_delayed_work_sync(&teal_gc_work);
     
     rhltable_free_and_destroy(&teal_ticket_ht, teal_cache_free_cb, NULL);

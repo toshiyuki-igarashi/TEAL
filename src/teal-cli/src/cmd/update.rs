@@ -60,7 +60,7 @@ pub fn run() -> Result<()> {
 
     // 5. BLS署名を生成し、teald へ更新要求を送信 (Format: POLICY_UPDATE <hash> <sig>)
     println!("  -> 更新要求に署名し、teald デーモンへ送信中...");
-    run_signed_decision(DecisionKind::PolicyUpdate, &stage_hash)?;
+    run_signed_decision(DecisionKind::PolicyUpdate, &stage_hash, None)?;
 
     println!("✅ ポリシー更新要求を送信しました (Staged Hash: {})", stage_hash);
     println!("   ※ 管理者の承認完了後、teald によりアトミックに本番適用されます。");

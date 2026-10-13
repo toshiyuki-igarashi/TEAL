@@ -29,7 +29,7 @@ use teal_policy_engine::raw::{TEAL_TICKET_FLG_SILENT_IO, TEAL_TICKET_FLG_PARENT_
 use teal_policy_engine::util::ktime_prefix;
 use teal_policy_engine::ir::{CompiledRule, ActionMatcher, PathMatcher};
 
-use crate::bundle::bundle;
+use crate::bundle::policy_snapshot;
 use crate::netlink::NlWriter;
 use crate::types::{PreApprovalDraft, PendingEntry, EntityId, ApprovedTicket, MpaState};
 use crate::types::TicketPayload;
@@ -83,11 +83,12 @@ pub fn is_ticketable(rule: &CompiledRule) -> Result<(), String> {
 }
 
 /// rule_id を起点に Draft を作る。inodeの事前取得は行わない (Lazy Binding)
-pub async fn draft_from_rule(rule: &CompiledRule, uid: u32) -> Result<PreApprovalDraft> {
+pub async fn draft_from_rule(rule: &CompiledRule, uid: u32, epoch: u32) -> Result<PreApprovalDraft> {
     let op_mask = rule.action_match.to_u32();
 
     let origin_program_id = EntityId::new((0, 0));
     let object_id = EntityId::new((0, 0));
+
     let origin_script_id = if rule.subject.origin_script.is_some() {
         Some(EntityId::new((0, 0)))
     } else {
@@ -96,34 +97,31 @@ pub async fn draft_from_rule(rule: &CompiledRule, uid: u32) -> Result<PreApprova
 
     let draft_id = next_audit_ticket_id();
 
-    Ok(
-        PreApprovalDraft {
-            draft_id,
-            audit_id: Uuid::new_v4().to_string(),
-            rule_id: rule.id.clone(),
+    Ok(PreApprovalDraft {
+        draft_id,
+        epoch,
+        audit_id: Uuid::new_v4().to_string(),
+        rule_id: rule.id.clone(),
 
-            uid,
-            origin_program_id,
-            origin_script_id,
-            origin_applet: rule.subject.origin_applet.clone(),
-            
-            object_id,
-            new_object_id: None, 
-            
-            op_mask,
+        uid,
+        origin_program_id,
+        origin_script_id,
+        origin_applet: rule.subject.origin_applet.clone(),
 
-            mpa_state: MpaState {
-                threshold: rule.threshold(),
-                approver_roles: rule.approver_roles(),
-                required_roles: rule.approver_roles(),
-                approvals: HashMap::new(),
-                aggregated_signature: None,
-            },
+        object_id,
+        new_object_id: None,
+        op_mask,
 
-            ttl_sec: rule.pre_approval.ttl_sec,
-            max_uses: rule.max_uses,
-        }
-    )
+        mpa_state: MpaState {
+            threshold: rule.threshold(),
+            required_roles: rule.approver_roles(),
+            approvals: HashMap::new(),
+            aggregated_signature: None,
+        },
+
+        ttl_sec: rule.pre_approval.ttl_sec,
+        max_uses: rule.max_uses,
+    })
 }
 
 
@@ -156,6 +154,7 @@ pub async fn ticket_from_entry(rule: &CompiledRule, entry: &PendingEntry) -> App
 
     ApprovedTicket {
         ticket_id: draft_id,
+        epoch: entry.policy_epoch,
         rule_id: rule.id.clone(),
         origin_program,
         origin_program_sha256: None,
@@ -187,7 +186,10 @@ fn to_kernel_dev(u_dev: u64) -> u32 {
 
 /// 起動時およびポリシー更新時に、silent_io な prefix ディレクトリの包括チケットを一括投入する
 pub async fn preload_silent_directory_tickets(nl_tx: &NlWriter) -> Result<()> {
-    let compiled = bundle();
+    let snapshot = policy_snapshot();
+
+    let compiled = &snapshot.bundle;
+    let current_epoch = snapshot.epoch;
     let mut loaded_count = 0;
 
     for rule in &compiled.policy.rules {
@@ -260,7 +262,7 @@ pub async fn preload_silent_directory_tickets(nl_tx: &NlWriter) -> Result<()> {
             expires_in_sec: u64::MAX, // 無期限
             flags: TEAL_TICKET_FLG_PARENT_MATCH | TEAL_TICKET_FLG_SILENT_IO,
             uses_left: u32::MAX,
-            epoch: 0,
+            epoch: current_epoch,
             audit_flags: 1, // Silent
         };
 

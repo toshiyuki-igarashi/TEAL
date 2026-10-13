@@ -135,6 +135,20 @@ Within the `menuconfig` interface (you can press the `/` key to search for speci
 2. Verify that **`Enable different security models`** (or direct `CONFIG_SECURITY` related entries) is enabled.
 3. Locate **`Security hooks for pathname based access control`** (which corresponds to `CONFIG_SECURITY_PATH`) and enable it by ensuring it is marked as `[*]` or `<*>`.
 
+### Optional: Enable Lock Debugging (Development Only)
+
+When building a kernel for TEAL development and debugging, enable lock dependency checking to detect potential deadlocks, incorrect lock ordering, and other locking issues.
+
+In `make menuconfig`:
+
+1. Select **`Kernel hacking`**.
+2. Select **`Lock Debugging (spinlocks, mutexes, etc...)`**.
+3. Enable **`Lock debugging: prove locking correctness`** (`CONFIG_PROVE_LOCKING`) by setting it to `[*]`.
+
+This option requires `CONFIG_DEBUG_KERNEL=y` and `CONFIG_LOCK_DEBUGGING_SUPPORT=y`. Enabling `CONFIG_PROVE_LOCKING` also enables related lock debugging features, including `LOCKDEP`, `DEBUG_SPINLOCK`, and `DEBUG_MUTEXES`.
+
+**Note:** This option is recommended only for development and debugging builds, as it introduces runtime overhead. For production use and performance benchmarking, leave `CONFIG_PROVE_LOCKING` disabled (`n`).
+
 Save your changes and exit the interface. When executing the build, ensure that you accept the default values for any unconfigured option prompts.
 
 ```bash

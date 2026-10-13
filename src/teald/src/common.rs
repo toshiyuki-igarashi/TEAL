@@ -6,6 +6,9 @@
  */
 
 use serde::{Deserialize, Serialize};
+use teal_policy_engine::ir::CompiledRule;
+
+use crate::bundle::policy_snapshot;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TealStatus {
@@ -55,3 +58,25 @@ impl DecisionKind {
     }
 }
 
+pub fn is_mgmt_id(id: &str) -> bool {
+    let id_upper = id.to_uppercase();
+    matches!(id_upper.as_str(), "START" | "STOP" | "POLICY_UPDATE" | "FLUSH")
+}
+
+pub fn find_rule(
+    id: Option<&str>,
+) -> Result<(Option<CompiledRule>, u32), String> {
+    let snapshot = policy_snapshot();
+
+    match id {
+        Some(id) => {
+            for rule in &snapshot.bundle.policy.rules {
+                if rule.id == id {
+                    return Ok((Some(rule.clone()), snapshot.epoch));
+                }
+            }
+            Err(format!("Rule id={} is not found", id))
+        }
+        None => Ok((None, snapshot.epoch)),
+    }
+}

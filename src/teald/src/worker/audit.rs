@@ -11,12 +11,13 @@ use std::fs;
 use crate::state::app_state;
 use crate::types::{Request, InternalEvent, PolicyDecision, PendingEntry, KernelEventLog, TicketPayload, EntityId, ApprovedTicket};
 use crate::types::{next_audit_ticket_id, ACTIVE_TICKETS, is_drain};
-use crate::bundle::bundle;
+use crate::bundle::policy_snapshot;
 use crate::decide::request_to_ctx;
 use crate::evidence::EvidenceManager;
 use crate::evidence::{ensure_program_hash, invalidate_hash_cache_for_request};
 use crate::evidence::schema::LogType;
 use crate::netlink::{self, TealNetlinkMessage, TealReq, TealInfo};
+use crate::common::find_rule;
 
 use teal_policy_engine::types::{Effect, RuleType};
 use teal_policy_engine::ir::{Decision, CompiledRule};
@@ -81,8 +82,8 @@ pub async fn audit_worker_loop(
 
 pub async fn handle_internal_event(event: InternalEvent) {
     match event {
-        InternalEvent::Resolved { req_line: _, parsed_req, decision, rule_id, ticket_id } => {
-            if let Err(e) = process_resolved_event(parsed_req, decision, rule_id, ticket_id).await {
+        InternalEvent::Resolved { req_line: _, parsed_req, decision, rule_id, ticket_id, epoch } => {
+            if let Err(e) = process_resolved_event(parsed_req, decision, rule_id, ticket_id, epoch).await {
                 eprintln!("[ERROR] Resolved log failed: {}", e);
             }
         }
@@ -129,18 +130,20 @@ pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
     // 4. 記録: 証跡ログの非同期エンリッチメントとディスクへの書き込み
     process_audit_log(
         &req,
-        eval_result.rule_id,
+        eval_result.rule,
         eval_result.effect,
         eval_result.issued_ticket_id,
         is_cache_issued,
+        eval_result.epoch,
     ).await;
 }
 
 pub struct AuditEvalResult {
     pub effect: Effect,
-    pub rule_id: Option<String>,
+    pub rule: Option<CompiledRule>,
     pub ticket_to_send: Option<TicketPayload>,
     pub issued_ticket_id: String,
+    pub epoch: u32,
 }
 
 enum AuditRoute {
@@ -153,7 +156,9 @@ enum AuditRoute {
 async fn evaluate_audit_request(
     req: &mut Request
 ) -> AuditEvalResult {
-    let compiled = bundle();
+    let current = policy_snapshot();
+    let compiled = &current.bundle;
+    let epoch = current.epoch;
 
     let target_uid = req.uid;
 
@@ -197,13 +202,13 @@ async fn evaluate_audit_request(
 
     match route {
         AuditRoute::Pass => {
-            build_audit_not_managed_result(req)
+            build_audit_not_managed_result(req, epoch)
         }
 
         AuditRoute::NoMatchManaged => {
             ensure_program_hash(req).await;
 
-            build_audit_no_match_result()
+            build_audit_no_match_result(epoch)
         }
 
         AuditRoute::Matched(rule) => {
@@ -213,37 +218,42 @@ async fn evaluate_audit_request(
 
             build_audit_matched_result(
                 req,
-                &rule,
+                rule,
+                epoch
             )
         }
     }
 }
 
 fn build_audit_not_managed_result(
-    req: &Request
+    req: &Request,
+    epoch:u32
 ) -> AuditEvalResult {
     let payload = create_not_managed_ticket(req);
 
     AuditEvalResult {
         effect: Effect::Allow,
-        rule_id: None,
+        rule: None,
         issued_ticket_id: payload.ticket_id.clone(),
         ticket_to_send: Some(payload),
+        epoch: epoch,
     }
 }
 
-fn build_audit_no_match_result() -> AuditEvalResult {
+fn build_audit_no_match_result(epoch: u32) -> AuditEvalResult {
     AuditEvalResult {
         effect: Effect::Deny,
-        rule_id: None,
+        rule: None,
         ticket_to_send: None,
         issued_ticket_id: "0".to_string(),
+        epoch: epoch,
     }
 }
 
 fn build_audit_matched_result(
     req: &Request,
-    r: &CompiledRule,
+    r: CompiledRule,
+    epoch: u32
 ) -> AuditEvalResult {
     let mut ticket_to_send = None;
     let mut issued_ticket_id = "0".to_string();
@@ -297,7 +307,7 @@ fn build_audit_matched_result(
             expires_in_sec: r.pre_approval.ttl_sec,
             flags: safe_flags,
             uses_left: r.max_uses,
-            epoch: 0,
+            epoch: epoch,
             audit_flags: r.audit_level.to_u32(),
         });
 
@@ -309,6 +319,7 @@ fn build_audit_matched_result(
 
         let approved_ticket = ApprovedTicket {
             ticket_id: ticket_id.clone(),
+            epoch,
             rule_id: r.id.clone(),
             origin_program: req.raw_program.clone(),
             origin_program_sha256: req.prog_sha256.clone(),
@@ -335,9 +346,10 @@ fn build_audit_matched_result(
 
     AuditEvalResult {
         effect,
-        rule_id: Some(r.id.clone()),
+        rule: Some(r),
         ticket_to_send,
         issued_ticket_id,
+        epoch,
     }
 
 }
@@ -345,12 +357,13 @@ fn build_audit_matched_result(
 /// ペンディングエントリを作成・エンリッチし、ディスクにログを記録する
 async fn process_audit_log(
     req: &Request,
-    rule_id: Option<String>,
+    rule: Option<CompiledRule>,
     effect: Effect,
     issued_ticket_id: String,
     is_cache_issued: bool,
+    epoch: u32,
 ) {
-    let mut pending = PendingEntry::from_audit(req, rule_id, effect.clone());
+    let mut pending = PendingEntry::from_audit(req, rule, effect.clone(), epoch);
 
     // エンリッチメント処理 (CPUバウンド/同期I/Oの可能性があるため spawn_blocking を使用)
     let pending = tokio::task::spawn_blocking(move || {
@@ -388,7 +401,7 @@ fn create_not_managed_ticket(req: &Request) -> TicketPayload {
         expires_in_sec: u64::MAX, // 無期限
         flags: 0,                 // パス単位のパス（T-000000000）には主体特権は不要
         uses_left: 1,
-        epoch: 0,
+        epoch: policy_snapshot().epoch,
         audit_flags: TEAL_TICKET_FLG_SILENT_IO,
     }
 }
@@ -454,7 +467,8 @@ async fn process_resolved_event(
     decision: PolicyDecision,
     rule_id: Option<String>,
     ticket_id: Option<String>,
-) -> Result<()> {
+    epoch: u32,
+) -> Result<(), String> {
     let (effect, log_type) = match decision {
         PolicyDecision::Allow => (Effect::Allow, LogType::AccessAllowed),
         PolicyDecision::NotManaged => (Effect::Allow, LogType::AccessAllowed),
@@ -466,7 +480,25 @@ async fn process_resolved_event(
         }
     };
 
-    let mut pending = PendingEntry::from_audit(&req, rule_id, effect.clone());
+    let (rule, current_epoch) = match find_rule(rule_id.as_deref()) {
+        Ok(rule_with_epoch) => rule_with_epoch,
+        Err(msg) => return Err(msg),
+    };
+
+    if epoch != current_epoch {
+        return Err(format!(
+            "Policy is updated, Rule id={:?} is not applied.",
+            rule_id
+        ));
+    }
+
+    let mut pending = PendingEntry::from_audit(
+        &req,
+        rule,
+        effect.clone(),
+        current_epoch,
+    );
+
     enrich_pending_entry(&mut pending);
 
     let is_cache = ticket_id.is_some();

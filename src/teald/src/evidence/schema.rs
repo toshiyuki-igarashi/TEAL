@@ -49,6 +49,8 @@ pub struct AuditLogEntry {
     pub ts: DateTime<Utc>,
     pub host: String,
 
+    pub epoch: u32,  // 判定に適用されたポリシーのepoch
+
     // 1. Reality (共通)
     pub syscall_context: SyscallContext,
 

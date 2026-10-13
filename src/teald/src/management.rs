@@ -5,6 +5,8 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 use std::sync::{Arc, OnceLock};
+use std::path::Path;
+use arc_swap::ArcSwapOption;
 use anyhow::{Context, Result};
 use serde_json::Value;
 
@@ -29,41 +31,55 @@ fn management_schema_value() -> &'static Value {
     })
 }
 
-static MANAGEMENT: OnceLock<Arc<CompiledManagement>> = OnceLock::new();
+// Management is read via an atomic snapshot, and updated only after the
+// corresponding policy bundle has been committed.
+static MANAGEMENT: ArcSwapOption<CompiledManagement> = ArcSwapOption::const_empty();
 
 pub fn init_management(management: CompiledManagement) -> Result<(), &'static str> {
-    MANAGEMENT
-        .set(Arc::new(management))
-        .map_err(|_| "MANAGEMENT already initialized")
-}
-
-pub fn management() -> Arc<CompiledManagement> {
-    MANAGEMENT.get().expect("MANAGEMENT not initialized").clone()
-}
-
-pub fn load_from_management(roles: &CompiledRolesCore) -> Result<()> {
-    // 1) file -> Value
-    let v = load_json_file(MANAGEMENT_PATH)
-        .with_context(|| format!("load management json: {}", MANAGEMENT_PATH))?;
-
-    // 2) schema validate（構文）
-    validate_against_schema(&v, management_schema_value())
-        .with_context(|| format!("management schema validation failed: {}", MANAGEMENT_PATH))?;
-
-    // 3) Value -> Raw（構造体）
-    let management: RawManagement = serde_json::from_value(v)
-        .with_context(|| format!("deserialize management raw struct failed: {}", MANAGEMENT_PATH))?;
-
-    // 4) compile（意味解釈 + 正規化）
-    let (compiled, warnings) = compile_management(management, roles)
-        .with_context(|| format!("compile management failed: {}", MANAGEMENT_PATH))?;
-
-    for w in &warnings.warnings {
-        eprintln!("{}[WARN] {}", ktime_prefix(), w);
+    let value = Arc::new(management);
+    let previous = MANAGEMENT.compare_and_swap(
+        &None::<Arc<CompiledManagement>>,
+        Some(value),
+    );
+    if previous.is_some() {
+        return Err("MANAGEMENT already initialized");
     }
-
-    init_management(compiled).map_err(|e| anyhow::anyhow!(e))?;
-
     Ok(())
 }
 
+pub fn management() -> Arc<CompiledManagement> {
+    MANAGEMENT.load_full().expect("MANAGEMENT not initialized")
+}
+
+/// Validate and compile a candidate configuration without publishing it.
+/// The caller must provide the Roles compiled from the SAME staged bundle.
+pub fn prepare_management<P: AsRef<Path>>(
+    path: P,
+    roles: &CompiledRolesCore,
+) -> Result<CompiledManagement> {
+    let path = path.as_ref();
+    let v = load_json_file(path)
+        .with_context(|| format!("load management json: {}", path.display()))?;
+    validate_against_schema(&v, management_schema_value())
+        .with_context(|| format!("management schema validation failed: {}", path.display()))?;
+    let raw: RawManagement = serde_json::from_value(v)
+        .with_context(|| format!("deserialize management raw struct failed: {}", path.display()))?;
+    let (compiled, warnings) = compile_management(raw, roles)
+        .with_context(|| format!("compile management failed: {}", path.display()))?;
+    for w in &warnings.warnings {
+        eprintln!("{}[WARN] {}", ktime_prefix(), w);
+    }
+    Ok(compiled)
+}
+
+/// Publish an already compiled configuration. Call under MGMT_EXEC_LOCK,
+/// after the corresponding bundle has been committed.
+pub fn commit_management(compiled: CompiledManagement) {
+    MANAGEMENT.store(Some(Arc::new(compiled)));
+}
+
+/// Initial loading (once). For policy updates use prepare + commit instead.
+pub fn load_from_management(roles: &CompiledRolesCore) -> Result<()> {
+    let compiled = prepare_management(MANAGEMENT_PATH, roles)?;
+    init_management(compiled).map_err(|e| anyhow::anyhow!(e))
+}

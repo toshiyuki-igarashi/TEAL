@@ -2073,6 +2073,7 @@ dependencies = [
  "teal_policy_engine",
  "teald",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]

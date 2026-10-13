@@ -15,10 +15,10 @@ use std::os::unix::fs::PermissionsExt;
 
 use anyhow::{Result, Context};
 
-use teald::bundle::{load_from_bundle, bundle};
+use teald::bundle::{load_bundle_from_dir, init_bundle_at_epoch, bundle, policy_snapshot, DEFAULT_TEAL_DIR};
 use teald::management::load_from_management;
 use teald::evidence::EvidenceManager;
-use teald::netlink::{NlWriter, TealNetlinkMessage, init_socket, get_netlink_socket_metrics};
+use teald::netlink::{NlWriter, TealNetlinkMessage, init_socket, kernel_next_epoch, get_netlink_socket_metrics};
 use teald::pam_server::start_pam_listener;
 use teald::types::{DaemonMode, set_daemon_mode, InternalEvent};
 use teald::ticket::preload_silent_directory_tickets;
@@ -111,12 +111,10 @@ async fn main() -> Result<()> {
     // 起動直後は確実に DRAIN モードに設定
     set_daemon_mode(DaemonMode::Drain);
 
-    load_from_bundle()?;
-    let b = bundle();
-    load_from_management(&b.roles)?;
-
-    init_state().await;
-    EvidenceManager::init(1024);
+    // まずポリシーを検証・コンパイルするが、Epochはまだ確定しない。
+    // REGISTERの返答でカーネルが指示するEpochを受け取ってから公開する。
+    let compiled = load_bundle_from_dir(DEFAULT_TEAL_DIR)
+        .context("Failed to load and compile TEAL bundle")?;
 
     // ==============================================================
     // Generic Netlink 初期化処理
@@ -125,6 +123,25 @@ async fn main() -> Result<()> {
         .context("Failed to initialize Netlink socket")?;
 
     eprintln!("{}[INFO] Successfully attached to Kernel via Generic Netlink", ktime_prefix());
+
+    // REGISTERの応答(EPOCH=last_epoch+1)をローカルSnapshotに反映する。
+    // 重要: 新Epochは、カーネルのPOLICY_UPDATE ACKまで運用状態と見なさない。
+    let next_epoch = kernel_next_epoch();
+    anyhow::ensure!(next_epoch != 0, "REGISTER did not return a valid Epoch");
+    init_bundle_at_epoch(compiled, next_epoch)?;
+    let b = bundle();
+    load_from_management(&b.roles)?;
+
+    // 初期要求を処理するワーカーや事前チケット登録を始める前に同期を確定する。
+    // netlink.rsのsend_sync_epoch()はカーネルACKを待つ実装が必須。
+    nl_tx.send_sync_epoch(next_epoch).await
+        .with_context(|| format!("Kernel POLICY_UPDATE ACK failed for Epoch {}", next_epoch))?;
+    anyhow::ensure!(policy_snapshot().epoch == next_epoch,
+                    "PolicySnapshot Epoch mismatch after kernel ACK");
+    eprintln!("{}[INFO] Initial policy Epoch {} synchronized with kernel", ktime_prefix(), next_epoch);
+
+    init_state().await;
+    EvidenceManager::init(1024);
 
     let listener = init_admin_socket("/tmp/teald.sock").await?;
 

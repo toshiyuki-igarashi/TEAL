@@ -16,18 +16,39 @@ use neli::socket::NlSocketHandle;
 use neli::neli_enum;
 use neli::err::SerError;
 use std::thread;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::collections::HashMap;
+use tokio::sync::oneshot;
+use std::time::Duration;
 use std::os::fd::AsRawFd;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use teal_policy_engine::util::ktime_prefix;
 use crate::types::TicketPayload;
 
 // --- グローバル受信 PortID 管理 ---
 static RX_PORTID: AtomicU32 = AtomicU32::new(0);
+static KERNEL_NEXT_EPOCH: AtomicU32 = AtomicU32::new(0);
+static NEXT_SEQ: AtomicU32 = AtomicU32::new(1000);
+
+pub fn kernel_next_epoch() -> u32 {
+    KERNEL_NEXT_EPOCH.load(Ordering::Acquire)
+}
+
+fn parse_register_epoch(msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<u32> {
+    for attr in msg.get_attr_handle().iter() {
+        if attr.nla_type.nla_type == TealAttr::Epoch {
+            let epoch = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?);
+            anyhow::ensure!(epoch != 0, "kernel returned invalid Epoch=0");
+            return Ok(epoch);
+        }
+    }
+    anyhow::bail!("REGISTER reply missing TEAL_ATTR_EPOCH")
+}
+
 
 pub fn set_rx_portid(portid: u32) {
     RX_PORTID.store(portid, Ordering::Relaxed);
@@ -164,7 +185,7 @@ pub enum NetlinkSendRequest {
     Deny(u64),
     TicketAdd(TicketPayload),
     ModeSwitch(u32),
-    SyncEpoch(u32),
+    SyncEpoch(u32, oneshot::Sender<Result<()>>),
 }
 
 // --- [構造体] 軽量化された NlWriter ---
@@ -172,9 +193,28 @@ pub enum NetlinkSendRequest {
 pub struct NlWriter {
     pub tx: mpsc::Sender<NetlinkSendRequest>,
     pub family_id: u16,
+    ticket_transition: Arc<AtomicBool>,
+}
+
+/// RAII: all cloned NlWriter instances share this transition gate.
+/// Dropping the guard resumes ticket dispatch.
+pub struct TicketTransitionGuard { gate: Arc<AtomicBool> }
+impl Drop for TicketTransitionGuard {
+    fn drop(&mut self) { self.gate.store(false, Ordering::Release); }
 }
 
 impl NlWriter {
+    pub fn ticket_transition_active(&self) -> bool {
+        self.ticket_transition.load(Ordering::Acquire)
+    }
+
+    pub fn begin_ticket_transition(&self) -> Result<TicketTransitionGuard> {
+        self.ticket_transition.compare_exchange(
+            false, true, Ordering::AcqRel, Ordering::Acquire
+        ).map_err(|_| anyhow::anyhow!("ticket transition already active"))?;
+        Ok(TicketTransitionGuard { gate: Arc::clone(&self.ticket_transition) })
+    }
+
     pub async fn send_approve(&self, trans_id: u64) -> Result<()> {
         self.tx.send(NetlinkSendRequest::Approve(trans_id)).await
             .map_err(|_| anyhow::anyhow!("Failed to queue APPROVE"))
@@ -186,6 +226,7 @@ impl NlWriter {
     }
 
     pub async fn send_ticket_add(&self, ticket: TicketPayload) -> Result<()> {
+        anyhow::ensure!(!self.ticket_transition_active(), "TICKET_ADD suspended during epoch transition");
         self.tx.send(NetlinkSendRequest::TicketAdd(ticket)).await
             .map_err(|_| anyhow::anyhow!("Failed to queue TICKET_ADD"))
     }
@@ -196,8 +237,12 @@ impl NlWriter {
     }
 
     pub async fn send_sync_epoch(&self, epoch: u32) -> Result<()> {
-        self.tx.send(NetlinkSendRequest::SyncEpoch(epoch)).await
-            .map_err(|_| anyhow::anyhow!("Failed to queue SYNC_EPOCH"))
+        let (tx, rx) = oneshot::channel();
+        self.tx.send(NetlinkSendRequest::SyncEpoch(epoch, tx)).await
+            .map_err(|_| anyhow::anyhow!("Failed to queue SYNC_EPOCH"))?;
+        tokio::time::timeout(Duration::from_secs(5), rx).await
+            .map_err(|_| anyhow::anyhow!("kernel POLICY_UPDATE ACK timed out"))?
+            .map_err(|_| anyhow::anyhow!("Netlink sender stopped before ACK"))?
     }
 }
 
@@ -250,27 +295,46 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
         NlPayload::Payload(genlhdr),
     );
     rx_sock.send(nlhdr)?;
-    let _ = rx_sock.recv::<u16, Genlmsghdr<TealCmd, TealAttr>>()?;
-
-    // ★ REGISTER 成功後に正式な受信用 PortID を確定・保存
+    // REGISTERには通常のGeneric Netlink応答とNLMSG_ERROR(ACK)の両方が届く。
+    // 最初のrecv()だけを読み捨てず、必ずEpochを含む応答を待つ。
+    let next_epoch = loop {
+        let reply = rx_sock.recv::<u16, Genlmsghdr<TealCmd, TealAttr>>()?
+            .ok_or_else(|| anyhow::anyhow!("REGISTER socket closed"))?;
+        match reply.nl_payload {
+            NlPayload::Payload(genl) if genl.cmd == TealCmd::Register => {
+                break parse_register_epoch(&genl)?;
+            }
+            NlPayload::Payload(_) => continue,
+            _ => continue, // Successful ACK may arrive before/after reply.
+        }
+    };
+    KERNEL_NEXT_EPOCH.store(next_epoch, Ordering::Release);
     let rx_portid = rx_sock.pid().unwrap_or(0);
+    anyhow::ensure!(rx_portid != 0, "Netlink PortID missing");
     set_rx_portid(rx_portid);
+    eprintln!("{}[INFO] REGISTER next kernel Epoch: {}", ktime_prefix(), next_epoch);
 
-    // 送信用ソケットを独立して接続
-    let tx_sock = NlSocketHandle::connect(NlFamily::Generic, None, &[])?;
-    let tx_portid = tx_sock.pid().unwrap_or(0);
-    let sock_arc: Arc<Mutex<NlSocketHandle>> = Arc::new(Mutex::new(tx_sock));
+    // IMPORTANT: All control messages must originate from the registered socket.
+    // A second TX socket has a different PortID and is rejected by the LSM.
+    // Receive operations use a short socket timeout to release the shared lock.
+    let timeout = libc::timeval { tv_sec: 0, tv_usec: 50_000 };
+    let timeout_rc = unsafe { libc::setsockopt(
+        rx_sock.as_raw_fd(), libc::SOL_SOCKET, libc::SO_RCVTIMEO,
+        &timeout as *const _ as *const libc::c_void,
+        std::mem::size_of_val(&timeout) as libc::socklen_t) };
+    anyhow::ensure!(timeout_rc == 0, "SO_RCVTIMEO failed: {}", std::io::Error::last_os_error());
 
-    eprintln!("{}[INFO] teald RX PortID (Receiving): {}", ktime_prefix(), rx_portid);
-    eprintln!("{}[INFO] teald TX PortID (Sending)  : {}", ktime_prefix(), tx_portid);
-
-    // --- 3. 送信ワーカーの準備と起動 ---
+    let shared_sock = Arc::new(StdMutex::new(rx_sock));
+    let pending_acks: Arc<StdMutex<HashMap<u32, oneshot::Sender<Result<()>>>>> =
+        Arc::new(StdMutex::new(HashMap::new()));
     let (send_tx, send_rx) = mpsc::channel(10240);
-    let nl_tx = NlWriter { tx: send_tx, family_id };
+    let ticket_transition = Arc::new(AtomicBool::new(false));
+    let nl_tx = NlWriter { tx: send_tx, family_id, ticket_transition: Arc::clone(&ticket_transition) };
 
-    let worker_sock = Arc::clone(&sock_arc);
+    let worker_sock = Arc::clone(&shared_sock);
+    let worker_acks = Arc::clone(&pending_acks);
     tokio::spawn(async move {
-        netlink_send_worker_loop(send_rx, worker_sock, family_id).await;
+        netlink_send_worker_loop(send_rx, worker_sock, family_id, worker_acks, ticket_transition).await;
     });
 
     // --- 4. 初期モード同期 ---
@@ -281,52 +345,63 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
     let (tx_audit, rx_audit) = mpsc::channel(1024);
     
     thread::spawn(move || {
-       eprintln!("{}[INFO] Netlink dedicated receiver thread started.", ktime_prefix());
-
+        eprintln!("{}[INFO] Netlink dedicated receiver thread started.", ktime_prefix());
+        enum Incoming { Request(TealReq), Information(TealInfo), Ack(u32), Ignore, Error(String) }
         loop {
-            let msg_res = rx_sock.recv::<u16, Genlmsghdr<TealCmd, TealAttr>>();
-
-            match msg_res {
-                // ★ msg に中身が入っていた場合（成功ルート）
-                Ok(Some(msg)) => {
-                    if let NlPayload::Payload(genl_msg) = msg.nl_payload {
-                        match genl_msg.cmd {
-                            TealCmd::Req => {
-                                match parse_req_msg(&genl_msg) {
-                                    Ok(req) => {
-                                        let is_audit = (req.flags & 1) != 0;
-                                        if is_audit {
-                                            let _ = tx_audit.blocking_send(TealNetlinkMessage::Req(req));
-                                        } else {
-                                            let _ = tx_decision.blocking_send(TealNetlinkMessage::Req(req));
-                                        }
-                                    }
-                                    Err(e) => eprintln!("{}[ERROR-NETLINK] PARSE FAILED: {:?}", ktime_prefix(), e),
-                                }
-                            }
-                            TealCmd::Info => {
-                                if let Ok(info) = parse_info_msg(&genl_msg) {
-                                    let _ = tx_audit.blocking_send(TealNetlinkMessage::Info(info));
-                                }
-                            }
-                            _ => {} 
+            // Parse the message while holding the socket guard: neli 0.6 may
+            // return data borrowed from its internal receive buffer.
+            let incoming = {
+                let mut sock = shared_sock.lock().unwrap();
+                match sock.recv::<u16, Genlmsghdr<TealCmd, TealAttr>>() {
+                    Ok(Some(msg)) => {
+                        let seq = msg.nl_seq;
+                        match msg.nl_payload {
+                            NlPayload::Payload(genl) => match genl.cmd {
+                                TealCmd::Req => match parse_req_msg(&genl) {
+                                    Ok(req) => Incoming::Request(req),
+                                    Err(e) => Incoming::Error(format!("REQ parse failed: {e}")),
+                                },
+                                TealCmd::Info => match parse_info_msg(&genl) {
+                                    Ok(info) => Incoming::Information(info),
+                                    Err(e) => Incoming::Error(format!("INFO parse failed: {e}")),
+                                },
+                                _ => Incoming::Ignore,
+                            },
+                            NlPayload::Ack(_) => Incoming::Ack(seq),
+                            _ => Incoming::Ignore,
                         }
                     }
+                    Ok(None) => Incoming::Ignore,
+                    Err(e) => Incoming::Error(format!("{:?}", e)),
                 }
-                // ★ neli がパケットをこっそり捨てた（中身が空だった）場合
-                Ok(None) => {
-                    eprintln!("{}[WARN-NETLINK] recv returned Ok(None). (Empty packet or dropped)", ktime_prefix());
-                }
-                // ★ シーケンス番号不一致などのエラーが起きた場合
-                Err(e) => {
-                    let err_str = format!("{:?}", e);
-                    if err_str.contains("ENOBUFS") || err_str.contains("No buffer space available") {
-                        eprintln!("{}[CRITICAL-NETLINK] BUFFER OVERFLOW DETECTED (ENOBUFS)!", ktime_prefix());
-                        eprintln!("{}[CRITICAL-NETLINK] Kernel dropped packets because teald is too slow to read or buffer (16MB) is full.", ktime_prefix());
-                        eprintln!("{}[CRITICAL-NETLINK] ACTION REQUIRED: Optimize policies using SILENT_IO tickets to reduce kernel IPC.", ktime_prefix());
+            };
+            match incoming {
+                Incoming::Request(req) => {
+                    let is_audit = (req.flags & 1) != 0;
+                    let _ = if is_audit {
+                        tx_audit.blocking_send(TealNetlinkMessage::Req(req))
                     } else {
-                        // その他の通信エラー（シーケンス番号のズレなど）
-                        eprintln!("{}[ERROR-NETLINK] recv error (Ignored): {:?}", ktime_prefix(), e);
+                        tx_decision.blocking_send(TealNetlinkMessage::Req(req))
+                    };
+                }
+                Incoming::Information(info) => {
+                    let _ = tx_audit.blocking_send(TealNetlinkMessage::Info(info));
+                }
+                Incoming::Ack(seq) => {
+                    if let Some(tx) = pending_acks.lock().unwrap().remove(&seq) {
+                        let _ = tx.send(Ok(()));
+                    }
+                }
+                Incoming::Ignore => {}
+                Incoming::Error(err_str) => {
+                    if err_str.contains("EAGAIN") || err_str.contains("WouldBlock") ||
+                       err_str.contains("timed out") || err_str.contains("Resource temporarily unavailable") {
+                        continue;
+                    }
+                    eprintln!("{}[ERROR-NETLINK] recv: {}", ktime_prefix(), err_str);
+                    let pending = std::mem::take(&mut *pending_acks.lock().unwrap());
+                    for (_, tx) in pending {
+                        let _ = tx.send(Err(anyhow::anyhow!("Netlink response error: {}", err_str)));
                     }
                 }
             }
@@ -408,31 +483,59 @@ fn parse_info_msg(genl_msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<TealInfo> 
 // --- [ワーカー] 送信専用メインループ ---
 pub async fn netlink_send_worker_loop(
     mut rx: mpsc::Receiver<NetlinkSendRequest>,
-    sock_mutex: Arc<Mutex<NlSocketHandle>>,
+    sock_mutex: Arc<StdMutex<NlSocketHandle>>,
     family_id: u16,
+    pending_acks: Arc<StdMutex<HashMap<u32, oneshot::Sender<Result<()>>>>>,
+    ticket_transition: Arc<AtomicBool>,
 ) {
-    eprintln!("{}[INFO] Netlink Send Worker: Serialized dispatcher started.", ktime_prefix());
-
+    eprintln!("{}[INFO] Netlink Send Worker started on registered PortID.", ktime_prefix());
     while let Some(req) = rx.recv().await {
-        // ここが唯一のソケットロック取得ポイント
-        let mut sock = sock_mutex.lock().await;
-
-        let nl_res = match req {
-            NetlinkSendRequest::Approve(id) => sock.send(build_approve(family_id, id).unwrap()),
-            NetlinkSendRequest::Deny(id) => sock.send(build_deny(family_id, id).unwrap()),
-            NetlinkSendRequest::TicketAdd(ticket) => sock.send(build_ticket_add(family_id, &ticket).unwrap()),
-            NetlinkSendRequest::ModeSwitch(mode) => sock.send(build_mode_switch_packet(family_id, mode).unwrap()),
-            NetlinkSendRequest::SyncEpoch(epoch) => sock.send(build_sync_epoch_packet(family_id, epoch).unwrap()),
-        };
-
-        if let Err(e) = nl_res {
-            eprintln!("{}[ERROR] Netlink Dispatch failure: {:?}", ktime_prefix(), e);
-            
-            // 致命的エラー判定
-            if is_fatal_netlink_error(&e) {
-                eprintln!("{}[FATAL] Connection lost (EPIPE/ECONNRESET). Exiting send worker.", ktime_prefix());
-                // ワーカーが終了することで、受信側のReceiverも閉じられ、全体のリカバリが連鎖する
-                return; 
+        match req {
+            NetlinkSendRequest::SyncEpoch(epoch, response) => {
+                let seq = NEXT_SEQ.fetch_add(1, Ordering::Relaxed);
+                let packet = match build_sync_epoch_packet(family_id, epoch) {
+                    Ok(mut packet) => {
+                        packet.nl_seq = seq;
+                        packet
+                    }
+                    Err(e) => { let _ = response.send(Err(e)); continue; }
+                };
+                pending_acks.lock().unwrap().insert(seq, response);
+                let send_result = { sock_mutex.lock().unwrap().send(packet) };
+                if let Err(e) = send_result {
+                    if let Some(tx) = pending_acks.lock().unwrap().remove(&seq) {
+                        let _ = tx.send(Err(anyhow::anyhow!("POLICY_UPDATE send: {:?}", e)));
+                    }
+                }
+            }
+            other => {
+                // Dispatch-time check also covers requests queued before suspension.
+                if let NetlinkSendRequest::TicketAdd(ref ticket) = other {
+                    if ticket_transition.load(Ordering::Acquire) {
+                        eprintln!("{}[INFO] dropping TICKET_ADD during epoch transition", ktime_prefix());
+                        continue;
+                    }
+                    if ticket.epoch != crate::bundle::policy_snapshot().epoch {
+                        eprintln!("{}[WARN] dropping stale TICKET_ADD epoch={}", ktime_prefix(), ticket.epoch);
+                        continue;
+                    }
+                }
+                let packet = match other {
+                    NetlinkSendRequest::Approve(id) => build_approve(family_id, id),
+                    NetlinkSendRequest::Deny(id) => build_deny(family_id, id),
+                    NetlinkSendRequest::TicketAdd(ref ticket) => build_ticket_add(family_id, ticket),
+                    NetlinkSendRequest::ModeSwitch(mode) => build_mode_switch_packet(family_id, mode),
+                    NetlinkSendRequest::SyncEpoch(..) => unreachable!(),
+                };
+                match packet {
+                    Ok(packet) => {
+                        if let Err(e) = sock_mutex.lock().unwrap().send(packet) {
+                            eprintln!("{}[ERROR] Netlink Dispatch failure: {:?}", ktime_prefix(), e);
+                            if is_fatal_netlink_error(&e) { return; }
+                        }
+                    }
+                    Err(e) => eprintln!("{}[ERROR] Netlink packet build: {}", ktime_prefix(), e),
+                }
             }
         }
     }
@@ -506,7 +609,7 @@ fn build_sync_epoch_packet(family_id: u16, epoch: u32) -> Result<Nlmsghdr<u16, G
     let mut attrs = GenlBuffer::new();
     attrs.push(Nlattr::new(false, false, TealAttr::Epoch, epoch.to_ne_bytes().as_ref())?);
     let genlhdr = Genlmsghdr::new(TealCmd::PolicyUpdate, 1, attrs);
-    Ok(Nlmsghdr::new(None, family_id, NlmFFlags::new(&[NlmF::Request]), None, None, NlPayload::Payload(genlhdr)))
+    Ok(Nlmsghdr::new(None, family_id, NlmFFlags::new(&[NlmF::Request, NlmF::Ack]), None, None, NlPayload::Payload(genlhdr)))
 }
 
 /// Generic Netlink のプロトコル番号 ("16")

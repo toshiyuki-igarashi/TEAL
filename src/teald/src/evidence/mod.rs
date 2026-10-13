@@ -130,6 +130,7 @@ impl EvidenceManager {
             log_type: log_type,
             ts: Utc::now(),
             host: get_hostname(),
+            epoch: 0,   // 本来はticketからepoch情報を得る
             syscall_context: SyscallContext {
                 uid: event_log.uid,
                 user: uid_to_name(event_log.uid).unwrap_or_else(|_| "".to_string()),
@@ -214,6 +215,7 @@ impl EvidenceManager {
             log_type,
             ts: Utc::now(),
             host: get_hostname(),
+            epoch: pending.policy_epoch,
             syscall_context: SyscallContext {
                 uid: pending.subject.uid,
                 user: uid_to_name(pending.subject.uid).unwrap_or_else(|_| "".to_string()),
@@ -301,6 +303,7 @@ impl EvidenceManager {
             log_type,
             ts: Utc::now(),
             host: get_hostname(),
+            epoch: 0,       // 本来はticketあるいはdraftよりepochを得る
             syscall_context: SyscallContext {
                 uid: draft.uid,
                 user: uid_to_name(ticket.uid).unwrap_or_else(|_| "".to_string()),
@@ -382,6 +385,7 @@ impl EvidenceManager {
             log_type,
             ts: Utc::now(),
             host: get_hostname(),
+            epoch: 0,       // 本来はpending_ctlよりepochを入手する
             syscall_context: SyscallContext {
                 uid: pending_ctl.initiator_uid,
                 user: pending_ctl.initiator_user.clone(),

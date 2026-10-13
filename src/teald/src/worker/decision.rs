@@ -16,7 +16,7 @@ use crate::types::{
     Request, InternalEvent, PolicyDecision, EntityId, PendingEntry,
     ApprovedTicket, PolicyResult, TicketPayload
 };
-use crate::bundle::bundle;
+use crate::bundle::policy_snapshot;
 use crate::decide::request_to_ctx;
 use crate::netlink::{TealNetlinkMessage, NlWriter};
 use crate::types::{next_audit_ticket_id, ACTIVE_TICKETS, to_kernel_dev};
@@ -79,7 +79,8 @@ pub async fn decision_worker_loop(
             parsed_req: req,
             decision: policy_result.decision.clone(), 
             rule_id: policy_result.rule_id.clone(),
-            ticket_id: issued_ticket_id, // ★ 退避しておいた ID を渡す
+            ticket_id: issued_ticket_id,
+            epoch: policy_result.current_epoch,
         };
 
         if let Err(e) = internal_tx.send(event).await {
@@ -94,7 +95,9 @@ pub async fn decision_worker_loop(
 pub async fn process_policy_decision(
     req: &mut Request
 ) -> PolicyResult {
-    let compiled = bundle();
+    let current = policy_snapshot();
+    let compiled = &current.bundle;
+    let current_epoch = current.epoch;
 
     let target_uid = req.uid;
 
@@ -104,16 +107,13 @@ pub async fn process_policy_decision(
     .await
     .unwrap_or(None);
 
-    let (session_info, current_epoch) = {
+    let session_info = {
         let state = app_state().lock().await;
 
-        (
-            state.check_registered_session(
-                &req.session_tty,
-                req.uid,
-                request_user.as_deref()
-            ),
-            state.current_epoch
+        state.check_registered_session(
+            &req.session_tty,
+            req.uid,
+            request_user.as_deref()
         )
     };
 
@@ -138,7 +138,7 @@ pub async fn process_policy_decision(
         Decision::NoMatchManaged => {
             ensure_program_hash(req).await;
 
-            build_no_match_result()
+            build_no_match_result(current_epoch)
         }
 
         //
@@ -187,17 +187,19 @@ fn build_not_managed_result(req: &Request, current_epoch: u32) -> PolicyResult {
         decision: PolicyDecision::NotManaged,
         rule_id: None,
         ticket: Some(payload),
+        current_epoch
     }
 }
 
 // ============================================================================
 // 3. デフォルト拒否 (NoMatchManaged) 用の処理
 // ============================================================================
-fn build_no_match_result() -> PolicyResult {
+fn build_no_match_result(current_epoch: u32) -> PolicyResult {
     PolicyResult {
         decision: PolicyDecision::NoRuleMatched,
         rule_id: None,
         ticket: None,
+        current_epoch
     }
 }
 
@@ -225,6 +227,7 @@ async fn apply_matched_rule(r: &CompiledRule, req: &Request, current_epoch: u32)
                 decision: decision_kind,
                 rule_id: Some(r.id.clone()),
                 ticket: Some(ticket),
+                current_epoch
             }
         },
         PolicyDecision::NeedApproval => {
@@ -236,6 +239,7 @@ async fn apply_matched_rule(r: &CompiledRule, req: &Request, current_epoch: u32)
                 decision: decision_kind,
                 rule_id: Some(r.id.clone()),
                 ticket: None,
+                current_epoch
             }
         }
     }
@@ -309,7 +313,7 @@ fn generate_allow_ticket(
 async fn process_need_approval(r: &CompiledRule, req: &Request, current_epoch: u32) -> PolicyResult {
     // 【フェーズ1: 準備】
     // Uuid生成やメモリ確保を伴う重い処理は、ロックを取る「前」に済ませておく
-    let pending_entry = PendingEntry::from_rule(r, req);
+    let pending_entry = PendingEntry::from_rule(r, req, current_epoch);
 
     // 【フェーズ2: 状態変更 (一瞬だけロック)】
     let approved_ticket_opt = {
@@ -363,12 +367,14 @@ async fn process_need_approval(r: &CompiledRule, req: &Request, current_epoch: u
             decision: PolicyDecision::Approved(approved),
             rule_id: Some(r.id.clone()),
             ticket: Some(payload),
+            current_epoch,
         }
     } else {
         PolicyResult {
             decision: PolicyDecision::NeedApproval,
             rule_id: Some(r.id.clone()),
             ticket: None,
+            current_epoch,
         }
     }
 }
@@ -386,14 +392,31 @@ async fn reply_to_kernel(nl_tx: &NlWriter, req: &Request, policy_result: &mut Po
         }
         PolicyDecision::Allow => {
             if let Some(ticket) = policy_result.ticket.take() {
-                let _ = nl_tx.send_approve(req.id).await;
+                // 先にチケットの妥当性を確認
+                let approved = ApprovedTicket::from_result_with_req(
+                    policy_result,
+                    &ticket,
+                    req,
+                ).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Failed to create ApprovedTicket: \
+                         rule_id={:?}, ticket_epoch={}",
+                        policy_result.rule_id,
+                        ticket.epoch
+                    )
+                })?;
 
-                // ★ ticket の参照を渡し、ACTIVE_TICKETS に確実に登録
-                let approved = ApprovedTicket::from_result_with_req(policy_result, &ticket, req);
-                ACTIVE_TICKETS.insert(approved.ticket_id.clone(), approved);
+                // まず元のリクエストを許可（レイテンシ最小化）
+                nl_tx.send_approve(req.id).await?;
 
-                // ★ カーネルへチケットを投入
+                // カーネルへチケットを登録
                 nl_tx.send_ticket_add(ticket).await?;
+
+                // teald 側の台帳に登録
+                ACTIVE_TICKETS.insert(
+                    approved.ticket_id.clone(),
+                    approved,
+                );
 
                 Ok(())
             } else {
