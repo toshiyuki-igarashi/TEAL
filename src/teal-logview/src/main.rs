@@ -185,7 +185,7 @@ fn format_output(entry: &AuditLogEntry, index: &TicketIndex, mode: OutputMode) {
                 display_result,
                 extract_rule_id(entry),
                 extract_ticket_id(entry),
-                0, // extract_epoch(entry),
+                extract_epoch(entry),
                 extract_subject_path(entry),
                 extract_script(entry),
                 extract_applet(entry),
@@ -256,6 +256,10 @@ fn extract_ticket_id(entry: &AuditLogEntry) -> String {
             }
         }
     }
+}
+
+fn extract_epoch(entry: &AuditLogEntry) -> String {
+    entry.epoch.to_string()
 }
 
 // 実行プログラム名の抽出

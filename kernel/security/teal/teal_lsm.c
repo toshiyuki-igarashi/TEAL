@@ -125,6 +125,7 @@ enum teal_nl_attrs {
 
     // --- ログインコンテキスト（TTY）用 ---
     TEAL_ATTR_SESSION_TTY,    // 32
+    TEAL_ATTR_LANE,           // 33: u32 (RX=1, TX=2)
 
     __TEAL_ATTR_MAX,
 };
@@ -153,9 +154,10 @@ static const struct nla_policy teal_nl_policy[TEAL_ATTR_MAX + 1] = {
     [TEAL_ATTR_AUDIT_FLG]   = { .type = NLA_U32 },
 
     // --- RENAME対応用 ---
-    [TEAL_ATTR_NEW_TARGET_DEV] = { .type = NLA_U32 },
-    [TEAL_ATTR_NEW_TARGET_INO] = { .type = NLA_U64 },
-    [TEAL_ATTR_NEW_TARGET]     = { .type = NLA_NUL_STRING, .len = 256 }, 
+    [TEAL_ATTR_NEW_TARGET_DEV]  = { .type = NLA_U32 },
+    [TEAL_ATTR_NEW_TARGET_INO]  = { .type = NLA_U64 },
+    [TEAL_ATTR_NEW_TARGET]      = { .type = NLA_NUL_STRING, .len = 256 }, 
+    [TEAL_ATTR_LANE]            = { .type = NLA_U32 },
 };
 
 struct teal_request {
@@ -209,6 +211,7 @@ static const struct genl_ops teal_nl_ops[] = {
         .cmd = TEAL_CMD_REGISTER,
         .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
         .doit = teal_nl_recv_register,
+        .policy = teal_nl_policy,
     },
     {
         .cmd = TEAL_CMD_APPROVE,
@@ -257,7 +260,8 @@ static struct genl_family teal_nl_family = {
 };
 
 /* tealdのポートID (0は未接続状態) */
-static atomic_t teal_daemon_portid = ATOMIC_INIT(0);
+static atomic_t teal_daemon_rx_portid = ATOMIC_INIT(0);
+static atomic_t teal_daemon_tx_portid = ATOMIC_INIT(0);
 
 /*
  * REGISTER / NETLINK_URELEASE の状態遷移はこのspinlockで直列化する。
@@ -272,7 +276,7 @@ static DECLARE_WORK(teal_daemon_disconnect_work,
                     teal_daemon_disconnect_workfn);
 
 /*
- * 登録済みtealdのNetlinkソケットから
+ * 登録済みtealdのTXソケットから
  * 送信された制御コマンドだけを許可する。
  */
 static inline int
@@ -288,13 +292,13 @@ teal_nl_check_authorized(const struct genl_info *info)
         return -EPERM;
 
     registered_portid =
-        (u32)atomic_read(&teal_daemon_portid);
+        (u32)atomic_read(&teal_daemon_tx_portid);
 
-    /* tealdが未登録 */
+    /* TXソケットが未登録 */
     if (registered_portid == 0)
         return -ENOTCONN;
 
-    /* 登録済みtealdとは異なるソケット */
+    /* STEP 3: 送信元PortIDの照合 */
     if (info->snd_portid != registered_portid)
         return -EPERM;
 
@@ -1212,7 +1216,10 @@ static void teal_daemon_disconnect_workfn(struct work_struct *work)
 
     mutex_lock(&teal_daemon_lifecycle_mutex);
     spin_lock_irqsave(&teal_daemon_state_lock, flags);
-    disconnected = atomic_read(&teal_daemon_portid) == 0;
+
+    disconnected =
+        atomic_read(&teal_daemon_rx_portid) == 0;
+
     spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
 
     if (disconnected)
@@ -1221,14 +1228,26 @@ static void teal_daemon_disconnect_workfn(struct work_struct *work)
     mutex_unlock(&teal_daemon_lifecycle_mutex);
 }
 
+enum teal_nl_lane {
+    TEAL_LANE_RX = 1,
+    TEAL_LANE_TX = 2,
+};
+
 static int teal_nl_recv_register(struct sk_buff *skb,
                                  struct genl_info *info)
 {
     unsigned long flags;
-    u32 portid, next_epoch;
+    u32 portid, lane, next_epoch = 0;
     int ret = 0;
 
     if (!info)
+        return -EINVAL;
+
+    if (!info->attrs[TEAL_ATTR_LANE])
+        return -EINVAL;
+
+    lane = nla_get_u32(info->attrs[TEAL_ATTR_LANE]);
+    if (lane != TEAL_LANE_RX && lane != TEAL_LANE_TX)
         return -EINVAL;
 
     portid = info->snd_portid;
@@ -1239,58 +1258,94 @@ static int teal_nl_recv_register(struct sk_buff *skb,
     if (!capable(CAP_MAC_ADMIN) && !capable(CAP_SYS_ADMIN))
         return -EPERM;
 
-    /* REGISTERと旧セッションのcleanupを直列化する。 */
     mutex_lock(&teal_daemon_lifecycle_mutex);
-    mutex_lock(&teal_ticket_update_mutex);
 
-    spin_lock_irqsave(&teal_daemon_state_lock, flags);
-    if (atomic_read(&teal_daemon_portid) != 0)
-        ret = -EBUSY;
-    spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
-    if (ret)
-        goto out_ticket_unlock;
+    if (lane == TEAL_LANE_RX) {
 
-    /* 32bit Epochは再利用しない。使い切ったら再起動等が必要。 */
-    if (teal_last_epoch == U32_MAX) {
-        ret = -EOVERFLOW;
-        goto out_ticket_unlock;
-    }
-    next_epoch = teal_last_epoch + 1;
+        /* RX REGISTER: 新しいセッションの開始 */
+        mutex_lock(&teal_ticket_update_mutex);
 
-    /* 次の登録を公開する前にキャッシュと待機要求を破棄。 */
-    atomic_set(&teal_current_epoch, 0);
-    teal_flush_all_queues_locked();
+        spin_lock_irqsave(&teal_daemon_state_lock, flags);
+        if (atomic_read(&teal_daemon_rx_portid) != 0 ||
+            atomic_read(&teal_daemon_tx_portid) != 0)
+            ret = -EBUSY;
+        spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
 
-    spin_lock_irqsave(&teal_daemon_state_lock, flags);
-    if (atomic_read(&teal_daemon_portid) != 0) {
-        ret = -EBUSY;
-    } else {
+        if (ret)
+            goto out_ticket_unlock;
+
+        if (teal_last_epoch == U32_MAX) {
+            ret = -EOVERFLOW;
+            goto out_ticket_unlock;
+        }
+
+        next_epoch = teal_last_epoch + 1;
+
+        /* 旧セッションのキャッシュと待機要求を破棄 */
+        atomic_set(&teal_current_epoch, 0);
+        teal_flush_all_queues_locked();
+
+        spin_lock_irqsave(&teal_daemon_state_lock, flags);
         atomic_set(&teal_daemon_tgid, current->tgid);
-        atomic_set(&teal_daemon_portid, portid);
-    }
-    spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
+        atomic_set(&teal_daemon_rx_portid, portid);
+        spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
 
 out_ticket_unlock:
-    mutex_unlock(&teal_ticket_update_mutex);
-    if (ret)
-        goto out_lifecycle_unlock;
+        mutex_unlock(&teal_ticket_update_mutex);
 
-    /* 通常のNetlink応答。NLM_F_ACKのACKとは別メッセージ。 */
-    ret = teal_nl_send_register_reply(info, next_epoch);
-    if (ret) {
-        /* 応答不能時は、この登録がまだ生きていれば取り消す。 */
-        spin_lock_irqsave(&teal_daemon_state_lock, flags);
-        if ((u32)atomic_read(&teal_daemon_portid) == portid) {
-            atomic_set(&teal_daemon_portid, 0);
-            atomic_set(&teal_daemon_tgid, 0);
-            atomic_set(&teal_current_epoch, 0);
+        if (ret)
+            goto out_lifecycle_unlock;
+
+        /* RX REGISTERだけEpochを返す */
+        ret = teal_nl_send_register_reply(info, next_epoch);
+
+        if (ret) {
+            spin_lock_irqsave(&teal_daemon_state_lock, flags);
+            if ((u32)atomic_read(&teal_daemon_rx_portid) == portid) {
+                atomic_set(&teal_daemon_rx_portid, 0);
+                atomic_set(&teal_daemon_tx_portid, 0);
+                atomic_set(&teal_daemon_tgid, 0);
+                atomic_set(&teal_current_epoch, 0);
+            }
+            spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
+            goto out_lifecycle_unlock;
         }
-        spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
-        goto out_lifecycle_unlock;
-    }
 
-    pr_info("TEAL: teald registered: portid=%u tgid=%d next_epoch=%u\n",
-            portid, current->tgid, next_epoch);
+        pr_info("TEAL: RX registered: portid=%u tgid=%d next_epoch=%u\n",
+                portid, current->tgid, next_epoch);
+
+    } else {
+
+        /* TX REGISTER: 既存RXセッションへの参加 */
+        spin_lock_irqsave(&teal_daemon_state_lock, flags);
+
+        if (atomic_read(&teal_daemon_rx_portid) == 0) {
+            ret = -ENOTCONN;
+        } else if (atomic_read(&teal_daemon_tx_portid) != 0) {
+            ret = -EBUSY;
+        } else if (atomic_read(&teal_daemon_tgid) != current->tgid) {
+            ret = -EPERM;
+        } else if ((u32)atomic_read(&teal_daemon_rx_portid) == portid) {
+            ret = -EINVAL;
+        } else {
+            atomic_set(&teal_daemon_tx_portid, portid);
+        }
+
+        spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
+
+        if (ret)
+            goto out_lifecycle_unlock;
+
+        /*
+         * TX REGISTERはEpochを変更せず、
+         * チケット・待機キューもフラッシュしない。
+         *
+         * tealdはNLM_F_ACKを指定して送信する。
+         * この関数が0を返すとカーネルからACKが返る。
+         */
+        pr_info("TEAL: TX registered: portid=%u tgid=%d\n",
+                portid, current->tgid);
+    }
 
 out_lifecycle_unlock:
     mutex_unlock(&teal_daemon_lifecycle_mutex);
@@ -1310,21 +1365,29 @@ static int teal_nl_notifier(struct notifier_block *nb,
         return NOTIFY_DONE;
 
     spin_lock_irqsave(&teal_daemon_state_lock, flags);
+
     if (n->portid &&
-        n->portid == (u32)atomic_read(&teal_daemon_portid)) {
-        /* 先に失効させ、以後のPort ID認証を拒否する。 */
-        atomic_set(&teal_daemon_portid, 0);
+        (n->portid == (u32)atomic_read(&teal_daemon_rx_portid) ||
+         n->portid == (u32)atomic_read(&teal_daemon_tx_portid))) {
+
+        /* RX/TXのどちらかが切断されたらセッション全体を失効 */
+        atomic_set(&teal_daemon_rx_portid, 0);
+        atomic_set(&teal_daemon_tx_portid, 0);
         atomic_set(&teal_daemon_tgid, 0);
-        /* FAST PATHの旧チケット/Self-Bakingを即時失効する。 */
+
+        /* FAST PATHの旧チケット/Self-Bakingを即時失効 */
         atomic_set(&teal_current_epoch, 0);
+
         disconnected = true;
     }
+
     spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
 
     if (disconnected) {
         pr_info("TEAL: teald portid=%u disconnected\n", n->portid);
         schedule_work(&teal_daemon_disconnect_work);
     }
+
     return NOTIFY_DONE;
 }
 
@@ -1498,6 +1561,7 @@ static int teal_nl_recv_policy_update(struct sk_buff *skb,
 {
     unsigned long flags;
     u32 new_epoch, old_epoch;
+    u32 tx_portid;
     int rc;
 
     rc = teal_nl_check_authorized(info);
@@ -1521,14 +1585,20 @@ static int teal_nl_recv_policy_update(struct sk_buff *skb,
      * notifierと同じspinlockで不可分に行う。
      */
     spin_lock_irqsave(&teal_daemon_state_lock, flags);
-    if (genl_info_net(info) != &init_net ||
-        (u32)atomic_read(&teal_daemon_portid) != info->snd_portid) {
+
+    tx_portid = (u32)atomic_read(&teal_daemon_tx_portid);
+
+    if (tx_portid == 0) {
         rc = -ENOTCONN;
+    } else if (genl_info_net(info) != &init_net ||
+               info->snd_portid != tx_portid) {
+        rc = -EPERM;
     } else {
         teal_last_epoch = new_epoch;
         atomic_set(&teal_current_epoch, new_epoch);
         rc = 0;
     }
+
     spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
     if (rc)
         goto out_unlock;
@@ -1555,11 +1625,12 @@ static int teal_genl_send_req(struct teal_request *req, u8 teal_mode)
 {
     struct sk_buff *skb;
     void *hdr;
-    u32 portid = atomic_read(&teal_daemon_portid);
+    u32 portid = (u32)atomic_read(&teal_daemon_rx_portid);
     int rc;
 
-    /* teald が未接続の場合は送信しない（Fail-Safeモード処理へ委ねる） */
-    if (portid == 0) {
+    /* RX/TX両方の登録が必要 */
+    if (portid == 0 ||
+        atomic_read(&teal_daemon_tx_portid) == 0) {
         pr_debug("TEAL: No daemon registered. Allowing request by default.\n");
         return -ENOTCONN;
     }
@@ -1644,7 +1715,7 @@ static int teal_genl_send_info(struct teal_log_entry *log)
 {
     struct sk_buff *skb;
     void *hdr;
-    u32 portid = atomic_read(&teal_daemon_portid);
+    u32 portid = atomic_read(&teal_daemon_rx_portid);
     int rc;
 
     if (portid == 0)

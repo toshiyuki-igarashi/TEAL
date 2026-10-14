@@ -17,7 +17,6 @@ use neli::neli_enum;
 use neli::err::SerError;
 use std::thread;
 use std::sync::{Arc, Mutex as StdMutex};
-use std::collections::HashMap;
 use tokio::sync::oneshot;
 use std::time::Duration;
 use std::os::fd::AsRawFd;
@@ -115,6 +114,7 @@ pub enum TealAttr {
 
     // --- ログインコンテキスト（TTY）用 ---
     SessionTty   = 32,
+    Lane = 33,
 }
 impl NlAttrType for TealAttr {}
 
@@ -285,7 +285,12 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
     eprintln!("{}[INFO] Resolved teal_ctrl family ID: {}", ktime_prefix(), family_id);
 
     // --- 2. REGISTER 送信 (同期ハンドシェイク) ---
-    let genlhdr: Genlmsghdr<TealCmd, TealAttr> = Genlmsghdr::new(TealCmd::Register, 1, GenlBuffer::new());
+    let mut attrs = GenlBuffer::new();
+    attrs.push(Nlattr::new(
+        false, false, TealAttr::Lane, 1u32.to_ne_bytes().as_ref()
+    )?);
+
+    let genlhdr = Genlmsghdr::new(TealCmd::Register, 1, attrs);
     let nlhdr = Nlmsghdr::new(
         None,
         family_id,
@@ -314,27 +319,101 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
     set_rx_portid(rx_portid);
     eprintln!("{}[INFO] REGISTER next kernel Epoch: {}", ktime_prefix(), next_epoch);
 
-    // IMPORTANT: All control messages must originate from the registered socket.
-    // A second TX socket has a different PortID and is rejected by the LSM.
-    // Receive operations use a short socket timeout to release the shared lock.
-    let timeout = libc::timeval { tv_sec: 0, tv_usec: 50_000 };
-    let timeout_rc = unsafe { libc::setsockopt(
-        rx_sock.as_raw_fd(), libc::SOL_SOCKET, libc::SO_RCVTIMEO,
-        &timeout as *const _ as *const libc::c_void,
-        std::mem::size_of_val(&timeout) as libc::socklen_t) };
-    anyhow::ensure!(timeout_rc == 0, "SO_RCVTIMEO failed: {}", std::io::Error::last_os_error());
+    // RXソケットとは独立したTXソケット
+    let mut tx_sock = NlSocketHandle::connect(
+        NlFamily::Generic, None, &[]
+    )?;
 
-    let shared_sock = Arc::new(StdMutex::new(rx_sock));
-    let pending_acks: Arc<StdMutex<HashMap<u32, oneshot::Sender<Result<()>>>>> =
-        Arc::new(StdMutex::new(HashMap::new()));
+    // TX REGISTER
+    let mut attrs = GenlBuffer::new();
+    attrs.push(Nlattr::new(
+        false, false, TealAttr::Lane, 2u32.to_ne_bytes().as_ref()
+    )?);
+
+    let genlhdr = Genlmsghdr::new(TealCmd::Register, 1, attrs);
+
+    let seq = NEXT_SEQ.fetch_add(1, Ordering::Relaxed);
+
+    let mut nlhdr = Nlmsghdr::new(
+        None,
+        family_id,
+        NlmFFlags::new(&[NlmF::Request, NlmF::Ack]),
+        None,
+        None,
+        NlPayload::Payload(genlhdr),
+    );
+
+    nlhdr.nl_seq = seq;
+    tx_sock.send(nlhdr)?;
+
+    let timeout = libc::timeval {
+        tv_sec: 1,
+        tv_usec: 0,
+    };
+
+    let rc = unsafe {
+        libc::setsockopt(
+            tx_sock.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_RCVTIMEO,
+            &timeout as *const _ as *const libc::c_void,
+            std::mem::size_of_val(&timeout) as libc::socklen_t,
+        )
+    };
+
+    anyhow::ensure!(
+        rc == 0,
+        "TX SO_RCVTIMEO failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    // TX REGISTERのACKを待つ
+    loop {
+        let reply = tx_sock
+            .recv::<u16, Genlmsghdr<TealCmd, TealAttr>>()?
+            .ok_or_else(|| anyhow::anyhow!("TX REGISTER socket closed"))?;
+
+        if reply.nl_seq != seq {
+            continue;
+        }
+
+        match reply.nl_payload {
+            NlPayload::Ack(_) => {
+                eprintln!(
+                    "{}[INFO] TX REGISTER acknowledged: portid={:?}",
+                    ktime_prefix(),
+                    tx_sock.pid()
+                );
+                break;
+            }
+            NlPayload::Err(e) => {
+                anyhow::bail!("TX REGISTER failed: {:?}", e);
+            }
+            _ => continue,
+        }
+    }
+
+    let tx_sock = Arc::new(StdMutex::new(tx_sock));
+
     let (send_tx, send_rx) = mpsc::channel(10240);
-    let ticket_transition = Arc::new(AtomicBool::new(false));
-    let nl_tx = NlWriter { tx: send_tx, family_id, ticket_transition: Arc::clone(&ticket_transition) };
 
-    let worker_sock = Arc::clone(&shared_sock);
-    let worker_acks = Arc::clone(&pending_acks);
+    let ticket_transition = Arc::new(AtomicBool::new(false));
+
+    let nl_tx = NlWriter {
+        tx: send_tx,
+        family_id,
+        ticket_transition: Arc::clone(&ticket_transition),
+    };
+
+    let worker_sock = Arc::clone(&tx_sock);
+
     tokio::spawn(async move {
-        netlink_send_worker_loop(send_rx, worker_sock, family_id, worker_acks, ticket_transition).await;
+        netlink_send_worker_loop(
+            send_rx,
+            worker_sock,
+            family_id,
+            ticket_transition,
+        ).await;
     });
 
     // --- 4. 初期モード同期 ---
@@ -346,15 +425,13 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
     
     thread::spawn(move || {
         eprintln!("{}[INFO] Netlink dedicated receiver thread started.", ktime_prefix());
-        enum Incoming { Request(TealReq), Information(TealInfo), Ack(u32), Ignore, Error(String) }
+        enum Incoming { Request(TealReq), Information(TealInfo), Ignore, Error(String) }
         loop {
             // Parse the message while holding the socket guard: neli 0.6 may
             // return data borrowed from its internal receive buffer.
             let incoming = {
-                let mut sock = shared_sock.lock().unwrap();
-                match sock.recv::<u16, Genlmsghdr<TealCmd, TealAttr>>() {
+                match rx_sock.recv::<u16, Genlmsghdr<TealCmd, TealAttr>>() {
                     Ok(Some(msg)) => {
-                        let seq = msg.nl_seq;
                         match msg.nl_payload {
                             NlPayload::Payload(genl) => match genl.cmd {
                                 TealCmd::Req => match parse_req_msg(&genl) {
@@ -367,7 +444,7 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
                                 },
                                 _ => Incoming::Ignore,
                             },
-                            NlPayload::Ack(_) => Incoming::Ack(seq),
+                            NlPayload::Ack(_) => Incoming::Ignore,
                             _ => Incoming::Ignore,
                         }
                     }
@@ -387,11 +464,6 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
                 Incoming::Information(info) => {
                     let _ = tx_audit.blocking_send(TealNetlinkMessage::Info(info));
                 }
-                Incoming::Ack(seq) => {
-                    if let Some(tx) = pending_acks.lock().unwrap().remove(&seq) {
-                        let _ = tx.send(Ok(()));
-                    }
-                }
                 Incoming::Ignore => {}
                 Incoming::Error(err_str) => {
                     if err_str.contains("EAGAIN") || err_str.contains("WouldBlock") ||
@@ -399,10 +471,6 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
                         continue;
                     }
                     eprintln!("{}[ERROR-NETLINK] recv: {}", ktime_prefix(), err_str);
-                    let pending = std::mem::take(&mut *pending_acks.lock().unwrap());
-                    for (_, tx) in pending {
-                        let _ = tx.send(Err(anyhow::anyhow!("Netlink response error: {}", err_str)));
-                    }
                 }
             }
         }
@@ -480,33 +548,131 @@ fn parse_info_msg(genl_msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<TealInfo> 
     Ok(info)
 }
 
+// Wait for the ACK corresponding to a specific POLICY_UPDATE sequence.
+// Ignore replies belonging to earlier TX commands.
+fn wait_policy_update_ack(
+    sock: &NlSocketHandle,
+    seq: u32,
+    epoch: u32,
+) -> Result<()> {
+    // SO_RCVTIMEO is already configured for the TX socket.
+    let fd = sock.as_raw_fd();
+    let mut buf = [0u8; 65536];
+
+    loop {
+        let n = unsafe {
+            libc::recv(
+                fd,
+                buf.as_mut_ptr() as *mut libc::c_void,
+                buf.len(),
+                0,
+            )
+        };
+
+        if n < 0 {
+            let err = std::io::Error::last_os_error();
+
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+
+            anyhow::bail!("POLICY_UPDATE ACK recv failed: {}", err);
+        }
+
+        if n == 0 {
+            anyhow::bail!("TX socket closed while waiting for POLICY_UPDATE ACK");
+        }
+
+        let n = n as usize;
+        let mut offset = 0usize;
+
+        // One datagram may contain multiple Netlink messages.
+        while offset + 16 <= n {
+            let header = &buf[offset..];
+
+            let len = u32::from_ne_bytes(header[0..4].try_into()?) as usize;
+            let msg_type = u16::from_ne_bytes(header[4..6].try_into()?);
+            let msg_seq = u32::from_ne_bytes(header[8..12].try_into()?);
+
+            if len < 16 || len > n - offset {
+                anyhow::bail!("Malformed Netlink response");
+            }
+
+            // Only accept responses from the kernel.
+            if msg_seq == seq {
+                // NLMSG_ERROR = 2
+                // This message carries both success ACK and errors.
+                if msg_type == 2 {
+                    if len < 20 {
+                        anyhow::bail!("Short Netlink ACK");
+                    }
+
+                    let error = i32::from_ne_bytes(
+                        header[16..20].try_into()?
+                    );
+
+                    if error == 0 {
+                        eprintln!(
+                            "{}[INFO] POLICY_UPDATE ACK received: epoch={} seq={}",
+                            ktime_prefix(),
+                            epoch,
+                            seq
+                        );
+                        return Ok(());
+                    }
+
+                    anyhow::bail!(
+                        "POLICY_UPDATE rejected by kernel: errno={}",
+                        error
+                    );
+                }
+            }
+
+            // Netlink messages are aligned to 4 bytes.
+            offset += (len + 3) & !3;
+        }
+
+        if offset < n {
+            anyhow::bail!("Truncated Netlink response");
+        }
+    }
+}
+
 // --- [ワーカー] 送信専用メインループ ---
 pub async fn netlink_send_worker_loop(
     mut rx: mpsc::Receiver<NetlinkSendRequest>,
     sock_mutex: Arc<StdMutex<NlSocketHandle>>,
     family_id: u16,
-    pending_acks: Arc<StdMutex<HashMap<u32, oneshot::Sender<Result<()>>>>>,
     ticket_transition: Arc<AtomicBool>,
 ) {
-    eprintln!("{}[INFO] Netlink Send Worker started on registered PortID.", ktime_prefix());
+    eprintln!("{}[INFO] Netlink Send Worker started on dedicated TX socket.", ktime_prefix());
     while let Some(req) = rx.recv().await {
         match req {
             NetlinkSendRequest::SyncEpoch(epoch, response) => {
                 let seq = NEXT_SEQ.fetch_add(1, Ordering::Relaxed);
+
                 let packet = match build_sync_epoch_packet(family_id, epoch) {
                     Ok(mut packet) => {
                         packet.nl_seq = seq;
                         packet
                     }
-                    Err(e) => { let _ = response.send(Err(e)); continue; }
-                };
-                pending_acks.lock().unwrap().insert(seq, response);
-                let send_result = { sock_mutex.lock().unwrap().send(packet) };
-                if let Err(e) = send_result {
-                    if let Some(tx) = pending_acks.lock().unwrap().remove(&seq) {
-                        let _ = tx.send(Err(anyhow::anyhow!("POLICY_UPDATE send: {:?}", e)));
+                    Err(e) => {
+                        let _ = response.send(Err(e));
+                        continue;
                     }
-                }
+                };
+
+                let result = (|| -> Result<()> {
+                    let mut sock = sock_mutex.lock().unwrap();
+
+                    // Send POLICY_UPDATE with a unique sequence number.
+                    sock.send(packet)?;
+
+                    // Wait for the corresponding ACK.
+                    wait_policy_update_ack(&sock, seq, epoch)
+                })();
+
+                let _ = response.send(result);
             }
             other => {
                 // Dispatch-time check also covers requests queued before suspension.
@@ -529,12 +695,31 @@ pub async fn netlink_send_worker_loop(
                 };
                 match packet {
                     Ok(packet) => {
-                        if let Err(e) = sock_mutex.lock().unwrap().send(packet) {
-                            eprintln!("{}[ERROR] Netlink Dispatch failure: {:?}", ktime_prefix(), e);
-                            if is_fatal_netlink_error(&e) { return; }
+                        let result = {
+                            let mut sock = sock_mutex.lock().unwrap();
+                            sock.send(packet)
+                        };
+
+                        if let Err(e) = result {
+                            eprintln!(
+                                "{}[ERROR] Netlink Dispatch failure: {:?}",
+                                ktime_prefix(),
+                                e
+                            );
+
+                            if is_fatal_netlink_error(&e) {
+                                return;
+                            }
                         }
                     }
-                    Err(e) => eprintln!("{}[ERROR] Netlink packet build: {}", ktime_prefix(), e),
+
+                    Err(e) => {
+                        eprintln!(
+                            "{}[ERROR] Netlink packet build: {}",
+                            ktime_prefix(),
+                            e
+                        );
+                    }
                 }
             }
         }
