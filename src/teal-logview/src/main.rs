@@ -185,7 +185,7 @@ fn format_output(entry: &AuditLogEntry, index: &TicketIndex, mode: OutputMode) {
                 display_result,
                 extract_rule_id(entry),
                 extract_ticket_id(entry),
-                extract_epoch(entry),
+                entry.epoch,
                 extract_subject_path(entry),
                 extract_script(entry),
                 extract_applet(entry),
@@ -256,10 +256,6 @@ fn extract_ticket_id(entry: &AuditLogEntry) -> String {
             }
         }
     }
-}
-
-fn extract_epoch(entry: &AuditLogEntry) -> String {
-    entry.epoch.to_string()
 }
 
 // 実行プログラム名の抽出
@@ -1240,7 +1236,7 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::View { since, until, ticket, epoch, deny_only, path, mode } => {
             eprintln!("Starting log analysis: {}", log_path.display());
-            
+
             let log_reader = LogReader::new(&log_path)?;
             let mut index: TicketIndex = HashMap::new();
             
@@ -1300,12 +1296,14 @@ fn main() -> Result<()> {
                                 continue;
                             }
                         }
-                        
+
                         // --- 5. epoch フィルタリング ---
-                        if let Some(_e) = epoch {
-                            // epoch がeでなければスキップ
+                        if let Some(selected_epoch) = epoch {
+                            if entry.epoch != selected_epoch {
+                                continue;
+                            }
                         }
-                        
+
                         // ユーザーが指定した mode (Brief / Debug / Trace) を渡して出力
                         format_output(&entry, &index, mode);
                     },
