@@ -22,3 +22,5 @@ pub mod evidence;
 pub mod netlink; 
 // pam_server
 pub mod pam_server;
+// AI interface
+pub mod ai;
