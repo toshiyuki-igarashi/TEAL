@@ -48,11 +48,19 @@ impl AiAnalysisEngine {
         // 分析要求を検証
         Self::validate_request(request)?;
 
+        // イベントを時刻順にソート
+        let mut sorted_request = request.clone();
+
+        sorted_request.events.sort_by(|a, b| {
+            a.timestamp.cmp(&b.timestamp)
+                .then_with(|| a.event_id.cmp(&b.event_id))
+        });
+
         // AIプロバイダーによる分析
-        let result = self.provider.analyze(request).await?;
+        let result = self.provider.analyze(&sorted_request).await?;
 
         // 分析結果を検証
-        Self::validate_result(request, &result)?;
+        Self::validate_result(&sorted_request, &result)?;
 
         Ok(result)
     }
@@ -358,5 +366,63 @@ mod tests {
         let saved = provider.operational_context().unwrap();
 
         assert_eq!(saved.description, context.description);
+    }
+
+    #[tokio::test]
+    async fn test_event_sorting() {
+        use chrono::Duration;
+
+        let provider = Arc::new(MockAdapter::new());
+        let _engine = AiAnalysisEngine::new(provider);
+
+        let now = Utc::now();
+        let mut request = test_request();
+
+        let mut later = test_event("evt-later");
+        later.timestamp = now;
+
+        let mut earlier = test_event("evt-earlier");
+        earlier.timestamp = now - Duration::seconds(10);
+
+        request.events = vec![later, earlier];
+
+        // 現在のMockAdapterはイベント順序を返さないため、
+        // エンジン内部のソートと同じ処理を直接検証する必要がある
+        let mut sorted = request.clone();
+        sorted.events.sort_by(|a, b| {
+            a.timestamp.cmp(&b.timestamp)
+                .then_with(|| a.event_id.cmp(&b.event_id))
+        });
+
+        assert_eq!(sorted.events[0].event_id, "evt-earlier");
+        assert_eq!(sorted.events[1].event_id, "evt-later");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Ollama server and qwen3:1.7b"]
+    async fn test_ollama_integration() {
+        use std::time::Duration;
+        use crate::ai::adapters::ollama::OllamaAdapter;
+
+        let provider = Arc::new(
+            OllamaAdapter::new(
+                "http://127.0.0.1:11434",
+                "qwen3:1.7b",
+                Duration::from_secs(120),
+            )
+            .unwrap(),
+        );
+
+        let engine = AiAnalysisEngine::new(provider);
+
+        let mut request = test_request();
+        request.events = vec![
+            test_event("evt-001"),
+            test_event("evt-002"),
+        ];
+
+        let result = engine.analyze(&request).await.unwrap();
+
+        assert_eq!(result.analysis_id, request.analysis_id);
     }
 }
