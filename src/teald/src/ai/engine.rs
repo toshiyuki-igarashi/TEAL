@@ -1,0 +1,362 @@
+// SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
+
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use crate::ai::error::AiError;
+use crate::ai::provider::AiProvider;
+use crate::ai::types::{
+    AiAnalysisRequest,
+    AiAnalysisResult,
+    AiOperationalContext,
+};
+
+/// AI分析の実行および結果検証を担当するエンジン
+pub struct AiAnalysisEngine {
+    provider: Arc<dyn AiProvider>,
+}
+
+impl AiAnalysisEngine {
+    /// AIプロバイダーを指定してエンジンを生成
+    pub fn new(provider: Arc<dyn AiProvider>) -> Self {
+        Self { provider }
+    }
+
+    /// 使用中のプロバイダー名
+    pub fn provider_name(&self) -> &'static str {
+        self.provider.name()
+    }
+
+    /// 運用コンテキストを設定
+    pub async fn set_operational_context(
+        &self,
+        context: &AiOperationalContext,
+    ) -> Result<(), AiError> {
+        self.provider.set_operational_context(context).await
+    }
+
+    /// 監査イベントをAIで分析
+    pub async fn analyze(
+        &self,
+        request: &AiAnalysisRequest,
+    ) -> Result<AiAnalysisResult, AiError> {
+        // 分析要求を検証
+        Self::validate_request(request)?;
+
+        // AIプロバイダーによる分析
+        let result = self.provider.analyze(request).await?;
+
+        // 分析結果を検証
+        Self::validate_result(request, &result)?;
+
+        Ok(result)
+    }
+
+    /// 分析要求の基本的な整合性検証
+    fn validate_request(
+        request: &AiAnalysisRequest,
+    ) -> Result<(), AiError> {
+        if request.analysis_id.trim().is_empty() {
+            return Err(AiError::InvalidRequest(
+                "analysis_id is empty".to_string()
+            ));
+        }
+
+        if request.host.trim().is_empty() {
+            return Err(AiError::InvalidRequest(
+                "host is empty".to_string()
+            ));
+        }
+
+        if request.time_window_start > request.time_window_end {
+            return Err(AiError::InvalidRequest(
+                "Invalid analysis time window".to_string()
+            ));
+        }
+
+        // 同じ分析要求内でのイベントID重複を禁止
+        let mut ids = HashSet::new();
+
+        for event in &request.events {
+            if event.event_id.trim().is_empty() {
+                return Err(AiError::InvalidRequest(
+                    "event_id is empty".to_string()
+                ));
+            }
+
+            if !ids.insert(event.event_id.as_str()) {
+                return Err(AiError::InvalidRequest(
+                    format!("Duplicate event_id: {}", event.event_id)
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// AI分析結果の整合性検証
+    fn validate_result(
+        request: &AiAnalysisRequest,
+        result: &AiAnalysisResult,
+    ) -> Result<(), AiError> {
+        // 分析要求と応答の対応確認
+        if result.analysis_id != request.analysis_id {
+            return Err(AiError::InvalidResponse(
+                format!(
+                    "analysis_id mismatch: expected {}, got {}",
+                    request.analysis_id,
+                    result.analysis_id
+                )
+            ));
+        }
+
+        // 根拠として参照可能なイベントID
+        let event_ids: HashSet<&str> = request.events
+            .iter()
+            .map(|event| event.event_id.as_str())
+            .collect();
+
+        for (index, anomaly) in result.anomalies.iter().enumerate() {
+            // 確信度の検証
+            if !anomaly.confidence_score.is_finite()
+                || !(0.0..=1.0).contains(&anomaly.confidence_score)
+            {
+                return Err(AiError::InvalidResponse(
+                    format!(
+                        "Invalid confidence_score in anomaly {}",
+                        index
+                    )
+                ));
+            }
+
+            // 異常には最低1件の根拠イベントが必要
+            if anomaly.evidence_event_ids.is_empty() {
+                return Err(AiError::InvalidResponse(
+                    format!(
+                        "Missing evidence_event_ids in anomaly {}",
+                        index
+                    )
+                ));
+            }
+
+            // 根拠イベントが入力に存在することを確認
+            for id in &anomaly.evidence_event_ids {
+                if !event_ids.contains(id.as_str()) {
+                    return Err(AiError::InvalidResponse(
+                        format!(
+                            "Unknown evidence event_id: {}",
+                            id
+                        )
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    use crate::ai::adapters::mock::{
+        MockAdapter,
+        MockResponse,
+    };
+    use crate::ai::types::{
+        AiAnomaly,
+        AiEvent,
+        Severity,
+    };
+    use crate::evidence::schema::LogType;
+
+    fn test_request() -> AiAnalysisRequest {
+        let now = Utc::now();
+
+        AiAnalysisRequest {
+            analysis_id: "A-001".to_string(),
+            host: "test-host".to_string(),
+            time_window_start: now,
+            time_window_end: now,
+            events: Vec::new(),
+        }
+    }
+
+    fn test_event(id: &str) -> AiEvent {
+        AiEvent {
+            event_id: id.to_string(),
+            timestamp: Utc::now(),
+            log_type: LogType::AccessAllowed,
+            epoch: 1,
+            user: "root".to_string(),
+            pid: 1234,
+            action: "RENAME".to_string(),
+            binary: "/usr/bin/mv".to_string(),
+            script_path: None,
+            applet: None,
+            args: None,
+            target_path: "/data/file".to_string(),
+            target_kind: "file".to_string(),
+            new_path: Some("/data/file.enc".to_string()),
+            remote_client: None,
+            rule: None,
+            ticket_id: None,
+        }
+    }
+
+    fn test_anomaly() -> AiAnomaly {
+        AiAnomaly {
+            severity: Severity::High,
+            attack_type: Some("ransomware".to_string()),
+            summary: "Mass file rename detected".to_string(),
+            explanation: "Suspicious rename activity".to_string(),
+            evidence_event_ids: vec![
+                "evt-001".to_string(),
+                "evt-002".to_string(),
+            ],
+            confidence_score: 0.95,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_no_anomaly() {
+        let provider = Arc::new(MockAdapter::new());
+        let engine = AiAnalysisEngine::new(provider);
+
+        let result = engine.analyze(&test_request())
+            .await
+            .unwrap();
+
+        assert_eq!(engine.provider_name(), "mock");
+        assert_eq!(result.analysis_id, "A-001");
+        assert!(result.anomalies.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_with_anomaly() {
+        let provider = Arc::new(MockAdapter::new());
+
+        provider.set_response(
+            MockResponse::Success(vec![test_anomaly()])
+        );
+
+        let engine = AiAnalysisEngine::new(provider);
+
+        let mut request = test_request();
+        request.events = vec![
+            test_event("evt-001"),
+            test_event("evt-002"),
+        ];
+
+        let result = engine.analyze(&request)
+            .await
+            .unwrap();
+
+        assert_eq!(result.anomalies.len(), 1);
+        assert_eq!(result.analysis_id, request.analysis_id);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_evidence() {
+        let provider = Arc::new(MockAdapter::new());
+
+        provider.set_response(
+            MockResponse::Success(vec![test_anomaly()])
+        );
+
+        let engine = AiAnalysisEngine::new(provider);
+
+        // 根拠イベントを含まない要求
+        let request = test_request();
+
+        let result = engine.analyze(&request).await;
+
+        assert!(matches!(
+            result,
+            Err(AiError::InvalidResponse(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_confidence() {
+        let provider = Arc::new(MockAdapter::new());
+
+        let mut anomaly = test_anomaly();
+        anomaly.confidence_score = 1.5;
+
+        provider.set_response(
+            MockResponse::Success(vec![anomaly])
+        );
+
+        let engine = AiAnalysisEngine::new(provider);
+
+        let mut request = test_request();
+        request.events = vec![
+            test_event("evt-001"),
+            test_event("evt-002"),
+        ];
+
+        let result = engine.analyze(&request).await;
+
+        assert!(matches!(
+            result,
+            Err(AiError::InvalidResponse(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_provider_timeout() {
+        let provider = Arc::new(MockAdapter::new());
+        provider.set_response(MockResponse::Timeout);
+
+        let engine = AiAnalysisEngine::new(provider);
+
+        let result = engine.analyze(&test_request()).await;
+
+        assert!(matches!(
+            result,
+            Err(AiError::Timeout)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_request() {
+        let provider = Arc::new(MockAdapter::new());
+        let engine = AiAnalysisEngine::new(provider);
+
+        let mut request = test_request();
+        request.analysis_id.clear();
+
+        let result = engine.analyze(&request).await;
+
+        assert!(matches!(
+            result,
+            Err(AiError::InvalidRequest(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_operational_context() {
+        let provider = Arc::new(MockAdapter::new());
+        let engine = AiAnalysisEngine::new(provider.clone());
+
+        let context = AiOperationalContext {
+            description: "Monthly database backup".to_string(),
+        };
+
+        engine.set_operational_context(&context)
+            .await
+            .unwrap();
+
+        let saved = provider.operational_context().unwrap();
+
+        assert_eq!(saved.description, context.description);
+    }
+}
