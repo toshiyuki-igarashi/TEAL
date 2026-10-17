@@ -152,6 +152,16 @@ impl AiAnalysisEngine {
                 ));
             }
 
+            if anomaly.evidence_event_ids.len() > 3 {
+                return Err(AiError::InvalidResponse(
+                    format!(
+                        "Too many evidence_event_ids in anomaly {}: {}",
+                        index,
+                        anomaly.evidence_event_ids.len()
+                    )
+                ));
+            }
+
             // 根拠イベントが入力に存在することを確認
             for id in &anomaly.evidence_event_ids {
                 if !event_ids.contains(id.as_str()) {
@@ -422,6 +432,66 @@ mod tests {
         ];
 
         let result = engine.analyze(&request).await.unwrap();
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap()
+        );
+
+        assert_eq!(result.analysis_id, request.analysis_id);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Ollama server and qwen3:1.7b"]
+    async fn test_ollama_mass_rename() {
+        use std::time::Duration as StdDuration;
+        use chrono::Duration as ChronoDuration;
+        use crate::ai::adapters::ollama::OllamaAdapter;
+
+        const EVENTS_NUM: i64 = 20;
+
+        let provider = Arc::new(
+            OllamaAdapter::new(
+                "http://127.0.0.1:11434",
+                "qwen3:1.7b",
+                StdDuration::from_secs(180),
+            )
+            .unwrap(),
+        );
+
+        let engine = AiAnalysisEngine::new(provider);
+
+        let mut request = test_request();
+        let start = Utc::now();
+
+        request.time_window_start = start;
+        request.time_window_end =
+            start + ChronoDuration::seconds(60);
+
+        request.events = (0..EVENTS_NUM)
+            .map(|i| {
+                let mut event = test_event(&format!("evt-{i:03}"));
+
+                event.timestamp =
+                    start + ChronoDuration::milliseconds(i * 500);
+
+                event.target_path =
+                    format!("/data/documents/file_{i:03}.txt");
+
+                event.new_path = Some(
+                    format!("/data/documents/file_{i:03}.enc")
+                );
+
+                event
+            })
+            .collect();
+
+        let result = engine.analyze(&request).await.unwrap();
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap()
+        );
 
         assert_eq!(result.analysis_id, request.analysis_id);
     }

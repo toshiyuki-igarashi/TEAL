@@ -554,7 +554,267 @@ Upon restarting the PC, before the OS (GRUB) boots, a blue screen titled **"Perf
    *(Note: As you type, the screen will remain completely blank without `*` characters, but your keystrokes are being registered).*
 5. Finally, select **`Reboot`**.
 
-#### D. Troubleshooting
+#### D. Installing Ollama on Ubuntu Linux for TEAL
+
+This guide describes how to install Ollama, download a local language model, and verify its operation for TEAL's AI-based anomaly detection experiments.
+
+**1. System Requirements**
+
+- Ubuntu 24.04 or another supported Linux distribution
+- x86-64 processor
+- RAM: 8 GB recommended for TEAL development and CPU-only inference experiments with `qwen3:1.7b`.
+- Actual memory requirements depend on the model, context length, and runtime configuration.
+- A dedicated GPU is optional; CPU-only inference is supported.
+- Internet connection for installation and model downloads
+
+TEAL's initial experiments use `qwen3:1.7b`, a relatively small language model suitable for testing on machines without a dedicated GPU.
+
+**2. Install Ollama**
+
+Download the official installation script:
+
+```bash
+curl -fsSL https://ollama.com/install.sh -o ollama-install.sh
+```
+
+Review the script if required, then execute it:
+
+```bash
+sh ollama-install.sh
+```
+
+Alternatively, install Ollama directly:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+The installation normally configures Ollama as a systemd service.
+
+Verify the installation:
+
+```bash
+ollama --version
+```
+
+**3. Start and Verify the Ollama Service**
+
+Start Ollama:
+
+```bash
+sudo systemctl start ollama
+```
+
+Enable automatic startup:
+
+```bash
+sudo systemctl enable ollama
+```
+
+Check the service status:
+
+```bash
+systemctl status ollama
+```
+
+Verify that the HTTP API is available:
+
+```bash
+curl http://127.0.0.1:11434/api/tags
+```
+
+A successful response contains a JSON object with a `models` array.
+
+By default, the local Ollama API is accessible at:
+
+```
+http://127.0.0.1:11434
+```
+
+**4. Download the Language Model**
+
+Download the model used for TEAL's initial experiments:
+
+```bash
+ollama pull qwen3:1.7b
+```
+
+Verify that the model has been downloaded:
+
+```bash
+ollama list
+```
+
+Run the model interactively:
+
+```bash
+ollama run qwen3:1.7b
+```
+
+Enter a simple question to verify that the model responds.
+
+Type `/bye` to exit the interactive session.
+
+**5. Test the Ollama HTTP API**
+
+TEAL communicates with Ollama using the `/api/chat` endpoint.
+
+Execute the following command:
+
+```bash
+curl http://127.0.0.1:11434/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3:1.7b",
+    "stream": false,
+    "think": false,
+    "format": "json",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a Linux security analyst. Return JSON only."
+      },
+      {
+        "role": "user",
+        "content": "Analyze this event: root renamed /data/test.txt to /data/test.enc. Return a JSON object with an anomalies array."
+      }
+    ],
+    "options": {
+      "num_ctx": 4096,
+      "num_predict": 256
+    }
+  }'
+```
+
+The API should return a JSON response containing the model's generated message in `message.content`.
+
+The response also includes performance information, such as:
+
+- `prompt_eval_count`: Number of input tokens
+- `eval_count`: Number of generated tokens
+- `prompt_eval_duration`: Input processing time
+- `eval_duration`: Output generation time
+- `total_duration`: Total processing time
+
+Timing values are expressed in nanoseconds.
+
+**Note:** This example is intended only to verify basic communication with the Ollama HTTP API.
+
+TEAL's Ollama adapter uses JSON Schema-based structured outputs to validate anomaly reports, including severity, confidence scores, and evidence event IDs. The actual request format is defined in `teald/src/ai/adapters/ollama.rs`.
+
+**6. Monitor Model Execution**
+
+Display loaded models:
+
+```bash
+ollama ps
+```
+
+This command shows the model name, memory usage, processing device, and context size.
+
+Check system memory:
+
+```bash
+free -h
+```
+
+Monitor CPU and memory usage:
+
+```bash
+top
+```
+
+For detailed Ollama service logs:
+
+```bash
+sudo journalctl -u ollama -f
+```
+
+To display recent logs:
+
+```bash
+sudo journalctl -u ollama -n 100 --no-pager
+```
+
+**7. Run TEAL's Ollama Integration Tests**
+
+After installing Ollama and downloading `qwen3:1.7b`, navigate to the TEAL source directory:
+
+```bash
+cd ~/TEAL/src
+```
+
+Execute the basic integration test:
+
+```bash
+cargo test -p teald test_ollama_integration -- --ignored --nocapture
+```
+
+Execute the mass file-rename anomaly detection test:
+
+```bash
+cargo test -p teald test_ollama_mass_rename -- --ignored --nocapture
+```
+
+These tests verify communication between the TEAL AI analysis engine and the local Ollama server.
+
+The tests are marked `#[ignore]` because they require a running Ollama service and a downloaded model.
+
+**8. Notes on CPU-Only Execution**
+
+Ollama can run without dedicated GPU hardware.
+
+However, CPU-only inference may be relatively slow, especially when analyzing large audit-event batches.
+
+During initial TEAL experiments on a CPU-only laptop with approximately 8 GB of RAM, `qwen3:1.7b` successfully analyzed 20 file-rename events using JSON Schema-based structured outputs.
+
+The analysis required approximately 134 seconds, including about 87 seconds for prompt processing and 41 seconds for response generation.
+
+These figures are preliminary measurements from a development laptop, not representative performance benchmarks. Further performance evaluation will be conducted on a dedicated test machine.
+
+For larger experiments, a faster CPU or supported GPU is recommended.
+
+TEAL's anomaly detection logic can be developed and tested independently of inference performance using `MockAdapter`.
+
+##### Version Recording for Reproducible Experiments
+
+Before running performance or accuracy benchmarks, record the installed Ollama version and model information:
+
+```bash
+ollama --version
+ollama list
+ollama show qwen3:1.7b
+```
+
+Record these details together with the TEAL Git commit, CPU configuration, available RAM, context length, and generation options.
+
+For reproducible experiments, avoid upgrading Ollama or replacing the model during a benchmark series.
+
+**9. Updating Ollama**
+
+To update Ollama, rerun the official installation script:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+Verify the installed version:
+
+```bash
+ollama --version
+```
+
+**10. References**
+
+- [Ollama Official Website](https://ollama.com/)
+- [Ollama Linux Installation Guide](https://docs.ollama.com/linux)
+- [Ollama Chat API Documentation](https://docs.ollama.com/api/chat)
+
+---
+
+**Note:** Ollama is used as an optional AI analysis provider in TEAL. AI-generated anomaly assessments are advisory and do not directly authorize or deny Linux system operations.
+
+#### E. Troubleshooting
 
 If TEAL fails to start or the system becomes unstable, follow these steps:
 
