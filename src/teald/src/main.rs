@@ -22,6 +22,7 @@ use teald::netlink::{NlWriter, TealNetlinkMessage, init_socket, kernel_next_epoc
 use teald::pam_server::start_pam_listener;
 use teald::types::{DaemonMode, set_daemon_mode, InternalEvent};
 use teald::ticket::preload_silent_directory_tickets;
+use teald::ai;
 
 use teal_policy_engine::util::ktime_prefix;
 
@@ -141,7 +142,11 @@ async fn main() -> Result<()> {
     eprintln!("{}[INFO] Initial policy Epoch {} synchronized with kernel", ktime_prefix(), next_epoch);
 
     init_state().await;
-    EvidenceManager::init(1024);
+
+    let ai_runtime = ai::init_ai()
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    EvidenceManager::init(1024, ai_runtime);
 
     let listener = init_admin_socket("/tmp/teald.sock").await?;
 

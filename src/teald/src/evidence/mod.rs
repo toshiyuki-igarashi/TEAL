@@ -16,6 +16,7 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::os::unix::fs::MetadataExt;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 
@@ -34,6 +35,13 @@ use crate::types::{
     KernelEventLog, Request
 };
 use crate::types::{EntityId, to_kernel_dev};
+use crate::ai::types::AiEvent;
+use crate::ai::collector::{
+    collect_ai_event,
+    AiCollector,
+    run_ai_analysis_worker,
+};
+use crate::ai::AiRuntime;
 use self::schema::{
     AuditLogEntry, AuthInfo, LogType, ObjectInfo, PolicyEvalResult, SubjectInfo,
     SyscallContext, TicketRef, IssuedTicketInfo,
@@ -42,6 +50,8 @@ use self::schema::{
 // グローバルなシングルトンインスタンス
 static GLOBAL_MANAGER: OnceLock<EvidenceManager> = OnceLock::new();
 
+/// ドロップ件数を追跡するメトリクス
+static AI_EVENTS_DROPPED: AtomicU64 = AtomicU64::new(0);
 
 /// 監査ログ管理マネージャー
 /// メインスレッドとログ書き込みタスク（バックグラウンド）をつなぐ役割を持つ
@@ -55,14 +65,41 @@ impl EvidenceManager {
     const FLUSH_INTERVAL_MS: u64 = 1000;    // 1秒
 
     /// 初期化関数 (main.rs の冒頭で一度だけ呼ぶ)
-    pub fn init(buffer_size: usize) {
+    pub fn init(buffer_size: usize, ai_runtime: Option<AiRuntime>) {
         let (tx, mut rx) = mpsc::channel(buffer_size);
+
+        // AI無効時はキューとワーカーを生成しない。
+        let ai_tx = ai_runtime.map(|runtime| {
+            let (ai_tx, ai_rx) = mpsc::channel::<AiEvent>(runtime.event_queue_capacity);
+            let (analysis_tx, analysis_rx) = mpsc::channel(runtime.analysis_queue_capacity);
+            let collector = AiCollector::new(get_hostname(), runtime.collector);
+
+            task::spawn(collector.run(ai_rx, analysis_tx));
+            task::spawn(run_ai_analysis_worker(runtime.engine, analysis_rx));
+            ai_tx
+        });
 
         // 1. ログ書き込みタスク
         task::spawn(async move {
             while let Some(entry) = rx.recv().await {
                 if let Err(e) = storage::write_log(&entry) {
                     eprintln!("{}[ERROR] Log Write Error: {}", ktime_prefix(), e);
+                    continue;
+               }
+
+                // AIが有効なときだけ変換・配送する。
+                if let Some(ai_tx) = &ai_tx {
+                    if let Some(ai_event) = collect_ai_event(&entry) {
+                        match ai_tx.try_send(ai_event) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                AI_EVENTS_DROPPED.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                eprintln!("{}[WARN] AI event receiver closed", ktime_prefix());
+                            }
+                        }
+                    }
                 }
             }
         });

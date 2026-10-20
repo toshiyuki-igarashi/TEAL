@@ -7,7 +7,7 @@
 
 use async_trait::async_trait;
 
-use crate::ai::types::{AiAnalysisRequest, AiAnalysisResult, AiOperationalContext};
+use crate::ai::types::{AiProviderRequest, AiAnalysisResult, AiOperationalContext};
 use crate::ai::error::AiError;
 
 #[async_trait]
@@ -24,6 +24,6 @@ pub trait AiProvider: Send + Sync {
     /// イベント履歴の異常検出を実行
     async fn analyze(
         &self,
-        request: &AiAnalysisRequest,
+        request: &AiProviderRequest,
     ) -> Result<AiAnalysisResult, AiError>;
 }

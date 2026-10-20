@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::evidence::schema::{AuditLogEntry, AuthInfo, LogType};
 
+use crate::ai::aggregator::AiAggregatedEvent;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiEvent {
     /// 元のTEAL監査ログID（根拠特定用）
@@ -190,4 +192,23 @@ pub struct AiAnalysisResult {
 
     /// 検出された異常の一覧
     pub anomalies: Vec<AiAnomaly>,
+}
+
+/// AIプロバイダーへ渡す分析要求
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiProviderRequest {
+    /// TEAL側の分析タスク一意ID
+    pub analysis_id: String,
+
+    /// 分析対象のホスト識別子
+    pub host: String,
+
+    /// 監査ウィンドウの開始日時
+    pub time_window_start: DateTime<Utc>,
+
+    /// 監査ウィンドウの終了日時
+    pub time_window_end: DateTime<Utc>,
+
+    /// 分析対象の集約済み監査イベント
+    pub events: Vec<AiAggregatedEvent>,
 }

@@ -14,7 +14,9 @@ use crate::ai::types::{
     AiAnalysisRequest,
     AiAnalysisResult,
     AiOperationalContext,
+    AiProviderRequest,
 };
+use crate::ai::aggregator::aggregate_events;
 
 /// AI分析の実行および結果検証を担当するエンジン
 pub struct AiAnalysisEngine {
@@ -56,11 +58,26 @@ impl AiAnalysisEngine {
                 .then_with(|| a.event_id.cmp(&b.event_id))
         });
 
+        // 集約
+        let aggregation = aggregate_events(
+            &sorted_request.analysis_id,
+            &sorted_request.events,
+        );
+
+        // Provider向けの要求を生成
+        let provider_request = AiProviderRequest {
+            analysis_id: sorted_request.analysis_id.clone(),
+            host: sorted_request.host.clone(),
+            time_window_start: sorted_request.time_window_start,
+            time_window_end: sorted_request.time_window_end,
+            events: aggregation.events,
+        };
+
         // AIプロバイダーによる分析
-        let result = self.provider.analyze(&sorted_request).await?;
+        let result = self.provider.analyze(&provider_request).await?;
 
         // 分析結果を検証
-        Self::validate_result(&sorted_request, &result)?;
+        Self::validate_result(&sorted_request, &provider_request, &result)?;
 
         Ok(result)
     }
@@ -110,6 +127,7 @@ impl AiAnalysisEngine {
     /// AI分析結果の整合性検証
     fn validate_result(
         request: &AiAnalysisRequest,
+        provider_request: &AiProviderRequest,
         result: &AiAnalysisResult,
     ) -> Result<(), AiError> {
         // 分析要求と応答の対応確認
@@ -123,10 +141,11 @@ impl AiAnalysisEngine {
             ));
         }
 
-        // 根拠として参照可能なイベントID
-        let event_ids: HashSet<&str> = request.events
+        // AIに提示した代表イベントID
+        let event_ids: HashSet<&str> = provider_request.events
             .iter()
-            .map(|event| event.event_id.as_str())
+            .flat_map(|event| event.evidence_event_ids.iter())
+            .map(String::as_str)
             .collect();
 
         for (index, anomaly) in result.anomalies.iter().enumerate() {
@@ -136,8 +155,9 @@ impl AiAnalysisEngine {
             {
                 return Err(AiError::InvalidResponse(
                     format!(
-                        "Invalid confidence_score in anomaly {}",
-                        index
+                        "Invalid confidence_score in anomaly {}: {}",
+                        index,
+                        anomaly.confidence_score
                     )
                 ));
             }
@@ -265,7 +285,8 @@ mod tests {
             MockResponse::Success(vec![test_anomaly()])
         );
 
-        let engine = AiAnalysisEngine::new(provider);
+        // providerをcloneしてEngineに渡す
+        let engine = AiAnalysisEngine::new(provider.clone());
 
         let mut request = test_request();
         request.events = vec![
@@ -273,12 +294,17 @@ mod tests {
             test_event("evt-002"),
         ];
 
-        let result = engine.analyze(&request)
-            .await
-            .unwrap();
+        let result = engine.analyze(&request).await.unwrap();
 
+        // AI分析結果の検証
         assert_eq!(result.anomalies.len(), 1);
         assert_eq!(result.analysis_id, request.analysis_id);
+
+        // Providerに渡された集約イベントの検証
+        let provider_request = provider.last_request().unwrap();
+
+        assert_eq!(provider_request.events.len(), 1);
+        assert_eq!(provider_request.events[0].event_count, 2);
     }
 
     #[tokio::test]
@@ -383,7 +409,7 @@ mod tests {
         use chrono::Duration;
 
         let provider = Arc::new(MockAdapter::new());
-        let _engine = AiAnalysisEngine::new(provider);
+        let engine = AiAnalysisEngine::new(provider.clone());
 
         let now = Utc::now();
         let mut request = test_request();
@@ -394,18 +420,89 @@ mod tests {
         let mut earlier = test_event("evt-earlier");
         earlier.timestamp = now - Duration::seconds(10);
 
+        // 集約されないよう、操作を変える
+        earlier.action = "UNLINK".to_string();
+
         request.events = vec![later, earlier];
 
-        // 現在のMockAdapterはイベント順序を返さないため、
-        // エンジン内部のソートと同じ処理を直接検証する必要がある
-        let mut sorted = request.clone();
-        sorted.events.sort_by(|a, b| {
-            a.timestamp.cmp(&b.timestamp)
-                .then_with(|| a.event_id.cmp(&b.event_id))
-        });
+        engine.analyze(&request).await.unwrap();
 
-        assert_eq!(sorted.events[0].event_id, "evt-earlier");
-        assert_eq!(sorted.events[1].event_id, "evt-later");
+        let provider_request = provider.last_request().unwrap();
+
+        assert_eq!(provider_request.events.len(), 2);
+        assert_eq!(
+            provider_request.events[0].evidence_event_ids[0],
+            "evt-earlier"
+        );
+        assert_eq!(
+            provider_request.events[1].evidence_event_ids[0],
+            "evt-later"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_engine_aggregation() {
+        let provider = Arc::new(MockAdapter::new());
+        let engine = AiAnalysisEngine::new(provider.clone());
+
+        let mut request = test_request();
+
+        request.events = (0..20)
+            .map(|i| {
+                let mut event = test_event(&format!("evt-{i:03}"));
+                event.target_path = format!("/data/file_{i:03}");
+                event
+            })
+            .collect();
+
+        engine.analyze(&request).await.unwrap();
+
+        let provider_request = provider.last_request().unwrap();
+
+        assert_eq!(provider_request.events.len(), 1);
+        assert_eq!(provider_request.events[0].event_count, 20);
+        assert_eq!(provider_request.events[0].unique_target_count, 20);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_non_representative_evidence() {
+        let provider = Arc::new(MockAdapter::new());
+
+        let mut anomaly = test_anomaly();
+        anomaly.evidence_event_ids = vec!["evt-010".to_string()];
+
+        provider.set_response(
+            MockResponse::Success(vec![anomaly])
+        );
+
+        let engine = AiAnalysisEngine::new(provider.clone());
+
+        let mut request = test_request();
+
+        request.events = (0..20)
+            .map(|i| {
+                let mut event = test_event(&format!("evt-{i:03}"));
+                event.target_path = format!("/data/file_{i:03}");
+                event
+            })
+            .collect();
+
+        let result = engine.analyze(&request).await;
+
+        // evt-010 は元イベントに存在するが、
+        // AIに提示した代表イベントIDには含まれない
+        assert!(matches!(
+            result,
+            Err(AiError::InvalidResponse(_))
+        ));
+
+        let provider_request = provider.last_request().unwrap();
+
+        assert_eq!(provider_request.events.len(), 1);
+
+        assert!(!provider_request.events[0]
+            .evidence_event_ids
+            .contains(&"evt-010".to_string()));
     }
 
     #[tokio::test]

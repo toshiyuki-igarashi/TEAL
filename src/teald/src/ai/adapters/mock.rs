@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use crate::ai::error::AiError;
 use crate::ai::provider::AiProvider;
 use crate::ai::types::{
-    AiAnalysisRequest,
+    AiProviderRequest,
     AiAnalysisResult,
     AiAnomaly,
     AiOperationalContext,
@@ -41,6 +41,9 @@ pub struct MockAdapter {
 
     /// 運用ルール
     operational_context: RwLock<Option<AiOperationalContext>>,
+
+    /// 直近に受信したProvider要求（テスト用）
+    last_request: RwLock<Option<AiProviderRequest>>,
 }
 
 impl MockAdapter {
@@ -50,6 +53,7 @@ impl MockAdapter {
                 MockResponse::Success(Vec::new())
             ),
             operational_context: RwLock::new(None),
+            last_request: RwLock::new(None),
         }
     }
 
@@ -66,6 +70,10 @@ impl MockAdapter {
             .read()
             .unwrap()
             .clone()
+    }
+
+    pub fn last_request(&self) -> Option<AiProviderRequest> {
+        self.last_request.read().unwrap().clone()
     }
 }
 
@@ -94,8 +102,10 @@ impl AiProvider for MockAdapter {
 
     async fn analyze(
         &self,
-        request: &AiAnalysisRequest,
+        request: &AiProviderRequest,
     ) -> Result<AiAnalysisResult, AiError> {
+        *self.last_request.write().unwrap() = Some(request.clone());
+
         // ロック保持中に await しないよう、応答モードをコピーする
         let response = self.response
             .read()
@@ -132,10 +142,10 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
-    fn test_request() -> AiAnalysisRequest {
+    fn test_request() -> AiProviderRequest {
         let now = Utc::now();
 
-        AiAnalysisRequest {
+        AiProviderRequest {
             analysis_id: "A-001".to_string(),
             host: "test-host".to_string(),
             time_window_start: now,
