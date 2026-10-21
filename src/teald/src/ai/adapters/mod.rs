@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT
-/*
- * TEAL Daemon (teald)
- *
- * Copyright (c) 2026 Toshiyuki Igarashi
- */
-
-pub mod mock;
 pub mod ollama;
+pub mod mock;
+pub mod groq;
+pub mod gemini;
+mod common;

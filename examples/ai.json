@@ -1,10 +1,18 @@
 {
   "version": "1.0",
   "enabled": true,
-  "provider": "ollama",
+  "provider": "groq",
   "ollama": {
     "endpoint": "http://127.0.0.1:11434",
     "model": "qwen3:1.7b",
+    "timeout_seconds": 120
+  },
+  "groq": {
+    "model": "openai/gpt-oss-20b",
+    "timeout_seconds": 120
+  },
+  "gemini": {
+    "model": "gemini-2.5-flash",
     "timeout_seconds": 120
   },
   "collector": {

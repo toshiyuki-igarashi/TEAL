@@ -5,7 +5,7 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::ai::error::AiError;
@@ -17,6 +17,13 @@ use crate::ai::types::{
     AiProviderRequest,
 };
 use crate::ai::aggregator::aggregate_events;
+
+/// Providerが実際に評価した集約と、その全元イベントの対応関係を保持する。
+pub struct AiAnalysisOutcome {
+    pub result: AiAnalysisResult,
+    pub source_event_ids: HashMap<String, Vec<String>>,
+    pub aggregated_event_count: usize,
+}
 
 /// AI分析の実行および結果検証を担当するエンジン
 pub struct AiAnalysisEngine {
@@ -47,6 +54,14 @@ impl AiAnalysisEngine {
         &self,
         request: &AiAnalysisRequest,
     ) -> Result<AiAnalysisResult, AiError> {
+        Ok(self.analyze_with_provenance(request).await?.result)
+    }
+
+    /// 分析結果と、実際にProviderへ渡した集約の元イベントID対応を返す。
+    pub async fn analyze_with_provenance(
+        &self,
+        request: &AiAnalysisRequest,
+    ) -> Result<AiAnalysisOutcome, AiError> {
         // 分析要求を検証
         Self::validate_request(request)?;
 
@@ -79,7 +94,11 @@ impl AiAnalysisEngine {
         // 分析結果を検証
         Self::validate_result(&sorted_request, &provider_request, &result)?;
 
-        Ok(result)
+        Ok(AiAnalysisOutcome {
+            result,
+            source_event_ids: aggregation.source_event_ids,
+            aggregated_event_count: provider_request.events.len(),
+        })
     }
 
     /// 分析要求の基本的な整合性検証
@@ -155,9 +174,8 @@ impl AiAnalysisEngine {
             {
                 return Err(AiError::InvalidResponse(
                     format!(
-                        "Invalid confidence_score in anomaly {}: {}",
-                        index,
-                        anomaly.confidence_score
+                        "Invalid confidence_score in anomaly {}",
+                        index
                     )
                 ));
             }

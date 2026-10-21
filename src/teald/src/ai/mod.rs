@@ -12,6 +12,7 @@ pub mod adapters;
 pub mod engine;
 pub mod aggregator;
 pub mod collector;
+pub mod results;
 
 use std::fs;
 use std::path::Path;
@@ -21,6 +22,8 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use self::adapters::ollama::OllamaAdapter;
+use self::adapters::groq::GroqAdapter;
+use self::adapters::gemini::GeminiAdapter;
 use self::collector::AiCollectorConfig;
 use self::engine::AiAnalysisEngine;
 use self::provider::AiProvider;
@@ -34,6 +37,8 @@ pub struct AiConfig {
     pub enabled: bool,
     pub provider: String,
     pub ollama: Option<OllamaConfig>,
+    pub groq: Option<CloudConfig>,
+    pub gemini: Option<CloudConfig>,
     pub collector: CollectorConfig,
 }
 
@@ -41,6 +46,13 @@ pub struct AiConfig {
 #[serde(deny_unknown_fields)]
 pub struct OllamaConfig {
     pub endpoint: String,
+    pub model: String,
+    pub timeout_seconds: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloudConfig {
     pub model: String,
     pub timeout_seconds: u64,
 }
@@ -101,6 +113,16 @@ fn build_ai_runtime(config: AiConfig) -> Result<Option<AiRuntime>, String> {
             ).map_err(|e| format!("Ollama provider initialization failed: {e}"))?;
             Arc::new(adapter)
         }
+        "groq" => {
+            let c = config.groq.ok_or("Missing groq configuration")?;
+            Arc::new(GroqAdapter::new(&c.model, Duration::from_secs(c.timeout_seconds))
+                .map_err(|e| format!("Groq provider initialization failed: {e}"))?)
+        }
+        "gemini" => {
+            let c = config.gemini.ok_or("Missing gemini configuration")?;
+            Arc::new(GeminiAdapter::new(&c.model, Duration::from_secs(c.timeout_seconds))
+                .map_err(|e| format!("Gemini provider initialization failed: {e}"))?)
+        }
         other => return Err(format!("Unsupported AI provider: {other}")),
     };
 
@@ -124,6 +146,8 @@ mod tests {
             version: "1.0".into(),
             enabled,
             provider: "ollama".into(),
+            groq: None,
+            gemini: None,
             ollama: Some(OllamaConfig {
                 endpoint: "http://127.0.0.1:11434".into(),
                 model: "qwen3:1.7b".into(),

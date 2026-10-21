@@ -18,6 +18,7 @@ use crate::evidence::schema::{AuditLogEntry, AuthInfo};
 use crate::ai::types::AiEvent;
 use crate::ai::types::AiAnalysisRequest;
 use crate::ai::engine::AiAnalysisEngine;
+use crate::ai::results::{AiStoredAnalysis, append_result};
 
 static AI_ANALYSIS_BATCHES_DROPPED: AtomicU64 =
     AtomicU64::new(0);
@@ -210,16 +211,27 @@ pub async fn run_ai_analysis_worker(
     mut rx: mpsc::Receiver<AiAnalysisRequest>,
 ) {
     while let Some(request) = rx.recv().await {
-        match engine.analyze(&request).await {
-            Ok(result) => {
-                // 暫定的に結果を出力
-                eprintln!(
-                    "[INFO] AI analysis completed: id={}, anomalies={}",
-                    result.analysis_id,
-                    result.anomalies.len()
+        match engine.analyze_with_provenance(&request).await {
+            Ok(outcome) => {
+                let record = AiStoredAnalysis::from_outcome(
+                    &request,
+                    engine.provider_name(),
+                    outcome,
                 );
-
-                // TODO: 分析結果と集約元イベントIDの保存
+                let id = record.result.analysis_id.clone();
+                let anomaly_count = record.result.anomalies.len();
+                // ファイルI/OがTokioワーカーをブロックしないよう分離する。
+                match tokio::task::spawn_blocking(move || append_result(&record)).await {
+                    Ok(Ok(())) => eprintln!(
+                        "[INFO] AI analysis saved: id={}, anomalies={}", id, anomaly_count
+                    ),
+                    Ok(Err(e)) => eprintln!(
+                        "[ERROR] AI analysis save failed: id={}, error={}", id, e
+                    ),
+                    Err(e) => eprintln!(
+                        "[ERROR] AI analysis storage task failed: id={}, error={}", id, e
+                    ),
+                }
             }
 
             Err(e) => {
