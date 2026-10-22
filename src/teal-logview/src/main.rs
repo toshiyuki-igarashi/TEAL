@@ -25,8 +25,6 @@ use teal_policy_engine::types::{Action, Effect, AuditLevel, SystemType, RuleType
 use teal_policy_engine::raw::{RawPreApprovalDefaults, RawPolicyV14, RawRule, RawObject, RawSubject,
     RawTicketProfile, RawAction, RawLoginContext, RawPreApproval};
 
-use crate::ai::dataset;
-
 /// ユーザー入力を相対時間 ("15m", "2h") または 絶対時間 (RFC3339) として解釈するパーサー
 fn parse_time(s: &str) -> std::result::Result<DateTime<Utc>, String> {
     // 1. まず相対時間 (例: "15m", "2h") としてパースを試みる
@@ -1091,7 +1089,7 @@ enum Commands {
     /// Offline AI analysis dataset and evaluation commands
     Ai {
         #[command(subcommand)]
-        command: dataset::AiCommands,
+        command: ai::AiCommands,
     },
 
     /// ログ履歴の閲覧・フィルタリング
@@ -1245,7 +1243,7 @@ fn main() -> Result<()> {
 
     // 3. サブコマンドに応じた処理の分岐
     match cli.command {
-        Commands::Ai { command } => dataset::run(command, &log_path)?,
+        Commands::Ai { command } => ai::run(command, &log_path)?,
         Commands::View { since, until, ticket, epoch, deny_only, path, mode } => {
             eprintln!("Starting log analysis: {}", log_path.display());
 

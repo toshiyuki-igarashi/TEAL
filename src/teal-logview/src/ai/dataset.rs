@@ -14,26 +14,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
-use clap::{Args, Subcommand};
+use clap::Args;
 
 use teald::ai::collector::collect_ai_event;
 use teald::ai::types::AiEvent;
 use teald::evidence::schema::AuditLogEntry;
-
-#[derive(Subcommand, Debug)]
-pub enum AiCommands {
-    /// Extract an AI test dataset from audit logs
-    Dataset {
-        #[command(subcommand)]
-        command: DatasetCommands,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-pub enum DatasetCommands {
-    /// Create an AiEvent JSONL dataset from TEAL audit logs
-    Create(CreateArgs),
-}
 
 #[derive(Args, Debug)]
 pub struct CreateArgs {
@@ -58,14 +43,6 @@ pub struct CreateArgs {
     out: PathBuf,
 }
 
-pub fn run(command: AiCommands, audit_file: &Path) -> Result<()> {
-    match command {
-        AiCommands::Dataset { command } => match command {
-            DatasetCommands::Create(args) => create(audit_file, args),
-        },
-    }
-}
-
 fn matches_filters(event: &AiEvent, args: &CreateArgs) -> bool {
     if args.from.is_some_and(|from| event.timestamp < from) {
         return false;
@@ -82,7 +59,7 @@ fn matches_filters(event: &AiEvent, args: &CreateArgs) -> bool {
     true
 }
 
-fn create(audit_file: &Path, args: CreateArgs) -> Result<()> {
+pub fn create(audit_file: &Path, args: CreateArgs) -> Result<()> {
     if let (Some(from), Some(to)) = (args.from, args.to) {
         if from >= to {
             bail!("--from must be earlier than --to");

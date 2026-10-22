@@ -6,3 +6,52 @@
  */
 
 pub mod dataset;
+pub mod eval;
+pub mod compare;
+
+use std::path::Path;
+use anyhow::Result;
+use clap::Subcommand;
+
+#[derive(Subcommand, Debug)]
+pub enum AiCommands {
+    /// AI test dataset operations
+    Dataset {
+        #[command(subcommand)]
+        command: DatasetCommands,
+    },
+
+    /// Offline AI evaluation
+    Eval {
+        #[command(subcommand)]
+        command: EvalCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum DatasetCommands {
+    /// Create an AiEvent JSONL dataset from audit logs
+    Create(dataset::CreateArgs),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum EvalCommands {
+    /// Run AI evaluation using a dataset and configuration
+    Run(eval::EvalArgs),
+
+    /// Compare two AI evaluation reports
+    Compare(compare::CompareArgs),
+}
+
+pub fn run(command: AiCommands, audit_file: &Path) -> Result<()> {
+    match command {
+        AiCommands::Dataset { command } => match command {
+            DatasetCommands::Create(args) => dataset::create(audit_file, args),
+        },
+
+        AiCommands::Eval { command } => match command {
+            EvalCommands::Run(args) => eval::run(args),
+            EvalCommands::Compare(args) => compare::run(args),
+        },
+    }
+}

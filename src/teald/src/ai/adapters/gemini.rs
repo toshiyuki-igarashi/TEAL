@@ -55,12 +55,26 @@ impl AiProvider for GeminiAdapter {
         let url = format!("{API_BASE}/{}:generateContent", self.model);
         let response = self.client.post(&url)
             .header("x-goog-api-key", &self.api_key)
-            .json(&payload).send().await.map_err(common::network_error)?;
+            .json(&payload)
+            .send()
+            .await
+            .map_err(common::network_error)?;
+
         let status = response.status();
+
         if !status.is_success() {
+            // responseを消費する前にヘッダー情報を取得
             let delay = common::retry_after(response.headers());
+
+            // responseの所有権がここで移動する
             let body = response.text().await.unwrap_or_default();
-            return Err(common::status_error("Gemini", status, &body, delay));
+
+            return Err(common::status_error(
+                "Gemini",
+                status,
+                &body,
+                delay,
+            ));
         }
         let body: Value = response.json().await
             .map_err(|e| AiError::InvalidResponse(format!("Gemini response was not JSON: {e}")))?;

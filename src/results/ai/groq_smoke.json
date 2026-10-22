@@ -1,0 +1,70 @@
+{
+  "report_version": "1.1",
+  "evaluated_at": "2026-10-22T12:36:47.109525018Z",
+  "provider_name": "groq",
+  "model_name": "openai/gpt-oss-20b",
+  "config_sha256": "sha256:5ea80a5f3c9b9d84a1bdcb14d816d538ff5ac561d7ded8583086c52021d73a08",
+  "prompt_sha256": "sha256:1caa7b2f4d185dfb9d2543edfdf8f1c4247fe834981b5fae6cca252984656683",
+  "dataset_path": "tests/ai/smoke_test.jsonl",
+  "input_event_count": 10,
+  "aggregated_event_count": 9,
+  "batch_count": 1,
+  "elapsed_ms": 1507,
+  "batches": [
+    {
+      "batch_index": 1,
+      "analysis_id": "eval-595daa25-beb2-4c2e-bfd0-ba213fc19e4a",
+      "time_window_start": "2026-10-21T06:06:19.377772144Z",
+      "time_window_end": "2026-10-21T06:06:20.158371949Z",
+      "input_event_count": 10,
+      "aggregated_event_count": 9,
+      "target_event_ids": [
+        "207c28be-5ca4-444d-a72c-1f5fbda31a76",
+        "9be49b36-aa5c-4274-a61c-9a5f99313935",
+        "f89de4a2-b177-4c3d-9a44-a1929cbff4c8",
+        "18081a93-da48-4f7f-9b91-80e551e05491",
+        "964db90d-28e9-4e8c-b51c-8d834533eb59",
+        "946449f6-072a-4022-b0bf-a40296cbe99f",
+        "1d84cd2c-28ed-43ca-a084-0a56eb790ed1",
+        "23c8be3e-7fe1-4201-9b21-353a0487b250",
+        "58aab2fb-d583-4fc2-beaa-71b7daffca03",
+        "89a16d2a-3045-4e9d-ab62-97ae3fe4a7e3"
+      ],
+      "elapsed_ms": 1506,
+      "result": {
+        "analysis_id": "eval-595daa25-beb2-4c2e-bfd0-ba213fc19e4a",
+        "anomalies": []
+      },
+      "source_event_ids": {
+        "eval-595daa25-beb2-4c2e-bfd0-ba213fc19e4a-agg-9": [
+          "89a16d2a-3045-4e9d-ab62-97ae3fe4a7e3"
+        ],
+        "eval-595daa25-beb2-4c2e-bfd0-ba213fc19e4a-agg-2": [
+          "9be49b36-aa5c-4274-a61c-9a5f99313935"
+        ],
+        "eval-595daa25-beb2-4c2e-bfd0-ba213fc19e4a-agg-8": [
+          "23c8be3e-7fe1-4201-9b21-353a0487b250",
+          "58aab2fb-d583-4fc2-beaa-71b7daffca03"
+        ],
+        "eval-595daa25-beb2-4c2e-bfd0-ba213fc19e4a-agg-7": [
+          "1d84cd2c-28ed-43ca-a084-0a56eb790ed1"
+        ],
+        "eval-595daa25-beb2-4c2e-bfd0-ba213fc19e4a-agg-1": [
+          "207c28be-5ca4-444d-a72c-1f5fbda31a76"
+        ],
+        "eval-595daa25-beb2-4c2e-bfd0-ba213fc19e4a-agg-4": [
+          "18081a93-da48-4f7f-9b91-80e551e05491"
+        ],
+        "eval-595daa25-beb2-4c2e-bfd0-ba213fc19e4a-agg-5": [
+          "964db90d-28e9-4e8c-b51c-8d834533eb59"
+        ],
+        "eval-595daa25-beb2-4c2e-bfd0-ba213fc19e4a-agg-6": [
+          "946449f6-072a-4022-b0bf-a40296cbe99f"
+        ],
+        "eval-595daa25-beb2-4c2e-bfd0-ba213fc19e4a-agg-3": [
+          "f89de4a2-b177-4c3d-9a44-a1929cbff4c8"
+        ]
+      }
+    }
+  ]
+}
