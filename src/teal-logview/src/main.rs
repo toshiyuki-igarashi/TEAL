@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
 /*
- * TEAL Daemon (teald)
+ * TEAL logview (teal-logview)
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
+
+
+mod ai;
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom, IsTerminal, Read};
@@ -21,6 +24,8 @@ use teald::evidence::schema::{AuditLogEntry, AuthInfo, LogType};
 use teal_policy_engine::types::{Action, Effect, AuditLevel, SystemType, RuleType};
 use teal_policy_engine::raw::{RawPreApprovalDefaults, RawPolicyV14, RawRule, RawObject, RawSubject,
     RawTicketProfile, RawAction, RawLoginContext, RawPreApproval};
+
+use crate::ai::dataset;
 
 /// ユーザー入力を相対時間 ("15m", "2h") または 絶対時間 (RFC3339) として解釈するパーサー
 fn parse_time(s: &str) -> std::result::Result<DateTime<Utc>, String> {
@@ -1083,6 +1088,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Offline AI analysis dataset and evaluation commands
+    Ai {
+        #[command(subcommand)]
+        command: dataset::AiCommands,
+    },
+
     /// ログ履歴の閲覧・フィルタリング
     View {
         /// 指定した時間以降のログを表示 (例: "15m", "2h", "2024-03-17T10:00:00Z")
@@ -1234,6 +1245,7 @@ fn main() -> Result<()> {
 
     // 3. サブコマンドに応じた処理の分岐
     match cli.command {
+        Commands::Ai { command } => dataset::run(command, &log_path)?,
         Commands::View { since, until, ticket, epoch, deny_only, path, mode } => {
             eprintln!("Starting log analysis: {}", log_path.display());
 
