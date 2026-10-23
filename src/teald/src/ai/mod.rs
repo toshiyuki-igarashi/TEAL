@@ -40,6 +40,8 @@ pub struct AiConfig {
     pub groq: Option<CloudConfig>,
     pub gemini: Option<CloudConfig>,
     pub collector: CollectorConfig,
+    #[serde(default)]
+    pub prompt: PromptConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,6 +66,16 @@ pub struct CollectorConfig {
     pub max_events: usize,
     pub event_queue_capacity: usize,
     pub analysis_queue_capacity: usize,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PromptConfig {
+    #[serde(default)]
+    pub system_role: String,
+
+    #[serde(default)]
+    pub custom_rules: Vec<String>,
 }
 
 pub struct AiRuntime {
@@ -99,6 +111,8 @@ fn build_ai_runtime(config: AiConfig) -> Result<Option<AiRuntime>, String> {
     if c.window_seconds == 0 || c.max_events == 0 || c.event_queue_capacity == 0 || c.analysis_queue_capacity == 0 {
         return Err("AI collector settings must be greater than zero".into());
     }
+    let system_prompt =
+        adapters::common::build_system_prompt(&config.prompt);
 
     let provider: Arc<dyn AiProvider> = match config.provider.as_str() {
         "ollama" => {
@@ -110,17 +124,18 @@ fn build_ai_runtime(config: AiConfig) -> Result<Option<AiRuntime>, String> {
                 &o.endpoint,
                 &o.model,
                 Duration::from_secs(o.timeout_seconds),
+                system_prompt,
             ).map_err(|e| format!("Ollama provider initialization failed: {e}"))?;
             Arc::new(adapter)
         }
         "groq" => {
             let c = config.groq.ok_or("Missing groq configuration")?;
-            Arc::new(GroqAdapter::new(&c.model, Duration::from_secs(c.timeout_seconds))
+            Arc::new(GroqAdapter::new(&c.model, Duration::from_secs(c.timeout_seconds), system_prompt)
                 .map_err(|e| format!("Groq provider initialization failed: {e}"))?)
         }
         "gemini" => {
             let c = config.gemini.ok_or("Missing gemini configuration")?;
-            Arc::new(GeminiAdapter::new(&c.model, Duration::from_secs(c.timeout_seconds))
+            Arc::new(GeminiAdapter::new(&c.model, Duration::from_secs(c.timeout_seconds), system_prompt)
                 .map_err(|e| format!("Gemini provider initialization failed: {e}"))?)
         }
         other => return Err(format!("Unsupported AI provider: {other}")),
@@ -159,6 +174,7 @@ mod tests {
                 event_queue_capacity: 8192,
                 analysis_queue_capacity: 2,
             },
+            prompt: PromptConfig::default(),
         }
     }
 

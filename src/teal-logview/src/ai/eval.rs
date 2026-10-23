@@ -23,6 +23,7 @@ use uuid::Uuid;
 use teald::ai::adapters::gemini::GeminiAdapter;
 use teald::ai::adapters::groq::GroqAdapter;
 use teald::ai::adapters::ollama::OllamaAdapter;
+use teald::ai::adapters::common;
 use teald::ai::engine::AiAnalysisEngine;
 use teald::ai::provider::AiProvider;
 use teald::ai::types::{AiAnalysisRequest, AiAnalysisResult, AiEvent};
@@ -143,28 +144,29 @@ pub fn run(args: EvalArgs) -> Result<()> {
     events.sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then_with(|| a.event_id.cmp(&b.event_id)));
     let input_event_count = events.len();
     let batches = split_batches(events, config.collector.window_seconds, config.collector.max_events)?;
+    let system_prompt = common::build_system_prompt(&config.prompt);
+    let prompt_sha256 = calculate_sha256(system_prompt.as_bytes());
 
     let (provider, model_name): (Arc<dyn AiProvider>, String) = match config.provider.as_str() {
         "gemini" => {
             let g = config.gemini.context("Missing gemini config in ai.json")?;
             let model = g.model;
-            (Arc::new(GeminiAdapter::new(&model, Duration::from_secs(g.timeout_seconds))?), model)
+            (Arc::new(GeminiAdapter::new(&model, Duration::from_secs(g.timeout_seconds), system_prompt)?), model)
         }
         "groq" => {
             let g = config.groq.context("Missing groq config in ai.json")?;
             let model = g.model;
-            (Arc::new(GroqAdapter::new(&model, Duration::from_secs(g.timeout_seconds))?), model)
+            (Arc::new(GroqAdapter::new(&model, Duration::from_secs(g.timeout_seconds), system_prompt)?), model)
         }
         "ollama" => {
             let o = config.ollama.context("Missing ollama config in ai.json")?;
             let model = o.model;
-            (Arc::new(OllamaAdapter::new(&o.endpoint, &model, Duration::from_secs(o.timeout_seconds))?), model)
+            (Arc::new(OllamaAdapter::new(&o.endpoint, &model, Duration::from_secs(o.timeout_seconds), system_prompt)?), model)
         }
         other => bail!("Unsupported provider in evaluation: {}", other),
     };
     let engine = AiAnalysisEngine::new(provider);
     let provider_name = engine.provider_name().to_string();
-    let prompt_sha256 = calculate_sha256(teald::ai::adapters::common::SYSTEM_PROMPT.as_bytes());
     let runtime = tokio::runtime::Runtime::new().context("Cannot create Tokio runtime")?;
     let overall_start = Instant::now();
     let total_batches = batches.len();

@@ -1,24 +1,24 @@
 {
-  "version": "1.0",
-  "enabled": true,
-  "provider": "gemini",
-  "ollama": {
-    "endpoint": "http://127.0.0.1:11434",
-    "model": "qwen3:1.7b",
-    "timeout_seconds": 120
-  },
-  "groq": {
-    "model": "openai/gpt-oss-20b",
-    "timeout_seconds": 120
-  },
-  "gemini": {
-    "model": "gemini-3.8-flash",
-    "timeout_seconds": 120
-  },
-  "collector": {
-    "window_seconds": 60,
-    "max_events": 4096,
-    "event_queue_capacity": 8192,
-    "analysis_queue_capacity": 2
-  }
+    "version": "1.0",
+    "enabled": true,
+    "provider": "gemini",
+    "ollama": {
+        "endpoint": "http://127.0.0.1:11434",
+        "model": "qwen3:1.7b",
+        "timeout_seconds": 120
+    },
+    "groq": {
+        "model": "openai/gpt-oss-20b",
+        "timeout_seconds": 120
+    },
+    "gemini": {
+        "model": "gemini-3.8-flash",
+        "timeout_seconds": 120
+    },
+    "collector": {
+        "window_seconds": 60,
+        "max_events": 4096,
+        "event_queue_capacity": 8192,
+        "analysis_queue_capacity": 2
+    }
 }

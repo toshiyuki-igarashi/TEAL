@@ -1,0 +1,70 @@
+{
+  "report_version": "1.1",
+  "evaluated_at": "2026-10-23T09:21:01.046332231Z",
+  "provider_name": "gemini",
+  "model_name": "gemini-3.8-flash",
+  "config_sha256": "sha256:867a00f8932fc97834bb5ccb98a007bdc6167b42052461b6c1efbc21d22ff685",
+  "prompt_sha256": "sha256:77a2e222f579ceb878befff51e520ba0d3615bd2a0979a8de2c0c891d9d2c380",
+  "dataset_path": "tests/ai/smoke_test.jsonl",
+  "input_event_count": 10,
+  "aggregated_event_count": 9,
+  "batch_count": 1,
+  "elapsed_ms": 118801,
+  "batches": [
+    {
+      "batch_index": 1,
+      "analysis_id": "eval-b529d349-2072-469c-999a-7a94c2197e63",
+      "time_window_start": "2026-10-21T06:06:19.377772144Z",
+      "time_window_end": "2026-10-21T06:06:20.158371949Z",
+      "input_event_count": 10,
+      "aggregated_event_count": 9,
+      "target_event_ids": [
+        "207c28be-5ca4-444d-a72c-1f5fbda31a76",
+        "9be49b36-aa5c-4274-a61c-9a5f99313935",
+        "f89de4a2-b177-4c3d-9a44-a1929cbff4c8",
+        "18081a93-da48-4f7f-9b91-80e551e05491",
+        "964db90d-28e9-4e8c-b51c-8d834533eb59",
+        "946449f6-072a-4022-b0bf-a40296cbe99f",
+        "1d84cd2c-28ed-43ca-a084-0a56eb790ed1",
+        "23c8be3e-7fe1-4201-9b21-353a0487b250",
+        "58aab2fb-d583-4fc2-beaa-71b7daffca03",
+        "89a16d2a-3045-4e9d-ab62-97ae3fe4a7e3"
+      ],
+      "elapsed_ms": 118801,
+      "result": {
+        "analysis_id": "eval-b529d349-2072-469c-999a-7a94c2197e63",
+        "anomalies": []
+      },
+      "source_event_ids": {
+        "eval-b529d349-2072-469c-999a-7a94c2197e63-agg-2": [
+          "9be49b36-aa5c-4274-a61c-9a5f99313935"
+        ],
+        "eval-b529d349-2072-469c-999a-7a94c2197e63-agg-1": [
+          "207c28be-5ca4-444d-a72c-1f5fbda31a76"
+        ],
+        "eval-b529d349-2072-469c-999a-7a94c2197e63-agg-7": [
+          "1d84cd2c-28ed-43ca-a084-0a56eb790ed1"
+        ],
+        "eval-b529d349-2072-469c-999a-7a94c2197e63-agg-8": [
+          "23c8be3e-7fe1-4201-9b21-353a0487b250",
+          "58aab2fb-d583-4fc2-beaa-71b7daffca03"
+        ],
+        "eval-b529d349-2072-469c-999a-7a94c2197e63-agg-5": [
+          "964db90d-28e9-4e8c-b51c-8d834533eb59"
+        ],
+        "eval-b529d349-2072-469c-999a-7a94c2197e63-agg-6": [
+          "946449f6-072a-4022-b0bf-a40296cbe99f"
+        ],
+        "eval-b529d349-2072-469c-999a-7a94c2197e63-agg-3": [
+          "f89de4a2-b177-4c3d-9a44-a1929cbff4c8"
+        ],
+        "eval-b529d349-2072-469c-999a-7a94c2197e63-agg-4": [
+          "18081a93-da48-4f7f-9b91-80e551e05491"
+        ],
+        "eval-b529d349-2072-469c-999a-7a94c2197e63-agg-9": [
+          "89a16d2a-3045-4e9d-ab62-97ae3fe4a7e3"
+        ]
+      }
+    }
+  ]
+}

@@ -232,6 +232,8 @@ mod tests {
         Severity,
     };
     use crate::evidence::schema::LogType;
+    use crate::ai::PromptConfig;
+    use crate::ai::adapters::common::build_system_prompt;
 
     fn test_request() -> AiAnalysisRequest {
         let now = Utc::now();
@@ -534,6 +536,7 @@ mod tests {
                 "http://127.0.0.1:11434",
                 "qwen3:1.7b",
                 Duration::from_secs(120),
+                build_system_prompt(&PromptConfig::default()),
             )
             .unwrap(),
         );
@@ -570,6 +573,7 @@ mod tests {
                 "http://127.0.0.1:11434",
                 "qwen3:1.7b",
                 StdDuration::from_secs(180),
+                build_system_prompt(&PromptConfig::default()),
             )
             .unwrap(),
         );
