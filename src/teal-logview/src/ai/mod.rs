@@ -8,6 +8,7 @@
 pub mod dataset;
 pub mod eval;
 pub mod compare;
+pub mod generate;
 
 use std::path::Path;
 use anyhow::Result;
@@ -32,6 +33,8 @@ pub enum AiCommands {
 pub enum DatasetCommands {
     /// Create an AiEvent JSONL dataset from audit logs
     Create(dataset::CreateArgs),
+    /// Create an AiEvent JSONL dataset for AI test
+    Generate(generate::GenerateArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -47,6 +50,7 @@ pub fn run(command: AiCommands, audit_file: &Path) -> Result<()> {
     match command {
         AiCommands::Dataset { command } => match command {
             DatasetCommands::Create(args) => dataset::create(audit_file, args),
+            DatasetCommands::Generate(args) => generate::run(args),
         },
 
         AiCommands::Eval { command } => match command {

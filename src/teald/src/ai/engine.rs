@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::ai::error::AiError;
+use crate::ai::error::{AiError, ValidationCode, ValidationFailure};
 use crate::ai::provider::AiProvider;
 use crate::ai::types::{
     AiAnalysisRequest,
@@ -143,84 +143,52 @@ impl AiAnalysisEngine {
         Ok(())
     }
 
-    /// AI分析結果の整合性検証
+    /// AI分析結果の整合性検証。AI生成の値をエラーには記録しない。
     fn validate_result(
         request: &AiAnalysisRequest,
         provider_request: &AiProviderRequest,
         result: &AiAnalysisResult,
     ) -> Result<(), AiError> {
-        // 分析要求と応答の対応確認
-        if result.analysis_id != request.analysis_id {
-            return Err(AiError::InvalidResponse(
-                format!(
-                    "analysis_id mismatch: expected {}, got {}",
-                    request.analysis_id,
-                    result.analysis_id
-                )
-            ));
+        fn invalid(code: ValidationCode, field: &'static str, index: Option<usize>) -> AiError {
+            AiError::Validation(ValidationFailure::new(code, Some(field), index))
         }
-
-        // AIに提示した代表イベントID
+        if result.analysis_id != request.analysis_id {
+            return Err(invalid(ValidationCode::AnalysisIdMismatch, "analysis_id", None));
+        }
         let event_ids: HashSet<&str> = provider_request.events
             .iter()
             .flat_map(|event| event.evidence_event_ids.iter())
             .map(String::as_str)
             .collect();
-
         for (index, anomaly) in result.anomalies.iter().enumerate() {
-            // 確信度の検証
             if !anomaly.confidence_score.is_finite()
                 || !(0.0..=1.0).contains(&anomaly.confidence_score)
             {
-                return Err(AiError::InvalidResponse(
-                    format!(
-                        "Invalid confidence_score in anomaly {}",
-                        index
-                    )
-                ));
+                return Err(invalid(ValidationCode::InvalidConfidence, "confidence_score", Some(index)));
             }
-
-            // 異常には最低1件の根拠イベントが必要
             if anomaly.evidence_event_ids.is_empty() {
-                return Err(AiError::InvalidResponse(
-                    format!(
-                        "Missing evidence_event_ids in anomaly {}",
-                        index
-                    )
-                ));
+                return Err(invalid(ValidationCode::MissingEvidence, "evidence_event_ids", Some(index)));
             }
-
             if anomaly.evidence_event_ids.len() > 3 {
-                return Err(AiError::InvalidResponse(
-                    format!(
-                        "Too many evidence_event_ids in anomaly {}: {}",
-                        index,
-                        anomaly.evidence_event_ids.len()
-                    )
-                ));
+                return Err(invalid(ValidationCode::InvalidEvidenceCount, "evidence_event_ids", Some(index)));
             }
-
-            // 根拠イベントが入力に存在することを確認
             for id in &anomaly.evidence_event_ids {
                 if !event_ids.contains(id.as_str()) {
-                    return Err(AiError::InvalidResponse(
-                        format!(
-                            "Unknown evidence event_id: {}",
-                            id
-                        )
-                    ));
+                    return Err(invalid(ValidationCode::UnknownEvidenceId, "evidence_event_ids", Some(index)));
                 }
             }
         }
-
         Ok(())
     }
+
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Utc;
+    use crate::ai::PromptConfig;
+    use crate::ai::adapters::common::build_system_prompt;
 
     use crate::ai::adapters::mock::{
         MockAdapter,
@@ -232,8 +200,6 @@ mod tests {
         Severity,
     };
     use crate::evidence::schema::LogType;
-    use crate::ai::PromptConfig;
-    use crate::ai::adapters::common::build_system_prompt;
 
     fn test_request() -> AiAnalysisRequest {
         let now = Utc::now();
@@ -344,7 +310,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(AiError::InvalidResponse(_))
+            Err(AiError::Validation(_))
         ));
     }
 
@@ -371,7 +337,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(AiError::InvalidResponse(_))
+            Err(AiError::Validation(_))
         ));
     }
 
@@ -513,7 +479,7 @@ mod tests {
         // AIに提示した代表イベントIDには含まれない
         assert!(matches!(
             result,
-            Err(AiError::InvalidResponse(_))
+            Err(AiError::Validation(_))
         ));
 
         let provider_request = provider.last_request().unwrap();

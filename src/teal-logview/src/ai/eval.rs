@@ -27,6 +27,7 @@ use teald::ai::adapters::common;
 use teald::ai::engine::AiAnalysisEngine;
 use teald::ai::provider::AiProvider;
 use teald::ai::types::{AiAnalysisRequest, AiAnalysisResult, AiEvent};
+use teald::ai::error::AiError;
 use teald::ai::AiConfig;
 
 #[derive(Args, Debug)]
@@ -56,12 +57,26 @@ pub struct EvalBatchReport {
     pub time_window_start: DateTime<Utc>,
     pub time_window_end: DateTime<Utc>,
     pub input_event_count: usize,
-    pub aggregated_event_count: usize,
+    pub aggregated_event_count: Option<usize>,
     pub target_event_ids: Vec<String>,
     pub elapsed_ms: u64,
-    pub result: AiAnalysisResult,
-    /// aggregation_id -> original event IDs
+
+    pub result: Option<AiAnalysisResult>,
+
+    #[serde(default)]
+    pub error: Option<EvalBatchError>,
+
     pub source_event_ids: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EvalBatchError {
+    pub error_type: String,
+    pub code: Option<String>,
+    pub field: Option<String>,
+    pub anomaly_index: Option<usize>,
+    #[serde(default)]
+    pub http_status: Option<u16>,
 }
 
 /// Offline evaluation report with per-batch provenance.
@@ -185,29 +200,139 @@ pub fn run(args: EvalArgs) -> Result<()> {
             time_window_end,
             events: batch_events,
         };
+
         let started = Instant::now();
-        let outcome = runtime.block_on(engine.analyze_with_provenance(&request))
-            .with_context(|| format!("AI evaluation failed on batch {}", index + 1))?;
+
+        let outcome = runtime.block_on(
+            engine.analyze_with_provenance(&request)
+        );
+
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        aggregated_event_count += outcome.aggregated_event_count;
-        eprintln!("[INFO] Batch {}/{}: events={}, anomalies={}, elapsed={}ms",
-            index + 1, total_batches, request.events.len(), outcome.result.anomalies.len(), elapsed_ms);
-        batch_reports.push(EvalBatchReport {
-            batch_index: index + 1,
-            analysis_id: request.analysis_id,
-            time_window_start,
-            time_window_end,
-            input_event_count: request.events.len(),
-            aggregated_event_count: outcome.aggregated_event_count,
-            target_event_ids,
-            elapsed_ms,
-            result: outcome.result,
-            source_event_ids: outcome.source_event_ids,
-        });
+
+        match outcome {
+            Ok(outcome) => {
+                aggregated_event_count += outcome.aggregated_event_count;
+
+                eprintln!(
+                    "[INFO] Batch {}/{}: events={}, anomalies={}, elapsed={}ms",
+                    index + 1,
+                    total_batches,
+                    request.events.len(),
+                    outcome.result.anomalies.len(),
+                    elapsed_ms
+                );
+
+                batch_reports.push(EvalBatchReport {
+                    batch_index: index + 1,
+                    analysis_id: request.analysis_id,
+                    time_window_start,
+                    time_window_end,
+                    input_event_count: request.events.len(),
+                    aggregated_event_count: Some(outcome.aggregated_event_count),
+                    target_event_ids,
+                    elapsed_ms,
+                    result: Some(outcome.result),
+                    error: None,
+                    source_event_ids: outcome.source_event_ids,
+                });
+            }
+
+            Err(error) => {
+                let batch_error = match &error {
+                    AiError::Validation(failure) => EvalBatchError {
+                        error_type: "validation_failed".into(),
+                        code: Some(failure.code.as_str().to_owned()),
+                        field: failure.field.clone(),
+                        anomaly_index: failure.anomaly_index,
+                        http_status: None,
+                    },
+                    AiError::ProviderFailure(failure) => EvalBatchError {
+                        error_type: "provider_failed".into(),
+                        code: Some(failure.code.as_str().to_owned()),
+                        field: None,
+                        anomaly_index: None,
+                        http_status: failure.http_status,
+                    },
+                    AiError::Timeout => EvalBatchError {
+                        error_type: "provider_failed".into(),
+                        code: Some("timeout".into()),
+                        field: None,
+                        anomaly_index: None,
+                        http_status: None,
+                    },
+                    AiError::RateLimited { .. } => EvalBatchError {
+                        error_type: "provider_failed".into(),
+                        code: Some("rate_limited".into()),
+                        field: None,
+                        anomaly_index: None,
+                        http_status: None,
+                    },
+                    AiError::Authentication(_) => EvalBatchError {
+                        error_type: "provider_failed".into(),
+                        code: Some("authentication_error".into()),
+                        field: None,
+                        anomaly_index: None,
+                        http_status: None,
+                    },
+                    AiError::InvalidResponse(_) => EvalBatchError {
+                        error_type: "provider_failed".into(),
+                        code: Some("invalid_response".into()),
+                        field: None,
+                        anomaly_index: None,
+                        http_status: None,
+                    },
+                    AiError::InvalidRequest(_) => EvalBatchError {
+                        error_type: "invalid_request".into(),
+                        code: None,
+                        field: None,
+                        anomaly_index: None,
+                        http_status: None,
+                    },
+                    AiError::Unavailable(_) => EvalBatchError {
+                        error_type: "provider_failed".into(),
+                        code: Some("other".into()),
+                        field: None,
+                        anomaly_index: None,
+                        http_status: None,
+                    },
+                    AiError::Provider(_) => EvalBatchError {
+                        error_type: "provider_failed".into(),
+                        code: Some("other".into()),
+                        field: None,
+                        anomaly_index: None,
+                        http_status: None,
+                    },
+                };
+
+                eprintln!(
+                    "[WARN] Batch {}/{} failed: type={}, code={:?}, http_status={:?}, field={:?}",
+                    index + 1,
+                    total_batches,
+                    batch_error.error_type,
+                    batch_error.code,
+                    batch_error.http_status,
+                    batch_error.field,
+                );
+
+                batch_reports.push(EvalBatchReport {
+                    batch_index: index + 1,
+                    analysis_id: request.analysis_id,
+                    time_window_start,
+                    time_window_end,
+                    input_event_count: request.events.len(),
+                    aggregated_event_count: None,
+                    target_event_ids,
+                    elapsed_ms,
+                    result: None,
+                    error: Some(batch_error),
+                    source_event_ids: HashMap::new(),
+                });
+            }
+        }
     }
 
     let report = EvalReport {
-        report_version: "1.1".to_owned(),
+        report_version: "1.2".to_owned(),
         evaluated_at: Utc::now(),
         provider_name,
         model_name,

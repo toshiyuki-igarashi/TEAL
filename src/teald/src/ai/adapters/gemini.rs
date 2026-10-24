@@ -1,10 +1,20 @@
 // SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
+
 use std::sync::RwLock;
 use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
-use crate::ai::error::AiError;
+use crate::ai::error::{
+    AiError,
+    ProviderErrorCode,
+    ProviderFailure,
+};
 use crate::ai::provider::AiProvider;
 use crate::ai::types::{AiAnalysisResult, AiOperationalContext, AiProviderRequest};
 use super::common;
@@ -28,7 +38,10 @@ impl GeminiAdapter {
             .map_err(|_| AiError::Authentication("GEMINI_API_KEY is not set".into()))?;
         if api_key.trim().is_empty() { return Err(AiError::Authentication("GEMINI_API_KEY is empty".into())); }
         let client = Client::builder().timeout(timeout).build()
-            .map_err(|e| AiError::Provider(format!("HTTP client setup failed: {e}")))?;
+            .map_err(|_| AiError::ProviderFailure(ProviderFailure {
+                code: ProviderErrorCode::Other,
+                http_status: None,
+            }))?;
         Ok(Self { client, model: model.into(), api_key, system_prompt, operational_context: RwLock::new(None) })
     }
 }
@@ -54,6 +67,9 @@ impl AiProvider for GeminiAdapter {
             "generationConfig": {"responseMimeType": "application/json"}
         });
         let url = format!("{API_BASE}/{}:generateContent", self.model);
+
+        let started = std::time::Instant::now();
+
         let response = self.client.post(&url)
             .header("x-goog-api-key", &self.api_key)
             .json(&payload)
@@ -61,29 +77,44 @@ impl AiProvider for GeminiAdapter {
             .await
             .map_err(common::network_error)?;
 
+        let request_ms = started.elapsed().as_millis();
+
         let status = response.status();
 
+        eprintln!(
+            "[DEBUG] Gemini HTTP: status={}, request_ms={}",
+            status.as_u16(),
+            request_ms
+        );
+
         if !status.is_success() {
-            // responseを消費する前にヘッダー情報を取得
-            let delay = common::retry_after(response.headers());
-
-            // responseの所有権がここで移動する
-            let body = response.text().await.unwrap_or_default();
-
-            return Err(common::status_error(
-                "Gemini",
-                status,
-                &body,
-                delay,
-            ));
+            return Err(common::status_error(status));
         }
+
+        let invalid_response = || {
+            AiError::ProviderFailure(ProviderFailure {
+                code: ProviderErrorCode::InvalidResponse,
+                http_status: Some(status.as_u16()),
+            })
+        };
+
         let body: Value = response.json().await
-            .map_err(|e| AiError::InvalidResponse(format!("Gemini response was not JSON: {e}")))?;
-        let parts = body.pointer("/candidates/0/content/parts").and_then(Value::as_array)
-            .ok_or_else(|| AiError::InvalidResponse("Missing Gemini response parts (possibly blocked)".into()))?;
-        let content = parts.iter().filter_map(|part| part.get("text").and_then(Value::as_str))
+            .map_err(|_| invalid_response())?;
+
+        let parts = body
+            .pointer("/candidates/0/content/parts")
+            .and_then(Value::as_array)
+            .ok_or_else(invalid_response)?;
+
+        let content = parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
             .collect::<String>();
-        if content.is_empty() { return Err(AiError::InvalidResponse("Empty Gemini text response".into())); }
+
+        if content.is_empty() {
+            return Err(invalid_response());
+        }
+
         common::parse_output(&request.analysis_id, &content)
     }
 }

@@ -10,17 +10,20 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::Client;
-use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use crate::ai::error::AiError;
+use crate::ai::error::{
+    AiError,
+    ProviderErrorCode,
+    ProviderFailure,
+};
 use crate::ai::provider::AiProvider;
 use crate::ai::types::{
     AiProviderRequest,
     AiAnalysisResult,
-    AiAnomaly,
     AiOperationalContext,
 };
+use super::common;
 
 /// Ollama API /api/chat のリクエスト構造
 #[derive(Serialize)]
@@ -71,12 +74,6 @@ struct OllamaResponseMessage {
     content: String,
 }
 
-/// AIに出力させる構造体（anomalies のみ）
-#[derive(Deserialize)]
-struct RawModelOutput {
-    anomalies: Vec<AiAnomaly>,
-}
-
 /// Ollama を利用する AI プロバイダー
 pub struct OllamaAdapter {
     endpoint: String,
@@ -102,9 +99,10 @@ impl OllamaAdapter {
         let client = Client::builder()
             .timeout(timeout)
             .build()
-            .map_err(|e| AiError::Provider(
-                format!("Failed to create HTTP client: {e}")
-            ))?;
+            .map_err(|_| AiError::ProviderFailure(ProviderFailure {
+                code: ProviderErrorCode::Other,
+                http_status: None,
+            }))?;
 
         Ok(Self {
             endpoint: endpoint.trim_end_matches('/').to_string(),
@@ -203,17 +201,7 @@ impl AiProvider for OllamaAdapter {
     ) -> Result<AiAnalysisResult, AiError> {
         let url = format!("{}/api/chat", self.endpoint);
 
-        // 監査イベント一覧を JSON 文字列化してプロンプトに埋め込む
-        let events_json = serde_json::to_string(&request.events)
-            .map_err(|e| AiError::InvalidRequest(format!("Failed to serialize events: {e}")))?;
-
-        let user_content = format!(
-            "Host: {}\nTime Window: {} to {}\nEvents:\n{}",
-            request.host,
-            request.time_window_start.to_rfc3339(),
-            request.time_window_end.to_rfc3339(),
-            events_json
-        );
+        let user_content = common::user_prompt(request)?;
 
         let system_prompt = self.build_system_prompt();
 
@@ -238,50 +226,29 @@ impl AiProvider for OllamaAdapter {
             },
         };
 
-        let response = self
-            .client
+        let response = self.client
             .post(&url)
             .json(&req_payload)
             .send()
             .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    AiError::Timeout
-                } else {
-                    AiError::Unavailable(e.to_string())
-                }
-            })?;
+            .map_err(common::network_error)?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+        let status = response.status();
 
-            return Err(match status {
-                StatusCode::TOO_MANY_REQUESTS => {
-                    AiError::RateLimited {
-                        retry_after: None,
-                    }
-                }
-
-                StatusCode::BAD_REQUEST => {
-                    AiError::InvalidRequest(body)
-                }
-
-                StatusCode::SERVICE_UNAVAILABLE => {
-                    AiError::Unavailable(body)
-                }
-
-                _ => AiError::Provider(format!(
-                    "Ollama returned HTTP {}: {}",
-                    status, body
-                )),
-            });
+        if !status.is_success() {
+            return Err(common::status_error(status));
         }
 
         let chat_res: OllamaChatResponse = response
             .json()
             .await
-            .map_err(|e| AiError::InvalidResponse(format!("Failed to parse Ollama response: {e}")))?;
+            .map_err(|_| {
+                AiError::ProviderFailure(ProviderFailure {
+                    code: ProviderErrorCode::InvalidResponse,
+                    http_status: Some(status.as_u16()),
+                })
+            })?;
+
         eprintln!(
             "Ollama: prompt_tokens={}, output_tokens={}, \
              prompt_time={:.2}s, output_time={:.2}s, total={:.2}s",
@@ -292,17 +259,6 @@ impl AiProvider for OllamaAdapter {
             chat_res.total_duration as f64 / 1e9,
         );
 
-        let raw_output: RawModelOutput =
-            serde_json::from_str(&chat_res.message.content)
-                .map_err(|e| {
-                    AiError::InvalidResponse(format!(
-                        "Model output was not valid JSON: {e}"
-                    ))
-                })?;
-
-        Ok(AiAnalysisResult {
-            analysis_id: request.analysis_id.clone(),
-            anomalies: raw_output.anomalies,
-        })
+        common::parse_output(&request.analysis_id, &chat_res.message.content)
     }
 }

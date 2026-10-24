@@ -1,10 +1,20 @@
 // SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
+
 use std::sync::RwLock;
 use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::{Client, header};
 use serde_json::{json, Value};
-use crate::ai::error::AiError;
+use crate::ai::error::{
+    AiError,
+    ProviderErrorCode,
+    ProviderFailure,
+};
 use crate::ai::provider::AiProvider;
 use crate::ai::types::{AiAnalysisResult, AiOperationalContext, AiProviderRequest};
 use super::common;
@@ -27,7 +37,10 @@ impl GroqAdapter {
             .map_err(|_| AiError::Authentication("GROQ_API_KEY is not set".into()))?;
         if api_key.trim().is_empty() { return Err(AiError::Authentication("GROQ_API_KEY is empty".into())); }
         let client = Client::builder().timeout(timeout).build()
-            .map_err(|e| AiError::Provider(format!("HTTP client setup failed: {e}")))?;
+            .map_err(|_| AiError::ProviderFailure(ProviderFailure {
+                code: ProviderErrorCode::Other,
+                http_status: None,
+            }))?;
         Ok(Self { client, model: model.into(), api_key, system_prompt, operational_context: RwLock::new(None) })
     }
 }
@@ -58,17 +71,31 @@ impl AiProvider for GroqAdapter {
         });
         let response = self.client.post(API_URL)
             .header(header::AUTHORIZATION, format!("Bearer {}", self.api_key))
-            .json(&payload).send().await.map_err(common::network_error)?;
+            .json(&payload)
+            .send()
+            .await
+            .map_err(common::network_error)?;
+
         let status = response.status();
+
         if !status.is_success() {
-            let delay = common::retry_after(response.headers());
-            let body = response.text().await.unwrap_or_default();
-            return Err(common::status_error("Groq", status, &body, delay));
+            return Err(common::status_error(status));
         }
         let body: Value = response.json().await
-            .map_err(|e| AiError::InvalidResponse(format!("Groq response was not JSON: {e}")))?;
-        let content = body.pointer("/choices/0/message/content").and_then(Value::as_str)
-            .ok_or_else(|| AiError::InvalidResponse("Missing Groq message content".into()))?;
+            .map_err(|_| AiError::ProviderFailure(ProviderFailure {
+                code: ProviderErrorCode::InvalidResponse,
+                http_status: Some(status.as_u16()),
+            }))?;
+
+        let content = body
+            .pointer("/choices/0/message/content")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                AiError::ProviderFailure(ProviderFailure {
+                    code: ProviderErrorCode::InvalidResponse,
+                    http_status: Some(status.as_u16()),
+                })
+            })?;
         common::parse_output(&request.analysis_id, content)
     }
 }

@@ -68,6 +68,45 @@ pub struct CollectorConfig {
     pub analysis_queue_capacity: usize,
 }
 
+/// Curated few-shot input/output example. Not an AI-generated instruction.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PromptExample {
+    pub description: String,
+    pub input: serde_json::Value,
+    pub expected: serde_json::Value,
+}
+
+/// Reject malformed or excessively large examples at configuration load time.
+fn deserialize_examples<'de, D>(deserializer: D) -> Result<Vec<PromptExample>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    let examples = Vec::<PromptExample>::deserialize(deserializer)?;
+    if examples.len() > 8 {
+        return Err(D::Error::custom("prompt.examples exceeds 8 entries"));
+    }
+    for example in &examples {
+        if example.description.trim().is_empty() || example.description.len() > 256 {
+            return Err(D::Error::custom("prompt example description is invalid"));
+        }
+        if !example.input.is_object() || !example.expected.is_object() {
+            return Err(D::Error::custom("prompt example input/expected must be objects"));
+        }
+        let input = serde_json::to_string(&example.input).map_err(D::Error::custom)?;
+        let expected = serde_json::to_string(&example.expected).map_err(D::Error::custom)?;
+        if input.len() + expected.len() > 16 * 1024 {
+            return Err(D::Error::custom("prompt example exceeds 16 KiB"));
+        }
+        // Reuse the same structural validation as the actual model output.
+        if crate::ai::adapters::common::parse_output("example", &expected).is_err() {
+            return Err(D::Error::custom("prompt example expected output does not match AI output schema"));
+        }
+    }
+    Ok(examples)
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PromptConfig {
@@ -76,6 +115,9 @@ pub struct PromptConfig {
 
     #[serde(default)]
     pub custom_rules: Vec<String>,
+
+    #[serde(default, deserialize_with = "deserialize_examples")]
+    pub examples: Vec<PromptExample>,
 }
 
 pub struct AiRuntime {
