@@ -23,6 +23,7 @@ use crate::ai::types::{
     AiAnalysisResult,
     AiOperationalContext,
 };
+use crate::ai::validate_temperature;
 use super::common;
 
 /// Ollama API /api/chat のリクエスト構造
@@ -46,6 +47,9 @@ struct OllamaMessage<'a> {
 struct OllamaOptions {
     num_ctx: u32,
     num_predict: u32,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
 }
 
 /// Ollama API /api/chat のレスポンス構造
@@ -80,6 +84,7 @@ pub struct OllamaAdapter {
     model: String,
     client: Client,
     system_prompt: String,
+    temperature: Option<f32>,
     operational_context: RwLock<Option<AiOperationalContext>>,
 }
 
@@ -95,7 +100,9 @@ impl OllamaAdapter {
         model: &str,
         timeout: Duration,
         system_prompt: String,
+        temperature: Option<f32>,
     ) -> Result<Self, AiError> {
+        validate_temperature(temperature).map_err(AiError::InvalidRequest)?;
         let client = Client::builder()
             .timeout(timeout)
             .build()
@@ -109,6 +116,7 @@ impl OllamaAdapter {
             model: model.to_string(),
             client,
             system_prompt,
+            temperature,
             operational_context: RwLock::new(None),
         })
     }
@@ -223,6 +231,7 @@ impl AiProvider for OllamaAdapter {
             options: OllamaOptions {
                 num_ctx: 4096,
                 num_predict: 256,
+                temperature: self.temperature,
             },
         };
 

@@ -36,3 +36,9 @@ target
 # TEAL Alloy CLI Build Artifacts and Dependencies
 src/alloy-cli/*.class
 src/alloy-cli/*.jar
+
+# TEAL AI evaluation datasets generated from audit logs
+src/tests/*.jsonl
+src/tests/ai/*.jsonl
+src/results/*
+src/results/ai/*

@@ -42,6 +42,8 @@ pub struct AiConfig {
     pub collector: CollectorConfig,
     #[serde(default)]
     pub prompt: PromptConfig,
+    #[serde(default)]
+    pub aggregator: AggregatorConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +52,8 @@ pub struct OllamaConfig {
     pub endpoint: String,
     pub model: String,
     pub timeout_seconds: u64,
+    #[serde(default)]
+    pub temperature: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,6 +61,21 @@ pub struct OllamaConfig {
 pub struct CloudConfig {
     pub model: String,
     pub timeout_seconds: u64,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+}
+
+pub fn default_temperature() -> f32 {
+    0.1
+}
+
+pub fn validate_temperature(value: Option<f32>) -> Result<(), String> {
+    if let Some(t) = value {
+        if !t.is_finite() || !(0.0..=1.0).contains(&t) {
+            return Err("AI temperature must be between 0.0 and 1.0".into());
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +139,22 @@ pub struct PromptConfig {
     pub examples: Vec<PromptExample>,
 }
 
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AggregatorConfig {
+    pub max_gap_ms: u64,
+    pub max_group_events: u32,
+}
+
+impl Default for AggregatorConfig {
+    fn default() -> Self {
+        Self {
+            max_gap_ms: u64::MAX,
+            max_group_events: u32::MAX,
+        }
+    }
+}
+
 pub struct AiRuntime {
     pub engine: Arc<AiAnalysisEngine>,
     pub collector: AiCollectorConfig,
@@ -153,6 +188,11 @@ fn build_ai_runtime(config: AiConfig) -> Result<Option<AiRuntime>, String> {
     if c.window_seconds == 0 || c.max_events == 0 || c.event_queue_capacity == 0 || c.analysis_queue_capacity == 0 {
         return Err("AI collector settings must be greater than zero".into());
     }
+    if config.aggregator.max_group_events == 0 {
+        return Err(
+            "AI aggregator.max_group_events must be greater than zero".into()
+        );
+    }
     let system_prompt =
         adapters::common::build_system_prompt(&config.prompt);
 
@@ -167,24 +207,29 @@ fn build_ai_runtime(config: AiConfig) -> Result<Option<AiRuntime>, String> {
                 &o.model,
                 Duration::from_secs(o.timeout_seconds),
                 system_prompt,
+                o.temperature,
             ).map_err(|e| format!("Ollama provider initialization failed: {e}"))?;
             Arc::new(adapter)
         }
         "groq" => {
             let c = config.groq.ok_or("Missing groq configuration")?;
-            Arc::new(GroqAdapter::new(&c.model, Duration::from_secs(c.timeout_seconds), system_prompt)
+
+            Arc::new(GroqAdapter::new(&c.model, Duration::from_secs(c.timeout_seconds), system_prompt, c.temperature)
                 .map_err(|e| format!("Groq provider initialization failed: {e}"))?)
         }
         "gemini" => {
             let c = config.gemini.ok_or("Missing gemini configuration")?;
-            Arc::new(GeminiAdapter::new(&c.model, Duration::from_secs(c.timeout_seconds), system_prompt)
+            Arc::new(GeminiAdapter::new(&c.model, Duration::from_secs(c.timeout_seconds), system_prompt, c.temperature)
                 .map_err(|e| format!("Gemini provider initialization failed: {e}"))?)
         }
         other => return Err(format!("Unsupported AI provider: {other}")),
     };
 
     Ok(Some(AiRuntime {
-        engine: Arc::new(AiAnalysisEngine::new(provider)),
+        engine: Arc::new(AiAnalysisEngine::new(
+            provider,
+            config.aggregator,
+        )),
         collector: AiCollectorConfig {
             window: Duration::from_secs(c.window_seconds),
             max_events: c.max_events,
@@ -209,6 +254,7 @@ mod tests {
                 endpoint: "http://127.0.0.1:11434".into(),
                 model: "qwen3:1.7b".into(),
                 timeout_seconds: 120,
+                temperature: None,
             }),
             collector: CollectorConfig {
                 window_seconds: 60,
@@ -217,6 +263,7 @@ mod tests {
                 analysis_queue_capacity: 2,
             },
             prompt: PromptConfig::default(),
+            aggregator: AggregatorConfig::default(),
         }
     }
 

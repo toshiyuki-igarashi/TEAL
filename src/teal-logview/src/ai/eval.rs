@@ -142,6 +142,9 @@ pub fn run(args: EvalArgs) -> Result<()> {
     let config_sha256 = calculate_sha256(&config_raw);
     let config: AiConfig = serde_json::from_slice(&config_raw)
         .with_context(|| format!("Invalid AI config: {}", args.config.display()))?;
+    if config.aggregator.max_group_events == 0 {
+        bail!("AI aggregator.max_group_events must be greater than zero");
+    }
 
     let dataset_file = fs::File::open(&args.dataset)
         .with_context(|| format!("Cannot open dataset: {}", args.dataset.display()))?;
@@ -166,21 +169,21 @@ pub fn run(args: EvalArgs) -> Result<()> {
         "gemini" => {
             let g = config.gemini.context("Missing gemini config in ai.json")?;
             let model = g.model;
-            (Arc::new(GeminiAdapter::new(&model, Duration::from_secs(g.timeout_seconds), system_prompt)?), model)
+            (Arc::new(GeminiAdapter::new(&model, Duration::from_secs(g.timeout_seconds), system_prompt, g.temperature)?), model)
         }
         "groq" => {
             let g = config.groq.context("Missing groq config in ai.json")?;
             let model = g.model;
-            (Arc::new(GroqAdapter::new(&model, Duration::from_secs(g.timeout_seconds), system_prompt)?), model)
+            (Arc::new(GroqAdapter::new(&model, Duration::from_secs(g.timeout_seconds), system_prompt, g.temperature)?), model)
         }
         "ollama" => {
             let o = config.ollama.context("Missing ollama config in ai.json")?;
             let model = o.model;
-            (Arc::new(OllamaAdapter::new(&o.endpoint, &model, Duration::from_secs(o.timeout_seconds), system_prompt)?), model)
+            (Arc::new(OllamaAdapter::new(&o.endpoint, &model, Duration::from_secs(o.timeout_seconds), system_prompt, o.temperature)?), model)
         }
         other => bail!("Unsupported provider in evaluation: {}", other),
     };
-    let engine = AiAnalysisEngine::new(provider);
+    let engine = AiAnalysisEngine::new(provider, config.aggregator);
     let provider_name = engine.provider_name().to_string();
     let runtime = tokio::runtime::Runtime::new().context("Cannot create Tokio runtime")?;
     let overall_start = Instant::now();

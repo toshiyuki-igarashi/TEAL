@@ -17,6 +17,7 @@ use crate::ai::types::{
     AiProviderRequest,
 };
 use crate::ai::aggregator::aggregate_events;
+use crate::ai::AggregatorConfig;
 
 /// Providerが実際に評価した集約と、その全元イベントの対応関係を保持する。
 pub struct AiAnalysisOutcome {
@@ -28,12 +29,13 @@ pub struct AiAnalysisOutcome {
 /// AI分析の実行および結果検証を担当するエンジン
 pub struct AiAnalysisEngine {
     provider: Arc<dyn AiProvider>,
+    config: AggregatorConfig,
 }
 
 impl AiAnalysisEngine {
     /// AIプロバイダーを指定してエンジンを生成
-    pub fn new(provider: Arc<dyn AiProvider>) -> Self {
-        Self { provider }
+    pub fn new(provider: Arc<dyn AiProvider>, config: AggregatorConfig) -> Self {
+        Self { provider, config }
     }
 
     /// 使用中のプロバイダー名
@@ -77,6 +79,7 @@ impl AiAnalysisEngine {
         let aggregation = aggregate_events(
             &sorted_request.analysis_id,
             &sorted_request.events,
+            &self.config,
         );
 
         // Provider向けの要求を生成
@@ -252,7 +255,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_anomaly() {
         let provider = Arc::new(MockAdapter::new());
-        let engine = AiAnalysisEngine::new(provider);
+        let engine = AiAnalysisEngine::new(provider, AggregatorConfig::default());
 
         let result = engine.analyze(&test_request())
             .await
@@ -272,7 +275,7 @@ mod tests {
         );
 
         // providerをcloneしてEngineに渡す
-        let engine = AiAnalysisEngine::new(provider.clone());
+        let engine = AiAnalysisEngine::new(provider.clone(), AggregatorConfig::default());
 
         let mut request = test_request();
         request.events = vec![
@@ -301,7 +304,7 @@ mod tests {
             MockResponse::Success(vec![test_anomaly()])
         );
 
-        let engine = AiAnalysisEngine::new(provider);
+        let engine = AiAnalysisEngine::new(provider, AggregatorConfig::default());
 
         // 根拠イベントを含まない要求
         let request = test_request();
@@ -325,7 +328,7 @@ mod tests {
             MockResponse::Success(vec![anomaly])
         );
 
-        let engine = AiAnalysisEngine::new(provider);
+        let engine = AiAnalysisEngine::new(provider, AggregatorConfig::default());
 
         let mut request = test_request();
         request.events = vec![
@@ -346,7 +349,7 @@ mod tests {
         let provider = Arc::new(MockAdapter::new());
         provider.set_response(MockResponse::Timeout);
 
-        let engine = AiAnalysisEngine::new(provider);
+        let engine = AiAnalysisEngine::new(provider, AggregatorConfig::default());
 
         let result = engine.analyze(&test_request()).await;
 
@@ -359,7 +362,7 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_request() {
         let provider = Arc::new(MockAdapter::new());
-        let engine = AiAnalysisEngine::new(provider);
+        let engine = AiAnalysisEngine::new(provider, AggregatorConfig::default());
 
         let mut request = test_request();
         request.analysis_id.clear();
@@ -375,7 +378,7 @@ mod tests {
     #[tokio::test]
     async fn test_operational_context() {
         let provider = Arc::new(MockAdapter::new());
-        let engine = AiAnalysisEngine::new(provider.clone());
+        let engine = AiAnalysisEngine::new(provider.clone(), AggregatorConfig::default());
 
         let context = AiOperationalContext {
             description: "Monthly database backup".to_string(),
@@ -395,7 +398,7 @@ mod tests {
         use chrono::Duration;
 
         let provider = Arc::new(MockAdapter::new());
-        let engine = AiAnalysisEngine::new(provider.clone());
+        let engine = AiAnalysisEngine::new(provider.clone(), AggregatorConfig::default());
 
         let now = Utc::now();
         let mut request = test_request();
@@ -429,7 +432,7 @@ mod tests {
     #[tokio::test]
     async fn test_engine_aggregation() {
         let provider = Arc::new(MockAdapter::new());
-        let engine = AiAnalysisEngine::new(provider.clone());
+        let engine = AiAnalysisEngine::new(provider.clone(), AggregatorConfig::default());
 
         let mut request = test_request();
 
@@ -461,7 +464,7 @@ mod tests {
             MockResponse::Success(vec![anomaly])
         );
 
-        let engine = AiAnalysisEngine::new(provider.clone());
+        let engine = AiAnalysisEngine::new(provider.clone(), AggregatorConfig::default());
 
         let mut request = test_request();
 
@@ -503,11 +506,12 @@ mod tests {
                 "qwen3:1.7b",
                 Duration::from_secs(120),
                 build_system_prompt(&PromptConfig::default()),
+                None,
             )
             .unwrap(),
         );
 
-        let engine = AiAnalysisEngine::new(provider);
+        let engine = AiAnalysisEngine::new(provider, AggregatorConfig::default());
 
         let mut request = test_request();
         request.events = vec![
@@ -540,11 +544,12 @@ mod tests {
                 "qwen3:1.7b",
                 StdDuration::from_secs(180),
                 build_system_prompt(&PromptConfig::default()),
+                None,
             )
             .unwrap(),
         );
 
-        let engine = AiAnalysisEngine::new(provider);
+        let engine = AiAnalysisEngine::new(provider, AggregatorConfig::default());
 
         let mut request = test_request();
         let start = Utc::now();

@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::ai::types::AiEvent;
+use crate::ai::AggregatorConfig;
 use crate::evidence::schema::LogType;
 
 /// 引数パターンの客観的骨格（スケルトン）と統計
@@ -174,6 +175,7 @@ fn common_base_path(paths: &[&str]) -> String {
 pub fn aggregate_events(
     analysis_id: &str,
     events: &[AiEvent],
+    config: &AggregatorConfig,
 ) -> AiAggregationResult
 {
     if events.is_empty() {
@@ -194,7 +196,7 @@ pub fn aggregate_events(
                 current_block = Some(AggregatingBlock::new(event));
             }
             Some(mut block) => {
-                if block.can_merge(event) {
+                if block.can_merge(event, config) {
                     block.merge(event);
                     current_block = Some(block);
                 } else {
@@ -305,7 +307,21 @@ impl<'a> AggregatingBlock<'a> {
         }
     }
 
-    fn can_merge(&self, event: &AiEvent) -> bool {
+    fn can_merge(
+        &self,
+        event: &AiEvent,
+        config: &AggregatorConfig,
+    ) -> bool {
+        if self.event_count >= config.max_group_events {
+            return false;
+        }
+
+        let gap_ms = (event.timestamp - self.last_time).num_milliseconds();
+
+        if gap_ms < 0 || (gap_ms as u64) > config.max_gap_ms {
+            return false;
+        }
+
         // 主体、操作、認可状態の完全一致（epochは除外）
         if self.user != event.user
             || self.pid != event.pid
@@ -484,7 +500,7 @@ mod tests {
             })
             .collect();
 
-        let result = aggregate_events("A-001", &events);
+        let result = aggregate_events("A-001", &events, &AggregatorConfig::default());
 
         // 20件が1件の集約イベントに圧縮されること
         assert_eq!(result.events.len(), 1);
@@ -525,7 +541,7 @@ mod tests {
         let e1 = make_test_event("e1", now, "/a", None, Some("-s http://ex.com"), 1);
         let e2 = make_test_event("e2", now, "/a", None, Some("-X POST http://ex.com"), 1);
 
-        let result = aggregate_events("A-002", &[e1, e2]);
+        let result = aggregate_events("A-002", &[e1, e2], &AggregatorConfig::default());
 
         // 2つの集約グループが生成される
         assert_eq!(result.events.len(), 2);
@@ -558,7 +574,7 @@ mod tests {
             Some("--output=file2.txt /data/b"), 1,
         );
 
-        let result = aggregate_events("A-003", &[e1, e2]);
+        let result = aggregate_events("A-003", &[e1, e2], &AggregatorConfig::default());
 
         assert_eq!(result.events.len(), 1);
 
@@ -573,6 +589,65 @@ mod tests {
             result.source_event_ids[&agg.aggregation_id],
             vec!["e1", "e2"]
         );
+    }
+
+    #[test]
+    fn test_aggregation_max_group_events() {
+        let start = Utc::now();
+
+        let events: Vec<AiEvent> = (0..100)
+            .map(|i| {
+                make_test_event(
+                    &format!("evt-{i:03}"),
+                    start + ChronoDuration::milliseconds(i * 100),
+                    &format!("/data/file-{i:03}"),
+                    None,
+                    None,
+                    1,
+                )
+            })
+            .collect();
+
+        let config = AggregatorConfig {
+            max_gap_ms: 1000,
+            max_group_events: 50,
+        };
+
+        let result = aggregate_events("test", &events, &config);
+
+        assert_eq!(result.events.len(), 2);
+        assert_eq!(result.events[0].event_count, 50);
+        assert_eq!(result.events[1].event_count, 50);
+    }
+
+    #[test]
+    fn test_aggregation_max_gap() {
+        let start = Utc::now();
+
+        let events = vec![
+            make_test_event("e1", start, "/a", None, None, 1),
+            make_test_event(
+                "e2",
+                start + ChronoDuration::milliseconds(500),
+                "/b", None, None, 1,
+            ),
+            make_test_event(
+                "e3",
+                start + ChronoDuration::milliseconds(2500),
+                "/c", None, None, 1,
+            ),
+        ];
+
+        let config = AggregatorConfig {
+            max_gap_ms: 1000,
+            max_group_events: 100,
+        };
+
+        let result = aggregate_events("test", &events, &config);
+
+        assert_eq!(result.events.len(), 2);
+        assert_eq!(result.events[0].event_count, 2);
+        assert_eq!(result.events[1].event_count, 1);
     }
 }
 
