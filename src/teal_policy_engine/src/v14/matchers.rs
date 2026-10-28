@@ -6,30 +6,28 @@
  */
 use std::path::Path;
 
-use crate::types::{Action, SystemType};
-use crate::ir::{ CompiledRule, AccessContext, SubjectMatcher, LoginContextMatcher,
-    ObjectMatcher, ActionMatcher, PathMatcher, ObjectKind
+use crate::ir::{
+    AccessContext, ActionMatcher, CompiledRule, LoginContextMatcher, ObjectKind, ObjectMatcher,
+    PathMatcher, SubjectMatcher,
 };
+use crate::types::{Action, SystemType};
 
 pub fn rule_matches(rule: &CompiledRule, ctx: &AccessContext, system_type: SystemType) -> bool {
     // .as_deref() を使うことで、Option<PathBuf> を Option<&Path> に変換できます
     if match_object(
-        &rule.object, 
-        &ctx.object_path, 
+        &rule.object,
+        &ctx.object_path,
         ctx.object_new_path.as_deref(),
-        ctx.object_kind
-    ) && match_action(&rule.action_match, ctx.action) {
+        ctx.object_kind,
+    ) && match_action(&rule.action_match, ctx.action)
+    {
         match_subject(&rule.subject, ctx, system_type)
     } else {
         false
     }
 }
 
-pub fn match_subject(
-    m: &SubjectMatcher, 
-    ctx: &AccessContext, 
-    system_type: SystemType
-) -> bool {
+pub fn match_subject(m: &SubjectMatcher, ctx: &AccessContext, system_type: SystemType) -> bool {
     // 1) uid match
     if let Some(rule_uid) = m.uid {
         if ctx.uid != rule_uid {
@@ -38,10 +36,13 @@ pub fn match_subject(
     }
 
     // 2) roles match (OR)
-    if !m.required_roles.is_empty() {
-        if !m.required_roles.iter().any(|r| ctx.subject_roles.contains(r)) {
-            return false;
-        }
+    if !m.required_roles.is_empty()
+        && !m
+            .required_roles
+            .iter()
+            .any(|r| ctx.subject_roles.contains(r))
+    {
+        return false;
     }
 
     // 3) origin_program match
@@ -89,19 +90,20 @@ pub fn match_subject(
 
 /// PAMセッションと実行時TTYに基づく高度な環境コンテキスト評価を行う
 fn match_login_context(
-    login_ctx: &LoginContextMatcher, 
-    ctx: &AccessContext, 
-    system_type: SystemType
+    login_ctx: &LoginContextMatcher,
+    ctx: &AccessContext,
+    system_type: SystemType,
 ) -> bool {
     // --- 1. 対話型TTY要求の評価 ---
     if login_ctx.require_interactive_tty {
-        let is_cui_terminal = ctx.session_tty.starts_with("pts") || ctx.session_tty.starts_with("tty");
-        
+        let is_cui_terminal =
+            ctx.session_tty.starts_with("pts") || ctx.session_tty.starts_with("tty");
+
         let is_allowed_terminal = match system_type {
             SystemType::Server => is_cui_terminal,
             SystemType::Workstation => is_cui_terminal || ctx.session_tty.starts_with(':'),
         };
-        
+
         if !is_allowed_terminal {
             return false;
         }
@@ -115,7 +117,7 @@ fn match_login_context(
                 // a) 認証方式の厳格照合
                 if let Some(required_auth) = &login_ctx.auth_method {
                     if session.auth_method.as_ref() != Some(required_auth) {
-                        return false; 
+                        return false;
                     }
                 }
 
@@ -136,7 +138,7 @@ fn match_login_context(
                     }
                 }
             }
-            
+
             // 【B】PAM台帳に直接の一致が見つからなかった場合
             None => {
                 match system_type {
@@ -147,8 +149,9 @@ fn match_login_context(
                     SystemType::Workstation => {
                         // ワークステーション環境におけるGUI由来プロセスの遅延救済
                         // IPや認証方式のファクト要求がある場合は、データがないため安全側に倒して拒否する
-                        if login_ctx.auth_method.is_some() || login_ctx.source_ip_network.is_some() {
-                            return false; 
+                        if login_ctx.auth_method.is_some() || login_ctx.source_ip_network.is_some()
+                        {
+                            return false;
                         }
                         // 要求が単なる bind_registered_session だけであれば、GUIセッションとして救済（trueを返す）
                     }
@@ -171,10 +174,10 @@ fn pathmatcher_matches(pm: &PathMatcher, path: &Path) -> bool {
 }
 
 pub fn match_object(
-    om: &Option<ObjectMatcher>, 
+    om: &Option<ObjectMatcher>,
     object_path: &Path,
     object_new_path: Option<&Path>,
-    object_kind: Option<ObjectKind>
+    object_kind: Option<ObjectKind>,
 ) -> bool {
     // 1. ルールに object 定義がない (subject_only) 場合はパス評価をスキップ
     let matcher = match om {
@@ -222,4 +225,3 @@ pub fn match_action(m: &ActionMatcher, action: Action) -> bool {
         ActionMatcher::OneOf(set) => set.contains(&action),
     }
 }
-

@@ -4,16 +4,16 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::fmt;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use globset::Glob;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::path::{Path, PathBuf};
 
-use crate::types::{Effect, AuditLevel, Action, SystemType, RuleType};
 use crate::errors::CompileWarnings;
 use crate::raw::{RawPreApprovalDefaults, RawTicketProfile};
-use crate::raw::{TEAL_TICKET_FLG_SILENT_IO, TEAL_TICKET_FLG_INHERIT};
+use crate::raw::{TEAL_TICKET_FLG_INHERIT, TEAL_TICKET_FLG_SILENT_IO};
+use crate::types::{Action, AuditLevel, Effect, RuleType, SystemType};
 
 #[derive(Debug)]
 pub struct CompiledPolicy {
@@ -33,7 +33,6 @@ pub struct CompiledPolicy {
     pub pre_approval_defaults: CompiledPreApprovalDefaults,
 
     // ---- 互換・既存 decide() API 用 ----
-
     /// マッチしなかった場合のデフォルト effect
     pub default_effect: Effect,
 
@@ -49,16 +48,13 @@ pub struct CompiledPolicy {
 
 impl CompiledPolicy {
     /// 別の CompiledPolicy を自身にマージします。
-    pub fn merge(
-        &mut self,
-        next: CompiledPolicy,
-        warnings: &mut CompileWarnings,
-    ) -> Result<()> {
+    pub fn merge(&mut self, next: CompiledPolicy, warnings: &mut CompileWarnings) -> Result<()> {
         // 1) version は一致必須
         if self.version != next.version {
             return Err(anyhow!(
                 "policy version mismatch: base={:?} next={:?}",
-                self.version, next.version
+                self.version,
+                next.version
             ));
         }
 
@@ -167,9 +163,15 @@ impl ManagedScopeIndex {
         globs: &mut Vec<globset::GlobMatcher>,
     ) {
         match pm {
-            PathMatcher::Exact(p) => { exact.insert(p.clone()); },
-            PathMatcher::Prefix(p) => { prefixes.push(p.clone()); },
-            PathMatcher::Glob { matcher, .. } => { globs.push(matcher.clone()); },
+            PathMatcher::Exact(p) => {
+                exact.insert(p.clone());
+            }
+            PathMatcher::Prefix(p) => {
+                prefixes.push(p.clone());
+            }
+            PathMatcher::Glob { matcher, .. } => {
+                globs.push(matcher.clone());
+            }
         }
     }
 
@@ -227,14 +229,23 @@ impl ManagedScopeIndex {
             // 2. SubjectOnly ルールの場合
             if r.rule_type == RuleType::SubjectOnly {
                 if let Some(pm) = &r.subject.origin_program {
-                    Self::add_matcher(pm, &mut subject_exact, &mut subject_prefix, &mut subject_glob);
+                    Self::add_matcher(
+                        pm,
+                        &mut subject_exact,
+                        &mut subject_prefix,
+                        &mut subject_glob,
+                    );
                 }
             }
         }
 
         ManagedScopeIndex {
-            exact_paths, prefixes, globs,
-            subject_exact, subject_prefix, subject_glob,
+            exact_paths,
+            prefixes,
+            globs,
+            subject_exact,
+            subject_prefix,
+            subject_glob,
         }
     }
 
@@ -260,9 +271,9 @@ impl ManagedScopeIndex {
 
         // 3. Subject (origin_program) が SubjectOnly ルールの対象かチェック
         if let Some(prog) = &ctx.origin_program {
-            if self.subject_exact.contains(prog) 
+            if self.subject_exact.contains(prog)
                 || self.subject_prefix.iter().any(|p| prog.starts_with(p))
-                || self.subject_glob.iter().any(|g| g.is_match(prog)) 
+                || self.subject_glob.iter().any(|g| g.is_match(prog))
             {
                 return true;
             }
@@ -285,7 +296,7 @@ pub struct CompiledRule {
     pub id: String,
     pub source_file: Option<String>,
     pub description: Option<String>,
-    pub rule_type: RuleType, 
+    pub rule_type: RuleType,
     pub effect: Effect,
     pub max_uses: u32,
 
@@ -336,7 +347,7 @@ impl CompiledRule {
             },
             audit_level: AuditLevel::Standard,
             out_reason: reason.to_string(),
-            ticket_profile: TicketProfile{ flags: 0 },
+            ticket_profile: TicketProfile { flags: 0 },
         }
     }
 }
@@ -358,16 +369,24 @@ impl CompiledRule {
 
     pub fn calculate_specificity(&self) -> Specificity {
         // object が None、あるいは object.path が None の場合は false (Exactではない)
-        let obj_exact = self.object.as_ref()
+        let obj_exact = self
+            .object
+            .as_ref()
             .and_then(|obj| obj.path.as_ref())
-            .map_or(false, |path| path.is_exact()); // PathMatcher::is_exact() がある前提
-        
+            .is_some_and(|path| path.is_exact()); // PathMatcher::is_exact() がある前提
+
         // Subjectの評価
-        let prog_exact = self.subject.origin_program.as_ref()
-            .map_or(false, |p| p.is_exact());
-            
-        let script_exact = self.subject.origin_script.as_ref()
-            .map_or(false, |p| p.is_exact());
+        let prog_exact = self
+            .subject
+            .origin_program
+            .as_ref()
+            .is_some_and(|p| p.is_exact());
+
+        let script_exact = self
+            .subject
+            .origin_script
+            .as_ref()
+            .is_some_and(|p| p.is_exact());
 
         // 1. すべてがExactなら最高優先度
         if obj_exact && prog_exact && script_exact {
@@ -391,7 +410,9 @@ pub struct TicketProfile {
 
 impl TicketProfile {
     pub fn from_raw(raw: &RawTicketProfile) -> Self {
-        Self { flags: raw.to_u32() }
+        Self {
+            flags: raw.to_u32(),
+        }
     }
 
     #[inline]
@@ -450,7 +471,7 @@ pub struct LoginContextMatcher {
 #[derive(Debug, Clone)]
 pub struct TimeConstraintMatcher {
     // 例: ["Mon", "Tue"] を 曜日enumのHashSetやビットマスクに変換したもの
-    pub allowed_days: HashSet<chrono::Weekday>, 
+    pub allowed_days: HashSet<chrono::Weekday>,
 
     // 例: "09:00" -> 9 * 60 = 540分 のように、深夜0時からの分数に変換しておくと高速
     pub start_minutes_from_midnight: u32,
@@ -460,10 +481,10 @@ pub struct TimeConstraintMatcher {
 #[derive(Debug, Clone, Default)]
 pub struct ObjectMatcher {
     pub path: Option<PathMatcher>,
-    
+
     // RENAME等の操作における Destination Path (移動先)
     pub new_path: Option<PathMatcher>,
-    
+
     pub kind: Option<ObjectKind>,
 }
 
@@ -538,17 +559,15 @@ impl PartialEq for PathMatcher {
         match (self, other) {
             (PathMatcher::Exact(a), PathMatcher::Exact(b)) => a == b,
             (PathMatcher::Prefix(a), PathMatcher::Prefix(b)) => a == b,
-            (
-                PathMatcher::Glob { pattern: pa, .. },
-                PathMatcher::Glob { pattern: pb, .. },
-            ) => pa == pb,
+            (PathMatcher::Glob { pattern: pa, .. }, PathMatcher::Glob { pattern: pb, .. }) => {
+                pa == pb
+            }
             _ => false,
         }
     }
 }
 
-impl Eq for PathMatcher {
-}
+impl Eq for PathMatcher {}
 
 impl fmt::Display for PathMatcher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -573,10 +592,8 @@ impl ActionMatcher {
     /// 含まれているアクションの中から、任意の1つを取得します。
     pub fn pick_one(&self) -> Action {
         match self {
-            Self::OneOf(set) => {
-                set.iter().next().cloned().unwrap_or(Action::Unknown)
-            }
-            Self::Any => Action::Unknown, 
+            Self::OneOf(set) => set.iter().next().cloned().unwrap_or(Action::Unknown),
+            Self::Any => Action::Unknown,
         }
     }
 
@@ -635,15 +652,15 @@ pub enum AuditSpec {
 #[derive(Debug, Clone)]
 pub struct AccessContext {
     pub uid: u32,
-    pub subject_roles: HashSet<String>,     // 要求主体が持つロール集合
+    pub subject_roles: HashSet<String>, // 要求主体が持つロール集合
     pub origin_program: Option<PathBuf>,
     pub origin_script: Option<PathBuf>,
     pub origin_applet: Option<String>,
     pub action: Action,
-    pub object_path: PathBuf,               // Source Path
-    pub object_new_path: Option<PathBuf>,   // Destination Path (RENAME時のみ使用)
+    pub object_path: PathBuf,             // Source Path
+    pub object_new_path: Option<PathBuf>, // Destination Path (RENAME時のみ使用)
     pub object_kind: Option<ObjectKind>,
-    pub session_tty: String,                // カーネルから来た生のTTY文字列 (例: "pts/0")
+    pub session_tty: String, // カーネルから来た生のTTY文字列 (例: "pts/0")
     pub registered_session: Option<RegisteredSession>,
 }
 
@@ -753,4 +770,3 @@ pub struct CompiledBundle {
     pub roles: CompiledRolesCore,
     pub warnings: CompileWarnings,
 }
-

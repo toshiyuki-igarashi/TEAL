@@ -4,8 +4,8 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
+use crate::ir::{AccessContext, CompiledPolicy, Decision};
 use crate::matchers::rule_matches;
-use crate::ir::{CompiledPolicy, AccessContext, Decision};
 
 pub fn evaluate<'a>(policy: &'a CompiledPolicy, ctx: &AccessContext) -> Decision<'a> {
     if !policy.scope.is_request_managed(ctx) {
@@ -20,4 +20,3 @@ pub fn evaluate<'a>(policy: &'a CompiledPolicy, ctx: &AccessContext) -> Decision
 
     Decision::NoMatchManaged
 }
-

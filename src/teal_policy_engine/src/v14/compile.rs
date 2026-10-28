@@ -4,26 +4,25 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
+use anyhow::{anyhow, Result};
+use chrono::Weekday;
+use globset::Glob;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use globset::Glob;
-use chrono::Weekday;
-use anyhow::{anyhow, Result};
 
-use crate::types::{Effect, Action};
-use crate::raw::{
-    RawRolesV1, RawPolicyV14, RawRule, RawSubject, RawObject, RawAction, RawRoleDef,
-    RawDefaults, RawAssignment, RawGroupAssignment, RawPreApprovalDefaults, RawPreApproval,
-    RawTimeConstraint
-};
+use crate::errors::{CompileError, CompileWarnings};
 use crate::ir::{
-    CompiledRolesCore, RoleMeta, RoleCatalog, CompiledDefaults, CompiledPreApprovalDefaults,
-    SubjectRoleIndex, GroupRoleIndex, CompiledRoles, CompiledPolicy, ManagedScopeIndex,
-    PolicyVersion, CompiledRule, SubjectMatcher, ObjectMatcher, ActionMatcher,
-    MpaMatcher, AuditCfg, PathMatcher, CompiledPreApproval, TicketProfile, LoginContextMatcher,
-    TimeConstraintMatcher
+    ActionMatcher, AuditCfg, CompiledDefaults, CompiledPolicy, CompiledPreApproval,
+    CompiledPreApprovalDefaults, CompiledRoles, CompiledRolesCore, CompiledRule, GroupRoleIndex,
+    LoginContextMatcher, ManagedScopeIndex, MpaMatcher, ObjectMatcher, PathMatcher, PolicyVersion,
+    RoleCatalog, RoleMeta, SubjectMatcher, SubjectRoleIndex, TicketProfile, TimeConstraintMatcher,
 };
-use crate::errors::{CompileWarnings, CompileError};
+use crate::raw::{
+    RawAction, RawAssignment, RawDefaults, RawGroupAssignment, RawObject, RawPolicyV14,
+    RawPreApproval, RawPreApprovalDefaults, RawRoleDef, RawRolesV1, RawRule, RawSubject,
+    RawTimeConstraint,
+};
+use crate::types::{Action, Effect};
 use crate::util::name_to_uid;
 
 pub fn compile_roles_v1(
@@ -53,10 +52,20 @@ pub fn compile_roles_v1(
     let compiled_defaults = compile_defaults(defaults, &role_catalog, &mut warnings)?;
 
     // 5) Compile Assignments (Consumes `assignments` vec)
-    let compiled_assignments = compile_assignments(assignments, &role_catalog, &compiled_defaults, &mut warnings)?;
+    let compiled_assignments = compile_assignments(
+        assignments,
+        &role_catalog,
+        &compiled_defaults,
+        &mut warnings,
+    )?;
 
     // 6) Compile Group Assignments (Consumes `group_assignments` vec)
-    let compiled_group_assignments = compile_group_assignments(group_assignments, &role_catalog, &compiled_defaults, &mut warnings)?;
+    let compiled_group_assignments = compile_group_assignments(
+        group_assignments,
+        &role_catalog,
+        &compiled_defaults,
+        &mut warnings,
+    )?;
 
     let compiled = CompiledRolesCore {
         roles: role_catalog,
@@ -89,7 +98,9 @@ fn build_role_catalog(
         } = r;
 
         let (name, name_warnings) = normalize_name("role", &raw_name)?;
-        for w in name_warnings { warnings.warn(w); }
+        for w in name_warnings {
+            warnings.warn(w);
+        }
 
         validate_role_name(&name)?;
 
@@ -105,14 +116,20 @@ fn build_role_catalog(
 
         let (deduped_perms, perm_warns) = dedup_vec_keep_order(permissions, |x| x.clone());
         for w in perm_warns {
-            warnings.warn(format!("duplicate permission removed: role={} permission={}", name, w));
+            warnings.warn(format!(
+                "duplicate permission removed: role={} permission={}",
+                name, w
+            ));
         }
 
         // Description logic
         let desc_final = description.and_then(|d| {
             let t = d.trim().to_string();
             if t.is_empty() {
-                warnings.warn(format!("empty description normalized to None: role={}", name));
+                warnings.warn(format!(
+                    "empty description normalized to None: role={}",
+                    name
+                ));
                 None
             } else if t != d {
                 warnings.warn(format!("description trimmed: role={}", name));
@@ -168,7 +185,11 @@ fn compile_assignments(
     let mut index = SubjectRoleIndex::default();
 
     for a in raw_assignments {
-        let RawAssignment { uid, user, roles: raw_role_list } = a;
+        let RawAssignment {
+            uid,
+            user,
+            roles: raw_role_list,
+        } = a;
 
         // 1) uid/user の指定矛盾などは従来の正規化ロジックを使う
         let target = normalize_assignment_target(uid, user.as_deref())?;
@@ -244,7 +265,11 @@ fn compile_group_assignments(
     }
 
     for ga in raw_group_assignments {
-        let RawGroupAssignment { gid, group, roles: raw_role_list } = ga;
+        let RawGroupAssignment {
+            gid,
+            group,
+            roles: raw_role_list,
+        } = ga;
 
         let target = normalize_group_assignment_target(gid, group.as_deref())?;
         let context = target.context_string();
@@ -276,7 +301,7 @@ fn compile_group_assignments(
             GroupAssignmentTarget::Group(g) => {
                 // 先に context 文字列を作成して g を借用する
                 let context = format!("group_assignments[group={}]", g);
-                
+
                 merge_role_set(
                     &mut index.group_roles,
                     g, // ここで g (String) の所有権を移動(Move)させる
@@ -284,7 +309,7 @@ fn compile_group_assignments(
                     warnings,
                     &context,
                 )
-            },
+            }
         }
     }
     Ok(index)
@@ -293,7 +318,7 @@ fn compile_group_assignments(
 /// 共通ロジック: ロール名リスト(Raw)を受け取り、正規化・検証・重複排除を行って Set を返す
 /// 入力の raw_role_refs (Vec<String>) は消費されるため、無駄なコピーが発生しない
 fn resolve_roles(
-    raw_role_refs: Vec<String>, 
+    raw_role_refs: Vec<String>,
     roles: &RoleCatalog,
     deny_if_unknown: bool,
     context: &str,
@@ -304,7 +329,9 @@ fn resolve_roles(
     for rr in raw_role_refs {
         // normalize_name は内部でString生成が必要なシグネチャのため、ここでは参照を渡す
         let (role, ws) = normalize_name(&format!("role_ref({})", context), &rr)?;
-        for w in ws { warnings.warn(w); }
+        for w in ws {
+            warnings.warn(w);
+        }
 
         if !roles.known_roles.contains(&role) {
             if deny_if_unknown {
@@ -359,15 +386,15 @@ fn normalize_name(kind: &str, s: &str) -> Result<(String, Vec<String>), CompileE
     }
     let mut ws = vec![];
     if trimmed != s {
-        ws.push(format!("{} normalized by trim: '{}' -> '{}'", kind, s, trimmed));
+        ws.push(format!(
+            "{} normalized by trim: '{}' -> '{}'",
+            kind, s, trimmed
+        ));
     }
     Ok((trimmed.to_string(), ws))
 }
 
-fn dedup_vec_keep_order<T, K>(
-    v: Vec<T>,
-    key_fn: impl Fn(&T) -> K,
-) -> (Vec<T>, Vec<K>)
+fn dedup_vec_keep_order<T, K>(v: Vec<T>, key_fn: impl Fn(&T) -> K) -> (Vec<T>, Vec<K>)
 where
     K: std::hash::Hash + Eq,
 {
@@ -475,7 +502,7 @@ fn normalize_group_assignment_target(
         }
     }
 }
-    
+
 fn validate_pre_approval_defaults(p: &RawPreApprovalDefaults) -> Result<(), CompileError> {
     if let Some(max) = p.ttl_sec_max {
         if p.ttl_sec_default > max {
@@ -519,7 +546,12 @@ pub fn compile_policy_v14(
 
     for rr in raw.rules {
         // ※ルールのコンパイル関数も v14 用を呼ぶ想定
-        let rule = compile_rule_v14(&rr, pre_approval_defaults.ttl_sec_default, roles, &mut warnings)?;
+        let rule = compile_rule_v14(
+            &rr,
+            pre_approval_defaults.ttl_sec_default,
+            roles,
+            &mut warnings,
+        )?;
         compiled_rules.push(rule);
     }
 
@@ -538,14 +570,16 @@ pub fn compile_policy_v14(
 
     let policy = CompiledPolicy {
         version: PolicyVersion::V1_4,
-        system_type: raw.system_type, 
+        system_type: raw.system_type,
         rules: compiled_rules,
         scope,
         pre_approval_defaults,
 
         // default_effect は Effect Enum のまま unwrap (文字列変換不要)
         default_effect: raw.default_effect.unwrap_or(Effect::Deny),
-        default_reason: raw.default_reason.unwrap_or_else(|| "no matching rule".to_string()),
+        default_reason: raw
+            .default_reason
+            .unwrap_or_else(|| "no matching rule".to_string()),
 
         // TTLとSweepの設定をコピー
         ttl_minutes: raw.ttl_minutes,
@@ -601,15 +635,19 @@ pub fn compile_rule_v14(
     // --- matchers ---
     let subject: SubjectMatcher = compile_subject_v14(&rule.subject, roles, warnings);
     let time_constraints = compile_time_constraints_v14(&rule.time_constraints, warnings)?;
-    let object: Option<ObjectMatcher> = compile_object_v14(&rule.object)?; 
+    let object: Option<ObjectMatcher> = compile_object_v14(&rule.object)?;
     let action_match: ActionMatcher = compile_action_v14(&rule.action, warnings)?;
 
     // --- approval / audit ---
-    
+
     // 1. RawRule から値を取り出し、デフォルト値を適用
     //    スキーマで "need_approval" 時は必須だが、Rust上は Option なので unwrap_or で安全策をとる
     let raw_threshold = rule.mpa.as_ref().map(|m| m.threshold).unwrap_or(0);
-    let raw_roles = rule.mpa.as_ref().map(|m| m.approver_roles.clone()).unwrap_or_default();
+    let raw_roles = rule
+        .mpa
+        .as_ref()
+        .map(|m| m.approver_roles.clone())
+        .unwrap_or_default();
 
     // 2. MpaMatcher の構築
     //    threshold が 1以上、または required_roles が指定されている場合に MpaMatcher を作成する
@@ -640,7 +678,7 @@ pub fn compile_rule_v14(
         }
     };
 
-        // --- pre_approval (Raw -> Compiled) ---
+    // --- pre_approval (Raw -> Compiled) ---
     let pre_approval = match &rule.pre_approval {
         Some(p) => CompiledPreApproval {
             enabled: p.enabled,
@@ -658,7 +696,7 @@ pub fn compile_rule_v14(
         description: rule.description.clone(),
         rule_type: rule.rule_type,
         effect: rule.effect,
-        audit_level: rule.audit_level.clone(),
+        audit_level: rule.audit_level,
         max_uses: rule.max_uses,
 
         subject,
@@ -688,7 +726,6 @@ fn make_default_reason(id: &str, effect: &Effect) -> String {
     };
     format!("{eff} by rule={id}")
 }
-
 
 // 1) 文字列の正規化（Option<String> -> Option<String>）
 fn opt_trimmed_nonempty(
@@ -769,10 +806,7 @@ pub fn compile_subject_v14(
     let uid = match subject.uid {
         Some(uid) => Some(uid),
         None => match opt_trimmed_nonempty("subject.user", &subject.user, warnings) {
-            Some(user) => match name_to_uid(&user) {
-                Ok(uid) => Some(uid),
-                Err(_) => None,
-            }
+            Some(user) => name_to_uid(&user).ok(),
             None => None,
         },
     };
@@ -784,15 +818,18 @@ pub fn compile_subject_v14(
     let origin_program =
         opt_compile_path("subject.origin_program", &subject.origin_program, warnings);
 
-    let origin_script =
-        opt_compile_path("subject.origin_script", &subject.origin_script, warnings);
+    let origin_script = opt_compile_path("subject.origin_script", &subject.origin_script, warnings);
 
     let origin_applet =
         opt_trimmed_nonempty("subject.origin_applet", &subject.origin_applet, warnings);
 
     let login_context = if let Some(raw_ctx) = &subject.login_context {
         // IPアドレス/CIDRのパース
-        let source_ip_network = if let Some(ip_str) = opt_trimmed_nonempty("subject.login_context.source_ip", &raw_ctx.source_ip, warnings) {
+        let source_ip_network = if let Some(ip_str) = opt_trimmed_nonempty(
+            "subject.login_context.source_ip",
+            &raw_ctx.source_ip,
+            warnings,
+        ) {
             match ip_str.parse::<ipnetwork::IpNetwork>() {
                 Ok(net) => Some(net),
                 Err(e) => {
@@ -805,7 +842,11 @@ pub fn compile_subject_v14(
             None
         };
 
-        let auth_method = opt_trimmed_nonempty("subject.login_context.auth_method", &raw_ctx.auth_method, warnings);
+        let auth_method = opt_trimmed_nonempty(
+            "subject.login_context.auth_method",
+            &raw_ctx.auth_method,
+            warnings,
+        );
         let require_interactive_tty = raw_ctx.require_interactive_tty.unwrap_or(false);
         let bind_registered_session = raw_ctx.bind_registered_session.unwrap_or(false);
 
@@ -833,14 +874,24 @@ pub fn compile_subject_v14(
 fn parse_time_to_minutes(time_str: &str) -> Result<u32> {
     let parts: Vec<&str> = time_str.split(':').collect();
     if parts.len() != 2 {
-        return Err(anyhow!("invalid time format (expected HH:MM): {}", time_str));
+        return Err(anyhow!(
+            "invalid time format (expected HH:MM): {}",
+            time_str
+        ));
     }
 
-    let hours: u32 = parts[0].parse().map_err(|_| anyhow!("invalid hour format: {}", time_str))?;
-    let minutes: u32 = parts[1].parse().map_err(|_| anyhow!("invalid minute format: {}", time_str))?;
+    let hours: u32 = parts[0]
+        .parse()
+        .map_err(|_| anyhow!("invalid hour format: {}", time_str))?;
+    let minutes: u32 = parts[1]
+        .parse()
+        .map_err(|_| anyhow!("invalid minute format: {}", time_str))?;
 
     if hours > 23 || minutes > 59 {
-        return Err(anyhow!("time out of range (HH 0-23, MM 0-59): {}", time_str));
+        return Err(anyhow!(
+            "time out of range (HH 0-23, MM 0-59): {}",
+            time_str
+        ));
     }
 
     Ok(hours * 60 + minutes)
@@ -901,18 +952,16 @@ pub fn compile_time_constraints_v14(
     warnings: &mut CompileWarnings,
 ) -> Result<Vec<TimeConstraintMatcher>> {
     let mut matchers = Vec::with_capacity(raw_list.len());
-    
+
     for raw in raw_list {
         let matcher = compile_time_constraint(raw, warnings)?;
         matchers.push(matcher);
     }
-    
+
     Ok(matchers)
 }
 
-fn compile_path_matcher_v14(
-    raw: &str
-) -> Result<PathMatcher, CompileError> {
+fn compile_path_matcher_v14(raw: &str) -> Result<PathMatcher, CompileError> {
     // 1. 前後の空白除去
     let s = raw.trim();
 
@@ -920,7 +969,7 @@ fn compile_path_matcher_v14(
     if s.is_empty() {
         return Err(CompileError::InvalidObjectPath(
             "path must not be empty".into(),
-        )); 
+        ));
     }
 
     // 3. スキーム（接頭辞）による分岐
@@ -929,40 +978,41 @@ fn compile_path_matcher_v14(
 
         // パスとして絶対パスかチェック
         if !pattern.starts_with('/') {
-            return Err(CompileError::InvalidObjectPath(
-                format!("glob pattern must be absolute (start with '/'): {}", pattern),
-            ));
+            return Err(CompileError::InvalidObjectPath(format!(
+                "glob pattern must be absolute (start with '/'): {}",
+                pattern
+            )));
         }
 
-        let glob = Glob::new(pattern)
-            .map_err(|e| CompileError::InvalidObjectPath(e.to_string()))?;
+        let glob =
+            Glob::new(pattern).map_err(|e| CompileError::InvalidObjectPath(e.to_string()))?;
 
-        Ok(PathMatcher::Glob { 
-            pattern: pattern.to_string(), 
-            matcher: glob.compile_matcher() 
+        Ok(PathMatcher::Glob {
+            pattern: pattern.to_string(),
+            matcher: glob.compile_matcher(),
         })
-
     } else if let Some(path_str) = s.strip_prefix("prefix:") {
         // --- Prefix モード ---
         let p = Path::new(path_str);
-        
+
         // パスとして絶対パスかチェック
         if !p.is_absolute() {
-            return Err(CompileError::InvalidObjectPath(
-                format!("prefix path must be absolute: {}", path_str),
-            ));
+            return Err(CompileError::InvalidObjectPath(format!(
+                "prefix path must be absolute: {}",
+                path_str
+            )));
         }
 
         Ok(PathMatcher::Prefix(p.to_path_buf()))
-
     } else {
         // --- Exact モード (デフォルト) ---
         let p = Path::new(s);
-        
+
         if !p.is_absolute() {
-            return Err(CompileError::InvalidObjectPath(
-                format!("relative path is not allowed: {}", s),    
-            ));
+            return Err(CompileError::InvalidObjectPath(format!(
+                "relative path is not allowed: {}",
+                s
+            )));
         }
 
         Ok(PathMatcher::Exact(p.to_path_buf()))
@@ -1028,4 +1078,3 @@ pub fn compile_action_v14(
     // 正常にパースされたアクションのセットを返す
     Ok(ActionMatcher::OneOf(set))
 }
-

@@ -26,4 +26,3 @@ pub fn validate_against_schema(instance: &Value, schema_json: &Value) -> Result<
     }
     Ok(())
 }
-

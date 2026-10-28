@@ -8,26 +8,26 @@ use tokio::fs::File;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 
-use serde::{Serialize, Deserialize};
+use blst::min_pk::{AggregateSignature, Signature};
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
 use hex;
-use blst::min_pk::{Signature, AggregateSignature};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use teal_policy_engine::ir::{CompiledRule, RegisteredSession};
-use teal_policy_engine::util::{normalize_opt_field, normalize_tty_name};
 use teal_policy_engine::types::{Effect, RuleType};
+use teal_policy_engine::util::{normalize_opt_field, normalize_tty_name};
 
-use crate::state::app_state;
 use crate::bundle::policy_snapshot;
-use crate::ticket::{is_ticketable, ticket_from_entry};
-use crate::netlink::TealReq;
 use crate::common::find_rule;
+use crate::netlink::TealReq;
+use crate::state::app_state;
+use crate::ticket::{is_ticketable, ticket_from_entry};
 
 // ==============================================================
 // 1. ロックフリーなチケットIDジェネレーター（アトミック操作）
@@ -44,7 +44,7 @@ pub fn next_audit_ticket_id() -> String {
 // ==============================================================
 // 2. 全体ロックから完全に分離された、特急レーン専用のチケット台帳
 // ==============================================================
-pub static ACTIVE_TICKETS: Lazy<DashMap<String, ApprovedTicket>> = Lazy::new(|| DashMap::new());
+pub static ACTIVE_TICKETS: Lazy<DashMap<String, ApprovedTicket>> = Lazy::new(DashMap::new);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -88,32 +88,32 @@ pub fn is_drain() -> bool {
 pub struct Request {
     pub id: u64,
     pub pid: u32,
-    pub ppid: u32,          // 親プロセスID
-    pub session_id: u32,    // セッションID
+    pub ppid: u32,       // 親プロセスID
+    pub session_id: u32, // セッションID
     pub uid: u32,
-    pub gid: u32,           // グループID
+    pub gid: u32, // グループID
 
-    pub prog_dev: u64,      // 実行バイナリのデバイス番号
-    pub prog_ino: u64,      // 実行バイナリのinode番号
+    pub prog_dev: u64, // 実行バイナリのデバイス番号
+    pub prog_ino: u64, // 実行バイナリのinode番号
     pub prog_sha256: Option<String>,
     pub raw_program: String,
 
     pub raw_action: String,
 
-    pub target_dev: u64,    // 操作対象のデバイス番号
-    pub target_ino: u64,    // 操作対象のinode番号
+    pub target_dev: u64, // 操作対象のデバイス番号
+    pub target_ino: u64, // 操作対象のinode番号
     pub raw_target: String,
 
-    pub new_target_dev: u64,        // 移動先のデバイス番号
-    pub new_target_ino: u64,        // 移動先のinode番号
-    pub raw_new_target: Option<String>,     // 移動先のパス
+    pub new_target_dev: u64,            // 移動先のデバイス番号
+    pub new_target_ino: u64,            // 移動先のinode番号
+    pub raw_new_target: Option<String>, // 移動先のパス
 
-    pub script_dev: u64,    // スクリプトのデバイス番号
-    pub script_ino: u64,    // スクリプトのinode番号
+    pub script_dev: u64, // スクリプトのデバイス番号
+    pub script_ino: u64, // スクリプトのinode番号
     pub raw_script: Option<String>,
 
     pub raw_applet: Option<String>,
-    
+
     pub lsm_label_hex: String,     // LSMラベル (Hexエンコード)
     pub args_head: Option<String>, // コマンドライン引数先頭
     pub flag: u32,                 // リクエスト属性フラグ
@@ -176,10 +176,15 @@ pub struct AppState {
 
 impl AppState {
     /// 指定されたTTYとUIDが、PAMで認証済みの正規セッションか厳密に検証し、成功すればセッション情報を返す
-    pub fn check_registered_session(&self, tty: &str, uid: u32, request_user: Option<&str>) -> Option<RegisteredSession> {
+    pub fn check_registered_session(
+        &self,
+        tty: &str,
+        uid: u32,
+        request_user: Option<&str>,
+    ) -> Option<RegisteredSession> {
         // TTYが空、またはプレースホルダーの場合は未登録とみなす（バックグラウンドプロセス等）
-        if tty.is_empty() || tty == "-" { 
-            return None; 
+        if tty.is_empty() || tty == "-" {
+            return None;
         }
 
         // 1. TTY名の正規化（例: "/dev/pts/1" -> "pts1"）
@@ -189,7 +194,10 @@ impl AppState {
         let request_user_str = match request_user {
             Some(name) => name,
             None => {
-                eprintln!("[WARN] check_registered_session: Failed to resolve name for UID {}", uid);
+                eprintln!(
+                    "[WARN] check_registered_session: Failed to resolve name for UID {}",
+                    uid
+                );
                 return None;
             }
         };
@@ -247,13 +255,13 @@ impl MgmtCtlKind {
 // 2. 構造体を統合し、先ほどの Enum を持たせる
 #[derive(Debug, Clone)]
 pub struct MgmtPendingCtl {
-    pub kind: MgmtCtlKind,      // 何のコマンドに対する承認待ちかを識別
+    pub kind: MgmtCtlKind, // 何のコマンドに対する承認待ちかを識別
     pub initiator_uid: u32,
     pub initiator_user: String,
-    pub audit_id: String,       // 監査用ID (UUID v7推奨)
-    pub target_hash: String,	// update-policy用
+    pub audit_id: String,    // 監査用ID (UUID v7推奨)
+    pub target_hash: String, // update-policy用
     pub epoch: u32,
-    pub mpa_state: MpaState,    // MPAの承認状態
+    pub mpa_state: MpaState, // MPAの承認状態
     pub timeout_minutes: u32,
 }
 
@@ -278,7 +286,7 @@ pub struct TealDeviceState {
 #[derive(Debug, Clone)]
 pub struct PreApprovalDraft {
     pub draft_id: String,
-    pub epoch: u32,  // 判定に適用されたポリシーのepoch
+    pub epoch: u32, // 判定に適用されたポリシーのepoch
 
     /// 監査用ID (UUID v7推奨)。ログやSIEMでの検索キー。
     pub audit_id: String,
@@ -290,14 +298,14 @@ pub struct PreApprovalDraft {
     pub origin_program_id: EntityId,
     pub origin_script_id: Option<EntityId>,
     pub origin_applet: Option<String>,
-    
+
     // --- Source (移動元) ---
     pub object_id: EntityId,
-    
+
     // --- Destination (移動先: RENAME時のみ使用) ---
     // 承認プロセスで「どこに移動させるか」を確定させるために必要
-    pub new_object_id: Option<EntityId>, 
-    
+    pub new_object_id: Option<EntityId>,
+
     pub op_mask: u32,
 
     // --- MPA Control (承認状態) ---
@@ -311,7 +319,7 @@ pub struct PreApprovalDraft {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApprovedTicket {
     pub ticket_id: String,
-    pub epoch: u32,  // 判定に適用されたポリシーのepoch
+    pub epoch: u32, // 判定に適用されたポリシーのepoch
 
     // 監査・説明用
     pub rule_id: String,
@@ -350,18 +358,46 @@ impl ApprovedTicket {
         }
 
         // find_rule が成功すればメタデータを使い、失敗しても req の事実情報でフォールバック
-        let (epoch, rule_id, origin_program, origin_script, object, new_object, origin_applet, ttl_sec, max_uses) =
-            (
-                rule_epoch,
-                rule.id.clone(),
-                rule.subject.origin_program.as_ref().map(|p| p.to_string()).unwrap_or_else(|| req.raw_program.clone()),
-                rule.subject.origin_script.as_ref().map(|p| p.to_string()).or_else(|| req.raw_script.clone()),
-                rule.object.as_ref().and_then(|o| o.path.as_ref()).map(|p| p.to_string()).unwrap_or_else(|| req.raw_target.clone()),
-                rule.object.as_ref().and_then(|o| o.new_path.as_ref()).map(|p| p.to_string()).or_else(|| req.raw_new_target.clone()),
-                rule.subject.origin_applet.clone().or_else(|| req.raw_applet.clone()),
-                rule.pre_approval.ttl_sec,
-                rule.max_uses,
-            );
+        let (
+            epoch,
+            rule_id,
+            origin_program,
+            origin_script,
+            object,
+            new_object,
+            origin_applet,
+            ttl_sec,
+            max_uses,
+        ) = (
+            rule_epoch,
+            rule.id.clone(),
+            rule.subject
+                .origin_program
+                .as_ref()
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| req.raw_program.clone()),
+            rule.subject
+                .origin_script
+                .as_ref()
+                .map(|p| p.to_string())
+                .or_else(|| req.raw_script.clone()),
+            rule.object
+                .as_ref()
+                .and_then(|o| o.path.as_ref())
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| req.raw_target.clone()),
+            rule.object
+                .as_ref()
+                .and_then(|o| o.new_path.as_ref())
+                .map(|p| p.to_string())
+                .or_else(|| req.raw_new_target.clone()),
+            rule.subject
+                .origin_applet
+                .clone()
+                .or_else(|| req.raw_applet.clone()),
+            rule.pre_approval.ttl_sec,
+            rule.max_uses,
+        );
 
         Some(ApprovedTicket {
             ticket_id: ticket.ticket_id.clone(),
@@ -382,7 +418,10 @@ impl ApprovedTicket {
             origin_applet,
             object_id: EntityId::new((ticket.target_dev, ticket.target_ino)),
             new_object_id: if ticket.new_target_dev != 0 || ticket.new_target_ino != 0 {
-                Some(EntityId::new((ticket.new_target_dev, ticket.new_target_ino)))
+                Some(EntityId::new((
+                    ticket.new_target_dev,
+                    ticket.new_target_ino,
+                )))
             } else {
                 None
             },
@@ -401,21 +440,25 @@ impl ApprovedTicket {
             return None;
         }
 
-        let origin_program = rule.subject.origin_program
+        let origin_program = rule
+            .subject
+            .origin_program
             .as_ref()
             .map(|p| p.to_string())
             .unwrap_or_else(|| "ANY".to_string());
 
-        let origin_script = rule.subject.origin_script
-            .as_ref()
-            .map(|p| p.to_string());
+        let origin_script = rule.subject.origin_script.as_ref().map(|p| p.to_string());
 
-        let object = rule.object.as_ref()
+        let object = rule
+            .object
+            .as_ref()
             .and_then(|obj| obj.path.as_ref())
             .map(|p| p.to_string())
             .unwrap_or_else(|| "-".to_string());
-        
-        let new_object = rule.object.as_ref()
+
+        let new_object = rule
+            .object
+            .as_ref()
             .and_then(|obj| obj.new_path.as_ref())
             .map(|p| p.to_string());
 
@@ -428,7 +471,7 @@ impl ApprovedTicket {
             origin_script,
             object,
             new_object,
-            
+
             uid: draft.uid,
             origin_program_id: draft.origin_program_id,
             origin_script_id: draft.origin_script_id,
@@ -443,20 +486,24 @@ impl ApprovedTicket {
     }
 
     pub async fn from_entry(entry: &PendingEntry) -> Option<Self> {
-        let rule_id = entry.rule_id.clone().unwrap_or_else(|| "".to_string());
+        let rule_id = entry.rule_id.clone().unwrap_or_default();
 
         let origin_program_id = EntityId::new((entry.subject.prog_dev, entry.subject.prog_ino));
         let object_id = EntityId::new((entry.object.device_id, entry.object.inode));
-        
+
         // new_object_id の構築
-        let new_object_id = if let (Some(dev), Some(ino)) = (entry.object.new_device_id, entry.object.new_inode) {
-            Some(EntityId::new((dev, ino)))
-        } else {
-            None
-        };
-        
+        let new_object_id =
+            if let (Some(dev), Some(ino)) = (entry.object.new_device_id, entry.object.new_inode) {
+                Some(EntityId::new((dev, ino)))
+            } else {
+                None
+            };
+
         let origin_script_id = if entry.subject.script_dev != 0 || entry.subject.script_ino != 0 {
-            Some(EntityId::new((entry.subject.script_dev, entry.subject.script_ino)))
+            Some(EntityId::new((
+                entry.subject.script_dev,
+                entry.subject.script_ino,
+            )))
         } else {
             None
         };
@@ -465,18 +512,18 @@ impl ApprovedTicket {
             ticket_id: next_audit_ticket_id(),
             epoch: entry.policy_epoch,
             rule_id,
-            
+
             origin_program: entry.subject.program_path.clone(),
             origin_program_sha256: None,
             origin_script: entry.subject.script_path.clone(),
             object: entry.object.path.clone(),
             new_object: entry.object.new_path.clone(),
-            
+
             uid: entry.subject.uid,
             origin_program_id,
             origin_script_id,
             origin_applet: entry.subject.applet_name.clone(),
-            
+
             object_id,
             new_object_id,
             op_mask: entry.op,
@@ -511,7 +558,6 @@ pub fn to_kernel_dev(u_dev: u64) -> u32 {
     (major << 20) | minor
 }
 
-
 #[derive(Debug, Clone)]
 pub struct PendingEntry {
     // --- 1. Identity & Traceability (Section 6.1) ---
@@ -530,7 +576,7 @@ pub struct PendingEntry {
 
     // --- 4. Action (どうする) ---
     /// 操作種別 (open, exec, unlink, etc.)
-    pub op: u32,        // または enum Action
+    pub op: u32, // または enum Action
 
     // --- 5. Policy & Decision (なぜ/結果) ---
     /// マッチしたルールID
@@ -548,19 +594,19 @@ pub struct PendingEntry {
     pub mpa_state: MpaState,
 }
 
-pub fn str_to_mask(action: &String) -> u32 {
+pub fn str_to_mask(action: &str) -> u32 {
     match action.trim() {
-        "READ"      => 1,
-        "WRITE"     => 2,
-        "EXECUTE"   => 4,
-        "DELETE"    => 8,
-        "UNLINK"    => 16,
-        "RENAME"    => 32,
-        "CHMOD"     => 64,
-        "CHOWN"     => 128,
-        "CONNECT"   => 256,
-        "UNKNOWN"   => 512,
-        _           => 512,
+        "READ" => 1,
+        "WRITE" => 2,
+        "EXECUTE" => 4,
+        "DELETE" => 8,
+        "UNLINK" => 16,
+        "RENAME" => 32,
+        "CHMOD" => 64,
+        "CHOWN" => 128,
+        "CONNECT" => 256,
+        "UNKNOWN" => 512,
+        _ => 512,
     }
 }
 
@@ -574,7 +620,7 @@ impl PendingEntry {
 
         // op_mask などはデフォルト値を入れておき、後で上書きする
         PendingEntry {
-            audit_id: Uuid::new_v4().to_string(), 
+            audit_id: Uuid::new_v4().to_string(),
             transport_id: req.id,
             timestamp: Utc::now(),
             subject: SubjectContext {
@@ -599,16 +645,24 @@ impl PendingEntry {
             },
             object: ObjectContext {
                 path: req.raw_target.clone(),
-                inode: req.target_ino,       
+                inode: req.target_ino,
                 device_id: req.target_dev,
 
                 // RENAME 時のみ有効な情報を変換
                 // 値が 0 なら None にする（カーネルが「無し」を示す一般的な値が 0 の場合）
                 new_path: req.raw_new_target.clone(),
-                new_inode: if req.new_target_ino != 0 { Some(req.new_target_ino) } else { None },
-                new_device_id: if req.new_target_dev != 0 { Some(req.new_target_dev) } else { None },
+                new_inode: if req.new_target_ino != 0 {
+                    Some(req.new_target_ino)
+                } else {
+                    None
+                },
+                new_device_id: if req.new_target_dev != 0 {
+                    Some(req.new_target_dev)
+                } else {
+                    None
+                },
             },
-            
+
             // 以下は呼び出し元 (from_rule / from_audit) で上書きされる
             op: str_to_mask(&req.raw_action),
             rule_id: None,
@@ -623,7 +677,7 @@ impl PendingEntry {
     /// Control Lane 用: ルールにマッチした場合 (NeedApproval など) に生成する
     pub fn from_rule(rule: &CompiledRule, req: &Request, epoch: u32) -> Self {
         let mut entry = Self::from_base_req(req, epoch);
-        
+
         entry.op = rule.action_match.to_u32();
         entry.rule_id = Some(rule.id.clone());
         entry.reason = rule.out_reason.clone();
@@ -635,12 +689,17 @@ impl PendingEntry {
             approvals: HashMap::new(),
             aggregated_signature: None,
         };
-        
+
         entry
     }
 
     /// Audit Lane 用: ルールの有無に関わらず、判定結果 (Effect) を元に生成する
-    pub fn from_audit(req: &Request, rule: Option<CompiledRule>, effect: Effect, epoch: u32) -> Self {
+    pub fn from_audit(
+        req: &Request,
+        rule: Option<CompiledRule>,
+        effect: Effect,
+        epoch: u32,
+    ) -> Self {
         let mut entry = Self::from_base_req(req, epoch);
 
         if let Some(r) = rule {
@@ -667,20 +726,22 @@ impl PendingEntry {
                 entry.reason = "Audit Mode: Shadow Rule Evaluation".to_string();
             }
         }
-        
+
         entry
     }
 
     /// is_cacheable は Rule を受け取り、draft, ticketを作成、TicketPayloadを返す (Lazy Binding)
-    pub async fn is_cacheable(&self, rule: &CompiledRule, epoch: u32) -> Result<(bool, Option<TicketPayload>, String), String> {
+    pub async fn is_cacheable(
+        &self,
+        rule: &CompiledRule,
+        epoch: u32,
+    ) -> Result<(bool, Option<TicketPayload>, String), String> {
         let current_epoch = policy_snapshot().epoch;
 
         if self.policy_epoch != epoch || epoch != current_epoch {
             return Err(format!(
                 "Policy epoch mismatch: entry={}, rule={}, current={}",
-                self.policy_epoch,
-                epoch,
-                current_epoch
+                self.policy_epoch, epoch, current_epoch
             ));
         }
 
@@ -696,8 +757,11 @@ impl PendingEntry {
 
             {
                 let state = app_state().lock().await;
-                if state.fast.has_draft_for_rule(&rule.id)  {
-                    return Err(format!("ticket is already in waiting list for approval (id= {})", rule.id));
+                if state.fast.has_draft_for_rule(&rule.id) {
+                    return Err(format!(
+                        "ticket is already in waiting list for approval (id= {})",
+                        rule.id
+                    ));
                 }
             }
 
@@ -721,7 +785,10 @@ impl PendingEntry {
             let (new_target_dev, new_target_ino) = if rule.rule_type == RuleType::SubjectOnly {
                 (0, 0)
             } else {
-                (self.object.new_device_id.unwrap_or(0), self.object.new_inode.unwrap_or(0))
+                (
+                    self.object.new_device_id.unwrap_or(0),
+                    self.object.new_inode.unwrap_or(0),
+                )
             };
 
             // Netlink 送信用の構造体 (TicketPayload) を組み立てる
@@ -732,7 +799,7 @@ impl PendingEntry {
                 prog_ino: self.subject.prog_ino,
                 script_dev,
                 script_ino,
-                applet_hash: 0,             // Alpha版暫定
+                applet_hash: 0, // Alpha版暫定
                 target_dev,
                 target_ino,
                 new_target_dev,
@@ -741,7 +808,7 @@ impl PendingEntry {
                 flags: rule.ticket_profile.flags,
                 uses_left: rule.max_uses,
                 ticket_id: ticket.ticket_id.clone(),
-                epoch: self.policy_epoch,   // Alpha版暫定: 0
+                epoch: self.policy_epoch, // Alpha版暫定: 0
                 audit_flags: rule.audit_level.to_u32(),
             };
 
@@ -761,17 +828,17 @@ pub struct SubjectContext {
     pub session_id: u32,
 
     // Execution Paths
-    pub prog_dev: u64,      // 実行バイナリのデバイス番号
-    pub prog_ino: u64,      // 実行バイナリのinode番号
+    pub prog_dev: u64, // 実行バイナリのデバイス番号
+    pub prog_ino: u64, // 実行バイナリのinode番号
     pub program_path: String,
-    pub script_dev: u64,    // スクリプトのデバイス番号
-    pub script_ino: u64,    // スクリプトのinode番号
+    pub script_dev: u64,             // スクリプトのデバイス番号
+    pub script_ino: u64,             // スクリプトのinode番号
     pub script_path: Option<String>, // "none" の場合は None
     pub applet_name: Option<String>, // Busybox等の実名
 
     // Integrity & Security Context (Section 6.7)
     /// 実行バイナリの事後計算ハッシュ (TOCTOU対策/監査用)
-    pub program_hash: Option<String>, 
+    pub program_hash: Option<String>,
     /// SELinux/AppArmorラベル (Hexデコード済み)
     pub lsm_label: String,
 
@@ -793,14 +860,13 @@ pub struct SubjectContext {
 pub struct ObjectContext {
     // --- Source (移動元) ---
     pub path: String,
-    pub inode: u64,         // パスが変わっても追跡できるよう、必ずDev:Inodeを持つ
-    pub device_id: u64,     // major:minor encoded
+    pub inode: u64,     // パスが変わっても追跡できるよう、必ずDev:Inodeを持つ
+    pub device_id: u64, // major:minor encoded
 
     // --- Destination (移動先: RENAME時のみ使用) ---
     pub new_path: Option<String>,
     pub new_inode: Option<u64>,
     pub new_device_id: Option<u64>,
-
 }
 
 // -------------------------------------------------------------------
@@ -811,7 +877,6 @@ pub struct ObjectContext {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct MpaState {
     // --- 1. Requirements (承認要件) ---
-
     /// 承認しきい値 (例: 2)
     /// ※ ロジック判定用には u32 が必須。ログ出力で "2-of-3"
     pub threshold: u32,
@@ -822,13 +887,10 @@ pub struct MpaState {
     pub required_roles: HashSet<String>,
 
     // --- 2. Current State & Evidence (承認の事実) ---
-
     /// 承認済みアクションのリスト <key: uid, value: Action詳細>
     pub approvals: HashMap<u32, ApproverAction>,
 
-
     // --- 3. Final Result (暗号学的証拠) ---
-
     /// 集約されたBLS署名 (Aggregated Signature) (圧縮形式 96bytes)
     /// - None: 承認進行中
     /// - Some: 承認完了 (このバイト列が Ticket に埋め込まれる)
@@ -843,27 +905,33 @@ impl MpaState {
             return false;
         }
 
-        let provided_roles: HashSet<&String> = self.approvals
+        let provided_roles: HashSet<&String> = self
+            .approvals
             .values()
             .flat_map(|a| a.roles.iter())
             .collect();
 
-        self.required_roles.iter()
+        self.required_roles
+            .iter()
             .all(|role| provided_roles.contains(role))
     }
 
-    pub fn insert_approver(&mut self, args: &SignedCmdArgs, expected_epoch: u32) -> Result<(), String> {
+    pub fn insert_approver(
+        &mut self,
+        args: &SignedCmdArgs,
+        expected_epoch: u32,
+    ) -> Result<(), String> {
         let snapshot = policy_snapshot();
         if snapshot.epoch != expected_epoch {
             return Err(format!(
                 "Policy epoch changed: expected={}, current={}",
-                expected_epoch,
-                snapshot.epoch
+                expected_epoch, snapshot.epoch
             ));
         }
 
         let b = &snapshot.bundle;
-        let user_roles = b.roles
+        let user_roles = b
+            .roles
             .assignments
             .uid_roles
             .get(&args.uid)
@@ -878,8 +946,8 @@ impl MpaState {
         if roles.is_empty() {
             return Err("User does not have an authorized approver role".to_string());
         }
-        let signature = hex::decode(&args.sig_hex)
-            .map_err(|e| format!("Invalid signature encoding: {}", e))?;
+        let signature =
+            hex::decode(&args.sig_hex).map_err(|e| format!("Invalid signature encoding: {}", e))?;
         let approver = ApproverAction {
             account: args.account.clone(),
             roles,
@@ -887,27 +955,35 @@ impl MpaState {
             method: "".to_string(),
             comment: None,
             signature,
-            epoch: snapshot.epoch
+            epoch: snapshot.epoch,
         };
         self.approvals.insert(args.uid, approver);
         Ok(())
     }
 
-// -------------------------------------------------------------------
-// 2. BLS集約ロジックの実装
-// -------------------------------------------------------------------
+    // -------------------------------------------------------------------
+    // 2. BLS集約ロジックの実装
+    // -------------------------------------------------------------------
 
     /// [CORE LOGIC] BLS署名を集約する
     pub fn try_aggregate(&mut self) -> Result<(), String> {
         if !self.is_fulfilled() {
-            return Err("Approval requirements (threshold or required roles) are not met.".to_string());
+            return Err(
+                "Approval requirements (threshold or required roles) are not met.".to_string(),
+            );
         }
 
         // 1. バイト列から Signature オブジェクトへ変換 (デシリアライズ & 検証)
-        let signatures: Result<Vec<Signature>, String> = self.approvals.values()
+        let signatures: Result<Vec<Signature>, String> = self
+            .approvals
+            .values()
             .map(|action| {
-                Signature::from_bytes(&action.signature)
-                    .map_err(|e| format!("Invalid signature format (User: {}): {:?}", action.account, e))
+                Signature::from_bytes(&action.signature).map_err(|e| {
+                    format!(
+                        "Invalid signature format (User: {}): {:?}",
+                        action.account, e
+                    )
+                })
             })
             .collect();
 
@@ -993,17 +1069,17 @@ mod option_hex {
 
 #[derive(Debug, Clone)]
 pub struct KernelEventLog {
-//    pub event: String,          // <EVENT>
-    pub ticket_id: u64,         // <TICKET_ID>
-    pub uid: u32,               // <UID>
-    pub uses_left: u32,         // <USES_LEFT>
-//    pub org_dev: u64,           // <ORG_DEV>
-//    pub org_ino: u64,           // <ORG_INO>
-    pub obj_dev: u64,           // <OBJ_DEV>
-    pub obj_ino: u64,           // <OBJ_INO>
-    pub new_obj_dev: Option<u64>,           // <NEW_OBJ_DEV>
-    pub new_obj_ino: Option<u64>,           // <NEW_OBJ_INO>
-//    pub res: String,            // <RES>
+    //    pub event: String,          // <EVENT>
+    pub ticket_id: u64, // <TICKET_ID>
+    pub uid: u32,       // <UID>
+    pub uses_left: u32, // <USES_LEFT>
+    //    pub org_dev: u64,           // <ORG_DEV>
+    //    pub org_ino: u64,           // <ORG_INO>
+    pub obj_dev: u64,             // <OBJ_DEV>
+    pub obj_ino: u64,             // <OBJ_INO>
+    pub new_obj_dev: Option<u64>, // <NEW_OBJ_DEV>
+    pub new_obj_ino: Option<u64>, // <NEW_OBJ_INO>
+                                  //    pub res: String,            // <RES>
 }
 
 /// 特急レーンでの最終的なポリシー判定結果 (リネーム: DecisionKind -> PolicyDecision)
@@ -1015,7 +1091,7 @@ pub enum PolicyDecision {
     AuditOnly,
     NotManaged,
     NoRuleMatched,
-    Approved(ApprovedTicket),
+    Approved(Box<ApprovedTicket>),
 }
 
 /// ワーカー間でやり取りする非同期メッセージ（事後報告イベント）
@@ -1039,14 +1115,14 @@ pub enum InternalEvent {
         cacheable: bool,
         ticket_id: String,
     },
-    
+
     // ==========================================
     // ライフサイクル管理（Start/Stop/PolicyUpdate/Flush）の許可イベント
     // ==========================================
     CtlApproved {
         pending_ctl: MgmtPendingCtl,
     },
-    
+
     DraftDenied {
         draft: PreApprovalDraft,
         ticket: ApprovedTicket,
@@ -1056,7 +1132,7 @@ pub enum InternalEvent {
         entry: PendingEntry,
         denier_uid: u32,
     },
-    
+
     // ==========================================
     // ライフサイクル管理（Start/Stop/PolicyUpdate/Flush）の拒否イベント
     // ==========================================
@@ -1080,10 +1156,10 @@ pub struct SignedCmdArgs {
 pub struct PolicyResult {
     /// 最終的な判定結果
     pub decision: PolicyDecision,
-    
+
     /// マッチしたルールID（NotManaged や NoRuleMatched の場合は None）
     pub rule_id: Option<String>,
-    
+
     /// TICKET発行に必要なペイロード（Allow の場合のみ Some）
     pub ticket: Option<TicketPayload>,
 
@@ -1095,20 +1171,20 @@ pub struct PolicyResult {
 #[derive(Debug, Clone)]
 pub struct TicketPayload {
     pub uid: u32,
-    pub op: u32,                // 論理操作マスク
+    pub op: u32, // 論理操作マスク
     pub prog_dev: u64,
     pub prog_ino: u64,
     pub script_dev: u64,
     pub script_ino: u64,
-    pub applet_hash: u64,       // Alphaフェーズは 0
+    pub applet_hash: u64, // Alphaフェーズは 0
     pub target_dev: u64,
     pub target_ino: u64,
     pub new_target_dev: u64,
     pub new_target_ino: u64,
-    pub expires_in_sec: u64,    // TTL
-    pub flags: u32,             // チケットの振る舞いフラグ (SILENT_IO | INHERIT) [0x1 SILENT_IO, 0x2 INHERIT]の論理和
-    pub uses_left: u32,         // 残り使用回数
-    pub ticket_id: String,      // "0" (予約値) または "T-xxxxxx"
-    pub epoch: u32,             // 発行時点のポリシー世代
-    pub audit_flags: u32,       // logの制御フラグ
+    pub expires_in_sec: u64, // TTL
+    pub flags: u32, // チケットの振る舞いフラグ (SILENT_IO | INHERIT) [0x1 SILENT_IO, 0x2 INHERIT]の論理和
+    pub uses_left: u32, // 残り使用回数
+    pub ticket_id: String, // "0" (予約値) または "T-xxxxxx"
+    pub epoch: u32, // 発行時点のポリシー世代
+    pub audit_flags: u32, // logの制御フラグ
 }

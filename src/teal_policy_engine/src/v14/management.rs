@@ -121,11 +121,9 @@ pub enum MgmtAction {
     Stop,
 }
 
+type RoleUidResolver<'a> = dyn FnMut(&str, &str) -> Result<HashSet<u32>, CompileError> + 'a;
 
-fn role_to_uids_from_compiled_roles(
-    roles: &CompiledRolesCore,
-    role_name: &str,
-) -> HashSet<u32> {
+fn role_to_uids_from_compiled_roles(roles: &CompiledRolesCore, role_name: &str) -> HashSet<u32> {
     let mut uids = HashSet::new();
 
     // uid -> roles(HashSet<String>) を全走査して逆引き
@@ -168,10 +166,7 @@ pub fn compile_management(
     }
 
     // role参照の解決：management.roles を優先、無ければ CompiledRoles にフォールバック
-    fn lookup_uids_in_compiled_roles(
-        roles: &CompiledRolesCore,
-        role_name: &str,
-    ) -> HashSet<u32> {
+    fn lookup_uids_in_compiled_roles(roles: &CompiledRolesCore, role_name: &str) -> HashSet<u32> {
         role_to_uids_from_compiled_roles(roles, role_name)
     }
 
@@ -212,18 +207,17 @@ pub fn compile_management(
 
     let mut resolve_role_uids =
         |role_name: &str, context: &str| -> Result<HashSet<u32>, CompileError> {
-    
             // 1) management.roles を優先
             if let Some(s) = mgmt_roles.get(role_name) {
                 return Ok(s.clone());
             }
-    
+
             // 2) CompiledRoles から逆引き
             let uids = lookup_uids_in_compiled_roles(roles, role_name);
             if !uids.is_empty() {
                 return Ok(uids);
             }
-    
+
             // 3) どこにも存在しない
             Err(CompileError::UnknownRoleReferenced {
                 role: role_name.to_string(),
@@ -231,14 +225,13 @@ pub fn compile_management(
             })
         };
 
-
     // ---- 2) control(start/stop/policy_update/flush) をコンパイル ----
 
     fn compile_control(
         which: &str,
         c: RawMgmtControl,
         warnings: &mut CompileWarnings,
-        resolve_role_uids: &mut dyn FnMut(&str, &str) -> Result<HashSet<u32>, CompileError>,
+        resolve_role_uids: &mut RoleUidResolver<'_>,
     ) -> Result<CompiledMgmtControl, CompileError> {
         let ctx_base = format!("management.controls.{}", which);
 
@@ -295,7 +288,7 @@ pub fn compile_management(
         ctx_base: &str,
         mpa: RawMgmtMpa,
         warnings: &mut CompileWarnings,
-        resolve_role_uids: &mut dyn FnMut(&str, &str) -> Result<HashSet<u32>, CompileError>,
+        resolve_role_uids: &mut RoleUidResolver<'_>,
     ) -> Result<CompiledMgmtMpa, CompileError> {
         let _ = which; // 将来 start/stop で追加制約を入れる場合に使う
 
@@ -308,7 +301,8 @@ pub fn compile_management(
             "management.controls.*.mpa.threshold",
         ))?;
 
-        let approver_roles = mpa.approver_roles
+        let approver_roles = mpa
+            .approver_roles
             .as_ref()
             .ok_or(CompileError::MissingField(
                 "management.controls.*.mpa.approver_roles",
@@ -319,14 +313,14 @@ pub fn compile_management(
         ))?;
 
         // 範囲チェック（スキーマに合わせる）
-        if threshold < 1 || threshold > 32 {
+        if !(1..=32).contains(&threshold) {
             return Err(CompileError::InvalidValue(format!(
                 "{}.mpa.threshold out of range (1..=32): {}",
                 ctx_base, threshold
             )));
         }
 
-        if timeout_minutes < 1 || timeout_minutes > 1440 {
+        if !(1..=1440).contains(&timeout_minutes) {
             return Err(CompileError::InvalidValue(format!(
                 "{}.mpa.timeout_minutes out of range (1..=1440): {}",
                 ctx_base, timeout_minutes
@@ -386,7 +380,7 @@ pub fn compile_management(
             .approver_roles
             .as_ref()
             .map(|v| v.iter().cloned().collect())
-            .unwrap_or_else(HashSet::new);
+            .unwrap_or_default();
 
         Ok(CompiledMgmtMpa::Enabled(CompiledMgmtMpaEnabled {
             threshold,
@@ -396,18 +390,38 @@ pub fn compile_management(
     }
 
     // 1. 必須項目 (start / stop)
-    let start = compile_control("start", raw.controls.start, &mut warnings, &mut resolve_role_uids)?;
-    let stop  = compile_control("stop",  raw.controls.stop,  &mut warnings, &mut resolve_role_uids)?;
+    let start = compile_control(
+        "start",
+        raw.controls.start,
+        &mut warnings,
+        &mut resolve_role_uids,
+    )?;
+    let stop = compile_control(
+        "stop",
+        raw.controls.stop,
+        &mut warnings,
+        &mut resolve_role_uids,
+    )?;
 
     // 2. 任意項目 (policy_update)
     let policy_update = match raw.controls.policy_update {
-        Some(c) => Some(compile_control("policy_update", c, &mut warnings, &mut resolve_role_uids)?),
+        Some(c) => Some(compile_control(
+            "policy_update",
+            c,
+            &mut warnings,
+            &mut resolve_role_uids,
+        )?),
         None => None,
     };
 
     // 3. 任意項目 (flush)
     let flush = match raw.controls.flush {
-        Some(c) => Some(compile_control("flush", c, &mut warnings, &mut resolve_role_uids)?),
+        Some(c) => Some(compile_control(
+            "flush",
+            c,
+            &mut warnings,
+            &mut resolve_role_uids,
+        )?),
         None => None,
     };
 

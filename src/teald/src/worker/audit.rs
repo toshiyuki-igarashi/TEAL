@@ -4,35 +4,38 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
-use tokio::sync::mpsc;
 use anyhow::Result;
 use std::fs;
+use tokio::sync::mpsc;
 
-use crate::state::app_state;
-use crate::types::{Request, InternalEvent, PolicyDecision, PendingEntry, KernelEventLog, TicketPayload, EntityId, ApprovedTicket};
-use crate::types::{next_audit_ticket_id, ACTIVE_TICKETS, is_drain};
 use crate::bundle::policy_snapshot;
+use crate::common::find_rule;
 use crate::decide::request_to_ctx;
+use crate::evidence::schema::LogType;
 use crate::evidence::EvidenceManager;
 use crate::evidence::{ensure_program_hash, invalidate_hash_cache_for_request};
-use crate::evidence::schema::LogType;
-use crate::netlink::{self, TealNetlinkMessage, TealReq, TealInfo};
-use crate::common::find_rule;
+use crate::netlink::{self, TealInfo, TealNetlinkMessage, TealReq};
+use crate::state::app_state;
+use crate::types::{is_drain, next_audit_ticket_id, ACTIVE_TICKETS};
+use crate::types::{
+    ApprovedTicket, EntityId, InternalEvent, KernelEventLog, PendingEntry, PolicyDecision, Request,
+    TicketPayload,
+};
 
-use teal_policy_engine::types::{Effect, RuleType};
-use teal_policy_engine::ir::{Decision, CompiledRule};
-use teal_policy_engine::util::{uid_to_name, ktime_prefix};
 use teal_policy_engine::eval::evaluate;
-use teal_policy_engine::raw::{TEAL_TICKET_FLG_SILENT_IO, TEAL_TICKET_FLG_INHERIT};
+use teal_policy_engine::ir::{CompiledRule, Decision};
+use teal_policy_engine::raw::{TEAL_TICKET_FLG_INHERIT, TEAL_TICKET_FLG_SILENT_IO};
+use teal_policy_engine::types::{Effect, RuleType};
+use teal_policy_engine::util::{ktime_prefix, uid_to_name};
 
 // =========================================================================
 // ワーカーのメインループ (AUDITレーン)
 // =========================================================================
 
 pub async fn audit_worker_loop(
-    mut rx_audit: mpsc::Receiver<TealNetlinkMessage>, 
+    mut rx_audit: mpsc::Receiver<TealNetlinkMessage>,
     mut internal_rx: mpsc::Receiver<InternalEvent>,
-    nl_tx: netlink::NlWriter
+    nl_tx: netlink::NlWriter,
 ) {
     loop {
         tokio::select! {
@@ -50,7 +53,7 @@ pub async fn audit_worker_loop(
                         // AUDITモード時のアクセスリクエスト（判定不要、ログのみ）
                         let tx_clone = nl_tx.clone();
                         tokio::spawn(async move {
-                            handle_audit_req(nl_req, tx_clone).await;
+                            handle_audit_req(*nl_req, tx_clone).await;
                         });
                     }
                     TealNetlinkMessage::Info(nl_info) => {
@@ -82,32 +85,87 @@ pub async fn audit_worker_loop(
 
 pub async fn handle_internal_event(event: InternalEvent) {
     match event {
-        InternalEvent::Resolved { req_line: _, parsed_req, decision, rule_id, ticket_id, epoch } => {
-            if let Err(e) = process_resolved_event(parsed_req, decision, rule_id, ticket_id, epoch).await {
+        InternalEvent::Resolved {
+            req_line: _,
+            parsed_req,
+            decision,
+            rule_id,
+            ticket_id,
+            epoch,
+        } => {
+            if let Err(e) =
+                process_resolved_event(parsed_req, decision, rule_id, ticket_id, epoch).await
+            {
                 eprintln!("[ERROR] Resolved log failed: {}", e);
             }
         }
         InternalEvent::MpaApproved { draft, ticket } => {
-            EvidenceManager::log_ticket_add_static(LogType::TicketIssued, Effect::Allow, &draft, &ticket).await;
+            EvidenceManager::log_ticket_add_static(
+                LogType::TicketIssued,
+                Effect::Allow,
+                &draft,
+                &ticket,
+            )
+            .await;
         }
-        InternalEvent::EntryApproved { entry, cacheable, ticket_id } => {
-            EvidenceManager::log_slow_path_static(LogType::InteractiveDecision, Effect::Allow, cacheable, &ticket_id, &entry).await;
+        InternalEvent::EntryApproved {
+            entry,
+            cacheable,
+            ticket_id,
+        } => {
+            EvidenceManager::log_slow_path_static(
+                LogType::InteractiveDecision,
+                Effect::Allow,
+                cacheable,
+                &ticket_id,
+                &entry,
+            )
+            .await;
         }
-        InternalEvent::DraftDenied { draft, ticket, denier_uid: _ } => {
-            EvidenceManager::log_ticket_add_static(LogType::InteractiveDecision, Effect::Deny, &draft, &ticket).await;
+        InternalEvent::DraftDenied {
+            draft,
+            ticket,
+            denier_uid: _,
+        } => {
+            EvidenceManager::log_ticket_add_static(
+                LogType::InteractiveDecision,
+                Effect::Deny,
+                &draft,
+                &ticket,
+            )
+            .await;
         }
-        InternalEvent::EntryDenied { entry, denier_uid: _ } => {
-            EvidenceManager::log_slow_path_static(LogType::InteractiveDecision, Effect::Deny, false, "", &entry).await;
+        InternalEvent::EntryDenied {
+            entry,
+            denier_uid: _,
+        } => {
+            EvidenceManager::log_slow_path_static(
+                LogType::InteractiveDecision,
+                Effect::Deny,
+                false,
+                "",
+                &entry,
+            )
+            .await;
         }
 
         // ==============================================================
         // ライフサイクル管理 (Start/Stop/Reload/Flush) 用のパス
         // ==============================================================
         InternalEvent::CtlApproved { pending_ctl } => {
-            EvidenceManager::log_mgmt_ctl_static(LogType::InteractiveDecision, Effect::Allow, &pending_ctl).await;
+            EvidenceManager::log_mgmt_ctl_static(
+                LogType::InteractiveDecision,
+                Effect::Allow,
+                &pending_ctl,
+            )
+            .await;
         }
-        InternalEvent::CtlDenied { pending_ctl, denier_uid: _ } => {
-            EvidenceManager::log_mgmt_ctl_static(LogType::AccessDenied, Effect::Deny, &pending_ctl).await;
+        InternalEvent::CtlDenied {
+            pending_ctl,
+            denier_uid: _,
+        } => {
+            EvidenceManager::log_mgmt_ctl_static(LogType::AccessDenied, Effect::Deny, &pending_ctl)
+                .await;
         }
     }
 }
@@ -135,7 +193,8 @@ pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
         eval_result.issued_ticket_id,
         is_cache_issued,
         eval_result.epoch,
-    ).await;
+    )
+    .await;
 }
 
 pub struct AuditEvalResult {
@@ -149,40 +208,28 @@ pub struct AuditEvalResult {
 enum AuditRoute {
     Pass,
     NoMatchManaged,
-    Matched(CompiledRule),
+    Matched(Box<CompiledRule>),
 }
 
 /// ポリシーを評価し、発行すべきチケットがあれば生成する
-async fn evaluate_audit_request(
-    req: &mut Request
-) -> AuditEvalResult {
+async fn evaluate_audit_request(req: &mut Request) -> AuditEvalResult {
     let current = policy_snapshot();
     let compiled = &current.bundle;
     let epoch = current.epoch;
 
     let target_uid = req.uid;
 
-    let request_user = tokio::task::spawn_blocking(move || {
-        uid_to_name(target_uid).ok()
-    })
-    .await
-    .unwrap_or(None);
+    let request_user = tokio::task::spawn_blocking(move || uid_to_name(target_uid).ok())
+        .await
+        .unwrap_or(None);
 
     let session_info = {
         let state = app_state().lock().await;
 
-        state.check_registered_session(
-            &req.session_tty,
-            req.uid,
-            request_user.as_deref()
-        )
+        state.check_registered_session(&req.session_tty, req.uid, request_user.as_deref())
     };
 
-    let ctx = request_to_ctx(
-        req,
-        &compiled.roles,
-        session_info
-    );
+    let ctx = request_to_ctx(req, &compiled.roles, session_info);
 
     //
     // evaluate() が返したrule参照をawait越しに保持しないため、
@@ -191,19 +238,13 @@ async fn evaluate_audit_request(
     let route = match evaluate(&compiled.policy, &ctx) {
         Decision::Pass => AuditRoute::Pass,
 
-        Decision::NoMatchManaged => {
-            AuditRoute::NoMatchManaged
-        }
+        Decision::NoMatchManaged => AuditRoute::NoMatchManaged,
 
-        Decision::Matched(r) => {
-            AuditRoute::Matched(r.clone())
-        }
+        Decision::Matched(r) => AuditRoute::Matched(Box::new(r.clone())),
     };
 
     match route {
-        AuditRoute::Pass => {
-            build_audit_not_managed_result(req, epoch)
-        }
+        AuditRoute::Pass => build_audit_not_managed_result(req, epoch),
 
         AuditRoute::NoMatchManaged => {
             ensure_program_hash(req).await;
@@ -216,19 +257,12 @@ async fn evaluate_audit_request(
                 ensure_program_hash(req).await;
             }
 
-            build_audit_matched_result(
-                req,
-                rule,
-                epoch
-            )
+            build_audit_matched_result(req, *rule, epoch)
         }
     }
 }
 
-fn build_audit_not_managed_result(
-    req: &Request,
-    epoch:u32
-) -> AuditEvalResult {
+fn build_audit_not_managed_result(req: &Request, epoch: u32) -> AuditEvalResult {
     let payload = create_not_managed_ticket(req);
 
     AuditEvalResult {
@@ -236,7 +270,7 @@ fn build_audit_not_managed_result(
         rule: None,
         issued_ticket_id: payload.ticket_id.clone(),
         ticket_to_send: Some(payload),
-        epoch: epoch,
+        epoch,
     }
 }
 
@@ -246,15 +280,11 @@ fn build_audit_no_match_result(epoch: u32) -> AuditEvalResult {
         rule: None,
         ticket_to_send: None,
         issued_ticket_id: "0".to_string(),
-        epoch: epoch,
+        epoch,
     }
 }
 
-fn build_audit_matched_result(
-    req: &Request,
-    r: CompiledRule,
-    epoch: u32
-) -> AuditEvalResult {
+fn build_audit_matched_result(req: &Request, r: CompiledRule, epoch: u32) -> AuditEvalResult {
     let mut ticket_to_send = None;
     let mut issued_ticket_id = "0".to_string();
 
@@ -266,9 +296,9 @@ fn build_audit_matched_result(
         _ => Effect::Deny,
     };
 
-    if (effect == Effect::Allow || effect == Effect::AuditOnly) 
-        && r.ticket_profile.flags != 0 
-        && r.pre_approval.ttl_sec > 0 
+    if (effect == Effect::Allow || effect == Effect::AuditOnly)
+        && r.ticket_profile.flags != 0
+        && r.pre_approval.ttl_sec > 0
     {
         let ticket_id = next_audit_ticket_id();
         issued_ticket_id = ticket_id.clone();
@@ -286,7 +316,9 @@ fn build_audit_matched_result(
         };
 
         let mut safe_flags = r.ticket_profile.flags;
-        if (safe_flags & TEAL_TICKET_FLG_INHERIT) != 0 && (safe_flags & TEAL_TICKET_FLG_SILENT_IO) == 0 {
+        if (safe_flags & TEAL_TICKET_FLG_INHERIT) != 0
+            && (safe_flags & TEAL_TICKET_FLG_SILENT_IO) == 0
+        {
             eprintln!("{}[WARN] Rule '{}' specifies INHERIT without SILENT_IO. Auto-appending SILENT_IO to prevent Netlink log storm.", ktime_prefix(), r.id);
             safe_flags |= TEAL_TICKET_FLG_SILENT_IO;
         }
@@ -307,7 +339,7 @@ fn build_audit_matched_result(
             expires_in_sec: r.pre_approval.ttl_sec,
             flags: safe_flags,
             uses_left: r.max_uses,
-            epoch: epoch,
+            epoch,
             audit_flags: r.audit_level.to_u32(),
         });
 
@@ -351,7 +383,6 @@ fn build_audit_matched_result(
         issued_ticket_id,
         epoch,
     }
-
 }
 
 /// ペンディングエントリを作成・エンリッチし、ディスクにログを記録する
@@ -363,7 +394,7 @@ async fn process_audit_log(
     is_cache_issued: bool,
     epoch: u32,
 ) {
-    let mut pending = PendingEntry::from_audit(req, rule, effect.clone(), epoch);
+    let mut pending = PendingEntry::from_audit(req, rule, effect, epoch);
 
     // エンリッチメント処理 (CPUバウンド/同期I/Oの可能性があるため spawn_blocking を使用)
     let pending = tokio::task::spawn_blocking(move || {
@@ -379,8 +410,9 @@ async fn process_audit_log(
         effect,                 // 本来のポリシー判定結果
         is_cache_issued,
         &issued_ticket_id,
-        &pending
-    ).await;
+        &pending,
+    )
+    .await;
 }
 
 /// 管理対象外パス用の T-000000000 チケットを生成する
@@ -396,7 +428,7 @@ fn create_not_managed_ticket(req: &Request) -> TicketPayload {
         applet_hash: 0,
         target_dev: req.target_dev,
         target_ino: req.target_ino,
-        new_target_dev: req.new_target_dev,     // --- 移動先情報を渡す ---
+        new_target_dev: req.new_target_dev, // --- 移動先情報を渡す ---
         new_target_ino: req.new_target_ino,
         expires_in_sec: u64::MAX, // 無期限
         flags: 0,                 // パス単位のパス（T-000000000）には主体特権は不要
@@ -409,13 +441,17 @@ fn create_not_managed_ticket(req: &Request) -> TicketPayload {
 /// Fast Path（カーネルキャッシュ）で消費・期限切れになったチケットの情報を処理する
 pub async fn handle_kernel_info(info: TealInfo) -> Result<()> {
     let ticket_id = format!("T-{:09}", info.ticket_id);
-    let event_name = if info.is_expired { "EXPIRED" } else { "CONSUMED" };
+    let event_name = if info.is_expired {
+        "EXPIRED"
+    } else {
+        "CONSUMED"
+    };
 
     // 1. チケットをクローンし、必要なら即座に削除（超高速・ブロックなし）
     let target_ticket = {
         if let Some(ticket) = ACTIVE_TICKETS.get(&ticket_id) {
-            let t_clone = ticket.clone(); 
-            
+            let t_clone = ticket.clone();
+
             // 削除条件の判定: 期限切れ、または使用回数が0になったら削除
             let should_remove = match event_name {
                 "EXPIRED" => true,
@@ -426,7 +462,7 @@ pub async fn handle_kernel_info(info: TealInfo) -> Result<()> {
             if should_remove {
                 ACTIVE_TICKETS.remove(&ticket_id);
             }
-            
+
             Some(t_clone)
         } else {
             None
@@ -442,21 +478,35 @@ pub async fn handle_kernel_info(info: TealInfo) -> Result<()> {
             uses_left: info.uses_left,
             obj_dev: info.target_dev as u64,
             obj_ino: info.target_ino,
-            new_obj_dev: if info.new_target_dev != 0 { Some(info.new_target_dev as u64) } else { None },
-            new_obj_ino: if info.new_target_ino != 0 { Some(info.new_target_ino) } else { None },
+            new_obj_dev: if info.new_target_dev != 0 {
+                Some(info.new_target_dev as u64)
+            } else {
+                None
+            },
+            new_obj_ino: if info.new_target_ino != 0 {
+                Some(info.new_target_ino)
+            } else {
+                None
+            },
         };
 
         match event_name {
             "EXPIRED" => {
-                EvidenceManager::log_fast_path_static(LogType::TicketExpired, &event_log, &ticket).await;
+                EvidenceManager::log_fast_path_static(LogType::TicketExpired, &event_log, &ticket)
+                    .await;
             }
             "CONSUMED" => {
-                EvidenceManager::log_fast_path_static(LogType::TicketConsumed, &event_log, &ticket).await;
+                EvidenceManager::log_fast_path_static(LogType::TicketConsumed, &event_log, &ticket)
+                    .await;
             }
             _ => {}
         }
     } else {
-        eprintln!("{}[WARN] Received kernel event for unknown ticket id: {}", ktime_prefix(), ticket_id);
+        eprintln!(
+            "{}[WARN] Received kernel event for unknown ticket id: {}",
+            ktime_prefix(),
+            ticket_id
+        );
     }
 
     Ok(())
@@ -492,21 +542,15 @@ async fn process_resolved_event(
         ));
     }
 
-    let mut pending = PendingEntry::from_audit(
-        &req,
-        rule,
-        effect.clone(),
-        current_epoch,
-    );
+    let mut pending = PendingEntry::from_audit(&req, rule, effect, current_epoch);
 
     enrich_pending_entry(&mut pending);
 
     let is_cache = ticket_id.is_some();
     let final_ticket_id = ticket_id.unwrap_or_else(|| "0".to_string());
 
-    EvidenceManager::log_slow_path_static(
-        log_type, effect, is_cache, &final_ticket_id, &pending
-    ).await;
+    EvidenceManager::log_slow_path_static(log_type, effect, is_cache, &final_ticket_id, &pending)
+        .await;
 
     Ok(())
 }
@@ -517,12 +561,12 @@ async fn process_resolved_event(
 
 pub fn enrich_pending_entry(entry: &mut PendingEntry) {
     let mut current_pid = entry.subject.pid;
-    
+
     for _ in 0..10 {
         if current_pid == 0 || current_pid == 1 {
             break;
         }
-        
+
         let environ_path = format!("/proc/{}/environ", current_pid);
         if let Ok(env_data) = fs::read(&environ_path) {
             let env_str = String::from_utf8_lossy(&env_data);
@@ -543,16 +587,18 @@ pub fn enrich_pending_entry(entry: &mut PendingEntry) {
                 }
             }
         }
-        
+
         if entry.subject.client_ip.is_some() && entry.subject.auth_method.is_some() {
             break;
         }
-        
+
         if let Ok(stat) = fs::read_to_string(format!("/proc/{}/stat", current_pid)) {
             let parts: Vec<&str> = stat.split_whitespace().collect();
             if parts.len() > 3 {
                 if let Ok(ppid) = parts[3].parse::<u32>() {
-                    if ppid == current_pid { break; } 
+                    if ppid == current_pid {
+                        break;
+                    }
                     current_pid = ppid;
                     continue;
                 }
@@ -560,7 +606,7 @@ pub fn enrich_pending_entry(entry: &mut PendingEntry) {
         }
         break;
     }
-    
+
     if entry.subject.auth_method.is_none() {
         entry.subject.auth_method = Some("unknown".to_string());
     }

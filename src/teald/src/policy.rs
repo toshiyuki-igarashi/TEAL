@@ -5,19 +5,18 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 use anyhow::{Context, Result};
+use serde_json::Value;
 use std::path::Path;
 use std::sync::OnceLock;
-use serde_json::Value;
 
-use teal_policy_engine::errors::CompileWarnings;
-use teal_policy_engine::load::load_json_file;
-use teal_policy_engine::schema::validate_against_schema;
-use teal_policy_engine::raw::{RawPolicyV14, RawBundleV1};
 use teal_policy_engine::compile::compile_policy_v14;
-use teal_policy_engine::ir::{CompiledRoles, CompiledPolicy};
+use teal_policy_engine::errors::CompileWarnings;
+use teal_policy_engine::ir::{CompiledPolicy, CompiledRoles};
+use teal_policy_engine::load::load_json_file;
+use teal_policy_engine::raw::{RawBundleV1, RawPolicyV14};
+use teal_policy_engine::schema::validate_against_schema;
 
-const POLICY_SCHEMA_JSON: &str =
-    include_str!("../../schema/policy_v1_4.schema.json");
+const POLICY_SCHEMA_JSON: &str = include_str!("../../schema/policy_v1_4.schema.json");
 
 static SCHEMA: OnceLock<Value> = OnceLock::new();
 
@@ -35,8 +34,7 @@ pub fn load_policy<P: AsRef<Path>>(
     let p = path.as_ref();
 
     // 1) file -> Value (後で書き換えるため mut が必須)
-    let mut v = load_json_file(p)
-        .with_context(|| format!("load policy json: {}", p.display()))?;
+    let mut v = load_json_file(p).with_context(|| format!("load policy json: {}", p.display()))?;
 
     // スキーマ検証の前に、Value内の ops 配列にある文字列をすべて大文字に変換
     uppercase_ops_in_value(&mut v);
@@ -94,7 +92,6 @@ fn uppercase_ops_in_value(value: &mut serde_json::Value) {
         _ => {}
     }
 }
-
 
 pub fn load_policies_listed_in_bundle(
     bundle: &RawBundleV1,

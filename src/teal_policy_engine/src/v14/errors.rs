@@ -23,7 +23,10 @@ pub struct ValidateError {
 
 impl ValidateError {
     pub fn new(kind: ValidateErrorKind, message: impl Into<String>) -> Self {
-        Self { kind, message: message.into() }
+        Self {
+            kind,
+            message: message.into(),
+        }
     }
 }
 
@@ -57,9 +60,7 @@ pub enum CompileError {
         context: AssignmentContext,
     },
     #[error("empty role set in assignment ({context})")]
-    EmptyRoleSetInAssignment {
-        context: AssignmentContext,
-    },
+    EmptyRoleSetInAssignment { context: AssignmentContext },
     #[error("missing assignment target")]
     MissingAssignmentTarget,
     #[error("ambiguous assignment target")]
@@ -89,13 +90,9 @@ pub enum CompileError {
     #[error("path normalize error: {0}")]
     PathNormalize(String),
     #[error("rule `{rule_id}`: mpa_threshold is required when effect is `need_approval`")]
-    MissingMpaThreshold {
-        rule_id: String,
-    },
+    MissingMpaThreshold { rule_id: String },
     #[error("rule `{rule_id}`: invalid mpa_threshold (must be >= 1)")]
-    InvalidMpaThreshold {
-        rule_id: String,
-    },
+    InvalidMpaThreshold { rule_id: String },
 
     #[error("invalid pre_approval_defaults: {0}")]
     InvalidPreApprovalDefaults(String),

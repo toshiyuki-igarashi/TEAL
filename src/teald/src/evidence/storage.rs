@@ -4,10 +4,10 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
-use std::fs::{File, OpenOptions};
-use std::io::{self, Write, BufWriter};
-use std::sync::{RwLock, OnceLock, RwLockWriteGuard};
 use super::schema::AuditLogEntry;
+use std::fs::{File, OpenOptions};
+use std::io::{self, BufWriter, Write};
+use std::sync::{OnceLock, RwLock, RwLockWriteGuard};
 
 /// グローバルなログライター保持。
 /// OnceLock で場所を固定し、RwLock で中身（BufWriter）の交換を許可する。
@@ -18,8 +18,9 @@ const LOG_PATH: &str = "/var/log/teal/audit.jsonl";
 fn get_writer_mut() -> io::Result<RwLockWriteGuard<'static, BufWriter<File>>> {
     // すでに初期化済みなら、ロックを取得して返す (毎回実行されるが高速)
     if let Some(rwlock) = LOG_WRITER.get() {
-        return rwlock.write()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Audit log lock poisoned"));
+        return rwlock
+            .write()
+            .map_err(|_| io::Error::other("Audit log lock poisoned"));
     }
 
     // --- 初回アクセス時のみ実行される初期化ロジック ---
@@ -34,10 +35,11 @@ fn get_writer_mut() -> io::Result<RwLockWriteGuard<'static, BufWriter<File>>> {
     let _ = LOG_WRITER.set(writer);
 
     // セットされた箱から改めてロックを取得して返す
-    LOG_WRITER.get()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Logger initialization race condition"))?
+    LOG_WRITER
+        .get()
+        .ok_or_else(|| io::Error::other("Logger initialization race condition"))?
         .write()
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "Audit log lock poisoned after init"))
+        .map_err(|_| io::Error::other("Audit log lock poisoned after init"))
 }
 
 /// ログ書き込み (通常はメモリバッファに入るだけなので高速)
@@ -47,8 +49,8 @@ pub fn write_log(entry: &AuditLogEntry) -> io::Result<()> {
 
     // 2. JSONシリアライズ、&mut *guard で内部の BufWriter<File> への可変参照を渡す
     serde_json::to_writer(&mut *guard, entry)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("JSON serialisation error: {}", e)))?;
-    
+        .map_err(|e| io::Error::other(format!("JSON serialisation error: {}", e)))?;
+
     // 3. 改行を付与
     writeln!(&mut *guard)?;
 
@@ -90,5 +92,3 @@ pub fn reopen_log() -> io::Result<()> {
 
     Ok(())
 }
-
-

@@ -5,6 +5,5 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 pub mod admin;
-pub mod decision;
 pub mod audit;
-
+pub mod decision;

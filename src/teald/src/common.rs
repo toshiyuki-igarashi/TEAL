@@ -60,12 +60,13 @@ impl DecisionKind {
 
 pub fn is_mgmt_id(id: &str) -> bool {
     let id_upper = id.to_uppercase();
-    matches!(id_upper.as_str(), "START" | "STOP" | "POLICY_UPDATE" | "FLUSH")
+    matches!(
+        id_upper.as_str(),
+        "START" | "STOP" | "POLICY_UPDATE" | "FLUSH"
+    )
 }
 
-pub fn find_rule(
-    id: Option<&str>,
-) -> Result<(Option<CompiledRule>, u32), String> {
+pub fn find_rule(id: Option<&str>) -> Result<(Option<CompiledRule>, u32), String> {
     let snapshot = policy_snapshot();
 
     match id {

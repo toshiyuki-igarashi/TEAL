@@ -4,12 +4,12 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
+use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use anyhow::{Context, Result};
 use teal_policy_engine::load::load_json_file;
-use teal_policy_engine::raw::{RawBundleV1, RawRolesV1};
 use teal_policy_engine::management::{RawManagement, RawMgmtControl};
+use teal_policy_engine::raw::{RawBundleV1, RawRolesV1};
 
 #[derive(Debug, Default, Clone)]
 pub struct FullConfigDiff {
@@ -30,10 +30,10 @@ pub fn compare_full_config(curr_dir: &Path, stage_dir: &Path) -> Result<FullConf
     let bundle_diff = compare_bundle(&curr_bundle, &stage_bundle);
 
     // 2. roles.json の比較
-    let curr_roles_val = load_json_file(curr_dir.join("roles.json"))
-        .context("Failed to load current roles.json")?;
-    let stage_roles_val = load_json_file(stage_dir.join("roles.json"))
-        .context("Failed to load staged roles.json")?;
+    let curr_roles_val =
+        load_json_file(curr_dir.join("roles.json")).context("Failed to load current roles.json")?;
+    let stage_roles_val =
+        load_json_file(stage_dir.join("roles.json")).context("Failed to load staged roles.json")?;
     let curr_roles: RawRolesV1 = serde_json::from_value(curr_roles_val)?;
     let stage_roles: RawRolesV1 = serde_json::from_value(stage_roles_val)?;
     let roles_diff = compare_roles(&curr_roles, &stage_roles);
@@ -42,10 +42,10 @@ pub fn compare_full_config(curr_dir: &Path, stage_dir: &Path) -> Result<FullConf
     let curr_mgmt_path = curr_dir.join("management.json");
     let stage_mgmt_path = stage_dir.join("management.json");
     let mgmt_diff = if curr_mgmt_path.exists() && stage_mgmt_path.exists() {
-        let curr_mgmt_val = load_json_file(&curr_mgmt_path)
-            .context("Failed to load current management.json")?;
-        let stage_mgmt_val = load_json_file(&stage_mgmt_path)
-            .context("Failed to load staged management.json")?;
+        let curr_mgmt_val =
+            load_json_file(&curr_mgmt_path).context("Failed to load current management.json")?;
+        let stage_mgmt_val =
+            load_json_file(&stage_mgmt_path).context("Failed to load staged management.json")?;
         let curr_mgmt: RawManagement = serde_json::from_value(curr_mgmt_val)?;
         let stage_mgmt: RawManagement = serde_json::from_value(stage_mgmt_val)?;
         compare_management(&curr_mgmt, &stage_mgmt)
@@ -70,8 +70,14 @@ pub fn compare_bundle(curr: &RawBundleV1, stage: &RawBundleV1) -> Option<BundleD
     let curr_set: BTreeSet<_> = curr.policy_files.iter().collect();
     let stage_set: BTreeSet<_> = stage.policy_files.iter().collect();
 
-    let added: Vec<String> = stage_set.difference(&curr_set).map(|s| (*s).clone()).collect();
-    let removed: Vec<String> = curr_set.difference(&stage_set).map(|s| (*s).clone()).collect();
+    let added: Vec<String> = stage_set
+        .difference(&curr_set)
+        .map(|s| (*s).clone())
+        .collect();
+    let removed: Vec<String> = curr_set
+        .difference(&stage_set)
+        .map(|s| (*s).clone())
+        .collect();
 
     if added.is_empty() && removed.is_empty() {
         None
@@ -104,8 +110,14 @@ pub fn compare_roles(curr: &RawRolesV1, stage: &RawRolesV1) -> Option<RolesDiff>
     // 1. ロール自体の追加・削除
     let curr_roles: BTreeSet<_> = curr.roles.iter().map(|r| &r.name).collect();
     let stage_roles: BTreeSet<_> = stage.roles.iter().map(|r| &r.name).collect();
-    diff.added_roles = stage_roles.difference(&curr_roles).map(|s| (*s).clone()).collect();
-    diff.removed_roles = curr_roles.difference(&stage_roles).map(|s| (*s).clone()).collect();
+    diff.added_roles = stage_roles
+        .difference(&curr_roles)
+        .map(|s| (*s).clone())
+        .collect();
+    diff.removed_roles = curr_roles
+        .difference(&stage_roles)
+        .map(|s| (*s).clone())
+        .collect();
 
     // 2. UID 割り当ての比較
     let to_map = |assignments: &[teal_policy_engine::raw::RawAssignment]| {
@@ -152,7 +164,11 @@ pub fn compare_roles(curr: &RawRolesV1, stage: &RawRolesV1) -> Option<RolesDiff>
         && diff.assignment_changes.is_empty()
         && diff.default_roles_changed.is_none();
 
-    if is_empty { None } else { Some(diff) }
+    if is_empty {
+        None
+    } else {
+        Some(diff)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,10 +233,26 @@ pub fn compare_management(curr: &RawManagement, stage: &RawManagement) -> Option
     // 2. コマンド制御 (controls) の比較
     // 非Option型 (start, stop) と Option型 (policy_update, flush) を Option<&RawMgmtControl> に揃える
     let commands: [(&str, Option<&RawMgmtControl>, Option<&RawMgmtControl>); 4] = [
-        ("start", Some(&curr.controls.start), Some(&stage.controls.start)),
-        ("stop", Some(&curr.controls.stop), Some(&stage.controls.stop)),
-        ("policy_update", curr.controls.policy_update.as_ref(), stage.controls.policy_update.as_ref()),
-        ("flush", curr.controls.flush.as_ref(), stage.controls.flush.as_ref()),
+        (
+            "start",
+            Some(&curr.controls.start),
+            Some(&stage.controls.start),
+        ),
+        (
+            "stop",
+            Some(&curr.controls.stop),
+            Some(&stage.controls.stop),
+        ),
+        (
+            "policy_update",
+            curr.controls.policy_update.as_ref(),
+            stage.controls.policy_update.as_ref(),
+        ),
+        (
+            "flush",
+            curr.controls.flush.as_ref(),
+            stage.controls.flush.as_ref(),
+        ),
     ];
 
     for (cmd_name, curr_ctrl, stage_ctrl) in commands {
@@ -267,8 +299,22 @@ fn compare_single_control(
 
             // 承認ロール (mpa.approver_roles) の比較
             let empty_roles = Vec::new();
-            let curr_app: BTreeSet<_> = c.mpa.approver_roles.as_ref().unwrap_or(&empty_roles).iter().cloned().collect();
-            let stage_app: BTreeSet<_> = s.mpa.approver_roles.as_ref().unwrap_or(&empty_roles).iter().cloned().collect();
+            let curr_app: BTreeSet<_> = c
+                .mpa
+                .approver_roles
+                .as_ref()
+                .unwrap_or(&empty_roles)
+                .iter()
+                .cloned()
+                .collect();
+            let stage_app: BTreeSet<_> = s
+                .mpa
+                .approver_roles
+                .as_ref()
+                .unwrap_or(&empty_roles)
+                .iter()
+                .cloned()
+                .collect();
             let added_app: Vec<_> = stage_app.difference(&curr_app).cloned().collect();
             let removed_app: Vec<_> = curr_app.difference(&stage_app).cloned().collect();
 

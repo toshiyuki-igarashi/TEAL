@@ -4,26 +4,46 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
-use nix::unistd::{Uid, User};
 use anyhow::{Context, Result};
-use std::borrow::Cow;
+use nix::unistd::{Uid, User};
 use serde::{Deserialize, Deserializer};
+use std::borrow::Cow;
 
 use crate::types::Action;
 
 /// u32でエンコードされたActionを文字列へ変換
 pub fn u32_to_str(op: u32) -> String {
     let mut s = Vec::new();
-    if Action::Read.to_mask() & op != 0 { s.push("READ"); };
-    if Action::Write.to_mask() & op != 0 { s.push("WRITE"); };
-    if Action::Execute.to_mask() & op != 0 { s.push("EXECUTE"); };
-    if Action::FileDelete.to_mask() & op != 0 { s.push("DELETE"); };
-    if Action::FileUnlink.to_mask() & op != 0 { s.push("UNLINK"); };
-    if Action::FileRename.to_mask() & op != 0 { s.push("RENAME"); };
-    if Action::FileChmod.to_mask() & op != 0 { s.push("CHMOD"); };
-    if Action::FileChown.to_mask() & op != 0 { s.push("CHOWN"); };
-    if Action::NetConnect.to_mask() & op != 0 { s.push("CONNECT"); };
-    if Action::Unknown.to_mask() & op != 0 { s.push("UNKNOWN"); };
+    if Action::Read.to_mask() & op != 0 {
+        s.push("READ");
+    };
+    if Action::Write.to_mask() & op != 0 {
+        s.push("WRITE");
+    };
+    if Action::Execute.to_mask() & op != 0 {
+        s.push("EXECUTE");
+    };
+    if Action::FileDelete.to_mask() & op != 0 {
+        s.push("DELETE");
+    };
+    if Action::FileUnlink.to_mask() & op != 0 {
+        s.push("UNLINK");
+    };
+    if Action::FileRename.to_mask() & op != 0 {
+        s.push("RENAME");
+    };
+    if Action::FileChmod.to_mask() & op != 0 {
+        s.push("CHMOD");
+    };
+    if Action::FileChown.to_mask() & op != 0 {
+        s.push("CHOWN");
+    };
+    if Action::NetConnect.to_mask() & op != 0 {
+        s.push("CONNECT");
+    };
+    if Action::Unknown.to_mask() & op != 0 {
+        s.push("UNKNOWN");
+    };
 
     s.join(",")
 }
@@ -52,21 +72,24 @@ pub fn uid_to_name(uid: u32) -> Result<String> {
 
 /// "/dev/pts/1" や "pts/1" などの様々なTTY表記を "pts1" のような共通の短い形式に正規化する
 pub fn normalize_tty_name(tty: &str) -> String {
-    tty.replace("/dev/", "")   // "/dev/" プレフィックスを削除
-       .replace("/", "")       // スラッシュをすべて削除 ("pts/1" -> "pts1")
-       .trim()
-       .to_string()
+    tty.replace("/dev/", "") // "/dev/" プレフィックスを削除
+        .replace("/", "") // スラッシュをすべて削除 ("pts/1" -> "pts1")
+        .trim()
+        .to_string()
 }
 
 /// カーネルの起動後の時間を文字列に変換
 pub fn ktime_prefix() -> String {
     // dmesg と合わせるなら MONOTONIC（起動後秒）
     // サスペンド時間も含めたいなら CLOCK_BOOTTIME に変える
-    let mut ts: libc::timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut ts: libc::timespec = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     unsafe {
         libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
     }
-    format!("[{:>6}.{:06}] ", ts.tv_sec, (ts.tv_nsec / 1_000) as i64)
+    format!("[{:>6}.{:06}] ", ts.tv_sec, ts.tv_nsec / 1_000)
 }
 
 /// &strの文字列を小文字に変換し&strを返す
@@ -94,7 +117,7 @@ where
 {
     // 1. 一度 JSON から通常の String の配列として読み込む
     let raw_strings = Vec::<String>::deserialize(deserializer)?;
-    
+
     // 2. 各文字列を大文字に変換し、Action Enum にパースし直す
     let actions = raw_strings
         .into_iter()
@@ -108,5 +131,3 @@ where
 
     Ok(actions)
 }
-
-

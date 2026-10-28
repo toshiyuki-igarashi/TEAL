@@ -4,35 +4,28 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
+
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::errors::CompileError;
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+// SystemType
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemType {
-    Server,      // 厳格: 物理端末/SSHのみ、GUI不可
+    #[default]
+    Server, // 厳格: 物理端末/SSHのみ、GUI不可
     Workstation, // 柔軟: GUIセッションも対話型として許容
 }
 
-// default値を Server に設定
-impl Default for SystemType {
-    fn default() -> Self {
-        Self::Server
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+// RuleType
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleType {
+    #[default]
     Standard,
     SubjectOnly,
-}
-
-impl Default for RuleType {
-    fn default() -> Self {
-        RuleType::Standard
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,7 +57,6 @@ impl Effect {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -126,27 +118,12 @@ impl Action {
         }
     }
 
-    pub fn to_string(&self) -> String {
-        match self {
-            Action::Read => String::from("Read"),
-            Action::Write => String::from("Write"),
-            Action::Execute => String::from("Execute"),
-            Action::FileDelete => String::from("Delete"),
-            Action::FileUnlink => String::from("Unlink"),
-            Action::FileRename => String::from("Rename"),
-            Action::FileChmod => String::from("Chmod"),
-            Action::FileChown => String::from("Chown"),
-            Action::NetConnect => String::from("Connect"),
-            Action::Unknown => String::from("Unknown"),
-        }
-    }
-
     pub fn parse(s: &str) -> Result<Self, CompileError> {
         let t = s.trim().to_ascii_lowercase();
         match t.as_str() {
-            "read"  => Ok(Action::Read),
+            "read" => Ok(Action::Read),
             "write" => Ok(Action::Write),
-            "execute"  => Ok(Action::Execute),
+            "execute" => Ok(Action::Execute),
             "delete" => Ok(Action::FileDelete),
             "unlink" => Ok(Action::FileUnlink),
             "rename" => Ok(Action::FileRename),
@@ -184,3 +161,20 @@ impl Action {
     }
 }
 
+impl fmt::Display for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Action::Read => "Read",
+            Action::Write => "Write",
+            Action::Execute => "Execute",
+            Action::FileDelete => "Delete",
+            Action::FileUnlink => "Unlink",
+            Action::FileRename => "Rename",
+            Action::FileChmod => "Chmod",
+            Action::FileChown => "Chown",
+            Action::NetConnect => "Connect",
+            Action::Unknown => "Unknown",
+        };
+        write!(f, "{s}")
+    }
+}

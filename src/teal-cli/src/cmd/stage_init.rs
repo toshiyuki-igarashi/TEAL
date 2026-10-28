@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 /*
  * TEAL CLI (teal-cli)
- * 
+ *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
@@ -32,6 +32,7 @@ pub fn run(force: bool) -> Result<()> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(STAGE_LOCK_PATH)
         .context("Failed to open staging lock file")?;
 
@@ -54,13 +55,21 @@ pub fn run(force: bool) -> Result<()> {
         }
 
         if force {
-            fs::remove_dir_all(stage_dir)
-                .with_context(|| format!("Failed to clear existing staging directory: {}", stage_dir.display()))?;
+            fs::remove_dir_all(stage_dir).with_context(|| {
+                format!(
+                    "Failed to clear existing staging directory: {}",
+                    stage_dir.display()
+                )
+            })?;
         }
     }
 
-    fs::create_dir_all(stage_dir)
-        .with_context(|| format!("Failed to create staging directory: {}", stage_dir.display()))?;
+    fs::create_dir_all(stage_dir).with_context(|| {
+        format!(
+            "Failed to create staging directory: {}",
+            stage_dir.display()
+        )
+    })?;
 
     // 4. 現行ポリシー・ロールを階層構造ごと再帰コピー
     let copied_count = copy_dir_recursive(current_dir, stage_dir, true)?;
@@ -68,7 +77,11 @@ pub fn run(force: bool) -> Result<()> {
     #[cfg(unix)]
     let _ = lock_file.unlock();
 
-    println!("  -> {} 個のポリシー定義ファイルを '{}' へコピーしました", copied_count, stage_dir.display());
+    println!(
+        "  -> {} 個のポリシー定義ファイルを '{}' へコピーしました",
+        copied_count,
+        stage_dir.display()
+    );
     println!("✅ ステージング環境の準備が完了しました。ファイルを編集後に `teal-cli diff` を実行してください。");
 
     Ok(())
@@ -78,7 +91,9 @@ pub fn run(force: bool) -> Result<()> {
 fn copy_dir_recursive(src: &Path, dst: &Path, is_root: bool) -> Result<usize> {
     let mut count = 0;
 
-    for entry in fs::read_dir(src).with_context(|| format!("Failed to read directory: {}", src.display()))? {
+    for entry in
+        fs::read_dir(src).with_context(|| format!("Failed to read directory: {}", src.display()))?
+    {
         let entry = entry?;
         let path = entry.path();
         let file_name = entry.file_name();
@@ -101,8 +116,13 @@ fn copy_dir_recursive(src: &Path, dst: &Path, is_root: bool) -> Result<usize> {
                 .with_context(|| format!("Failed to create directory: {}", dest_path.display()))?;
             count += copy_dir_recursive(&path, &dest_path, false)?;
         } else if path.is_file() {
-            fs::copy(&path, &dest_path)
-                .with_context(|| format!("Failed to copy '{}' to '{}'", path.display(), dest_path.display()))?;
+            fs::copy(&path, &dest_path).with_context(|| {
+                format!(
+                    "Failed to copy '{}' to '{}'",
+                    path.display(),
+                    dest_path.display()
+                )
+            })?;
             count += 1;
         }
     }
