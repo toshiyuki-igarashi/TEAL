@@ -5,9 +5,9 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
-use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 use crate::ai::types::AiEvent;
 use crate::ai::AggregatorConfig;
@@ -48,7 +48,9 @@ impl AiArgumentPattern {
         for token in args_str.split_whitespace() {
             if matches!(token, "|" | ">" | ">>" | "<" | ";" | "&&" | "||") {
                 has_shell_operators = true;
-            } else if let Some((opt, _val)) = token.strip_prefix("--").and_then(|t| t.split_once('=')) {
+            } else if let Some((opt, _val)) =
+                token.strip_prefix("--").and_then(|t| t.split_once('='))
+            {
                 // --option=value の形式:
                 // フラグ部分 (--option) を追加し、value は非フラグトークンとしてカウント
                 flags.push(format!("--{opt}"));
@@ -71,7 +73,12 @@ impl AiArgumentPattern {
     }
 
     /// 2つの引数パターンが集約可能（構文構造が一致）かどうか
-    pub fn is_compatible_with(&self, other_flags: &[String], other_non_flag_count: u32, other_has_shell_ops: bool) -> bool {
+    pub fn is_compatible_with(
+        &self,
+        other_flags: &[String],
+        other_non_flag_count: u32,
+        other_has_shell_ops: bool,
+    ) -> bool {
         self.flags == other_flags
             && self.non_flag_token_count == other_non_flag_count
             && self.has_shell_operators == other_has_shell_ops
@@ -176,8 +183,7 @@ pub fn aggregate_events(
     analysis_id: &str,
     events: &[AiEvent],
     config: &AggregatorConfig,
-) -> AiAggregationResult
-{
+) -> AiAggregationResult {
     if events.is_empty() {
         return AiAggregationResult {
             events: Vec::new(),
@@ -200,7 +206,8 @@ pub fn aggregate_events(
                     block.merge(event);
                     current_block = Some(block);
                 } else {
-                    let (aggregated_event, source_ids) = block.finish(format!("{}-agg-{}",analysis_id, seq_num));
+                    let (aggregated_event, source_ids) =
+                        block.finish(format!("{}-agg-{}", analysis_id, seq_num));
                     source_event_ids.insert(aggregated_event.aggregation_id.clone(), source_ids);
                     aggregated.push(aggregated_event);
                     seq_num += 1;
@@ -212,7 +219,8 @@ pub fn aggregate_events(
     }
 
     if let Some(block) = current_block {
-        let (aggregated_event, source_ids) = block.finish(format!("{}-agg-{}", analysis_id, seq_num));
+        let (aggregated_event, source_ids) =
+            block.finish(format!("{}-agg-{}", analysis_id, seq_num));
         source_event_ids.insert(aggregated_event.aggregation_id.clone(), source_ids);
         aggregated.push(aggregated_event);
     }
@@ -307,11 +315,7 @@ impl<'a> AggregatingBlock<'a> {
         }
     }
 
-    fn can_merge(
-        &self,
-        event: &AiEvent,
-        config: &AggregatorConfig,
-    ) -> bool {
+    fn can_merge(&self, event: &AiEvent, config: &AggregatorConfig) -> bool {
         if self.event_count >= config.max_group_events {
             return false;
         }
@@ -344,7 +348,11 @@ impl<'a> AggregatingBlock<'a> {
             (Some(_), None) | (None, Some(_)) => false,
             (Some(pattern), Some(new_args)) => {
                 if let Some(new_pattern) = AiArgumentPattern::from_raw_args(Some(new_args)) {
-                    pattern.is_compatible_with(&new_pattern.flags, new_pattern.non_flag_token_count, new_pattern.has_shell_operators)
+                    pattern.is_compatible_with(
+                        &new_pattern.flags,
+                        new_pattern.non_flag_token_count,
+                        new_pattern.has_shell_operators,
+                    )
                 } else {
                     false
                 }
@@ -360,8 +368,14 @@ impl<'a> AggregatingBlock<'a> {
         let interval = (event.timestamp - self.last_time).num_milliseconds();
         if interval >= 0 {
             let interval_ms = interval as u64;
-            self.min_interval_ms = Some(self.min_interval_ms.map_or(interval_ms, |min| min.min(interval_ms)));
-            self.max_interval_ms = Some(self.max_interval_ms.map_or(interval_ms, |max| max.max(interval_ms)));
+            self.min_interval_ms = Some(
+                self.min_interval_ms
+                    .map_or(interval_ms, |min| min.min(interval_ms)),
+            );
+            self.max_interval_ms = Some(
+                self.max_interval_ms
+                    .map_or(interval_ms, |max| max.max(interval_ms)),
+            );
         }
         self.last_time = event.timestamp;
 
@@ -463,7 +477,14 @@ mod tests {
     use super::*;
     use chrono::Duration as ChronoDuration;
 
-    fn make_test_event(id: &str, ts: DateTime<Utc>, target: &str, new_p: Option<&str>, args: Option<&str>, epoch: u32) -> AiEvent {
+    fn make_test_event(
+        id: &str,
+        ts: DateTime<Utc>,
+        target: &str,
+        new_p: Option<&str>,
+        args: Option<&str>,
+        epoch: u32,
+    ) -> AiEvent {
         AiEvent {
             event_id: id.to_string(),
             timestamp: ts,
@@ -496,7 +517,14 @@ mod tests {
                 let args = format!("file_{i:03}.txt file_{i:03}.enc");
                 // 10件目でepochが更新されるシナリオ
                 let epoch = if i < 10 { 1 } else { 2 };
-                make_test_event(&format!("evt-{i:03}"), ts, &target, Some(&new_p), Some(&args), epoch)
+                make_test_event(
+                    &format!("evt-{i:03}"),
+                    ts,
+                    &target,
+                    Some(&new_p),
+                    Some(&args),
+                    epoch,
+                )
             })
             .collect();
 
@@ -525,10 +553,7 @@ mod tests {
         assert_eq!(agg.evidence_event_ids[0], "evt-000");
         assert_eq!(agg.evidence_event_ids[2], "evt-019");
 
-        let source_ids = result
-            .source_event_ids
-            .get(&agg.aggregation_id)
-            .unwrap();
+        let source_ids = result.source_event_ids.get(&agg.aggregation_id).unwrap();
 
         assert_eq!(source_ids.len(), 20);
         assert_eq!(source_ids[0], "evt-000");
@@ -549,7 +574,8 @@ mod tests {
 
         // 各集約グループと元イベントIDの対応を確認
         for (i, agg) in result.events.iter().enumerate() {
-            let source_ids = result.source_event_ids
+            let source_ids = result
+                .source_event_ids
                 .get(&agg.aggregation_id)
                 .expect("Source event IDs not found");
 
@@ -564,15 +590,9 @@ mod tests {
     fn test_option_value_aggregation() {
         let now = Utc::now();
 
-        let e1 = make_test_event(
-            "e1", now, "/a", None,
-            Some("--output=file1.txt /data/a"), 1,
-        );
+        let e1 = make_test_event("e1", now, "/a", None, Some("--output=file1.txt /data/a"), 1);
 
-        let e2 = make_test_event(
-            "e2", now, "/b", None,
-            Some("--output=file2.txt /data/b"), 1,
-        );
+        let e2 = make_test_event("e2", now, "/b", None, Some("--output=file2.txt /data/b"), 1);
 
         let result = aggregate_events("A-003", &[e1, e2], &AggregatorConfig::default());
 
@@ -629,12 +649,18 @@ mod tests {
             make_test_event(
                 "e2",
                 start + ChronoDuration::milliseconds(500),
-                "/b", None, None, 1,
+                "/b",
+                None,
+                None,
+                1,
             ),
             make_test_event(
                 "e3",
                 start + ChronoDuration::milliseconds(2500),
-                "/c", None, None, 1,
+                "/c",
+                None,
+                None,
+                1,
             ),
         ];
 
@@ -650,4 +676,3 @@ mod tests {
         assert_eq!(result.events[1].event_count, 1);
     }
 }
-

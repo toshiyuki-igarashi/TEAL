@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 /*
  * TEAL CLI (teal-cli)
- * 
+ *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
@@ -12,17 +12,17 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 
-use uuid::Uuid;
 use blst::min_pk::SecretKey;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use uuid::Uuid;
 
 // Policy Engine からのインポート
 use teal_policy_engine::load::load_json_file;
 use teal_policy_engine::raw::RawPolicyV14;
 
 // teald クレートから共通型をインポート
-use teald::common::{DecisionKind, is_mgmt_id};
+use teald::common::{is_mgmt_id, DecisionKind};
 
 // teal-cli 内部に移した verify モジュール
 mod verify;
@@ -133,7 +133,7 @@ enum Commands {
 // ==========================================
 
 fn main() -> Result<()> {
-    let cli = Cli::parse(); 
+    let cli = Cli::parse();
 
     match &cli.command {
         Commands::Keygen => {
@@ -159,19 +159,11 @@ fn main() -> Result<()> {
             send_command("LIST", true)?;
         }
         Commands::Approve { id, audit_id } => {
-            run_signed_decision(
-                DecisionKind::Approve,
-                id,
-                audit_id.as_deref(),
-            )?;
+            run_signed_decision(DecisionKind::Approve, id, audit_id.as_deref())?;
         }
 
         Commands::Deny { id, audit_id } => {
-            run_signed_decision(
-                DecisionKind::Deny,
-                id,
-                audit_id.as_deref(),
-            )?;
+            run_signed_decision(DecisionKind::Deny, id, audit_id.as_deref())?;
         }
         Commands::Ticket { rule_id } => {
             run_signed_decision(DecisionKind::Ticket, rule_id, None)?;
@@ -197,7 +189,11 @@ fn main() -> Result<()> {
         Commands::Emergency { token } => {
             send_command(&format!("EMERGENCY {}", token), true)?;
         }
-        Commands::Status { wait_settle, timeout, json } => {
+        Commands::Status {
+            wait_settle,
+            timeout,
+            json,
+        } => {
             cmd::status::run(*wait_settle, *timeout, *json)?;
         }
         Commands::Verify {
@@ -213,14 +209,9 @@ fn main() -> Result<()> {
 }
 
 /// ポリシーの形式検証（Alloy連携）を実行する
-fn run_verify(
-    policy_file: &str,
-    goal: Option<&str>,
-    visualize: bool,
-    debug: bool,
-) -> Result<()> {
+fn run_verify(policy_file: &str, goal: Option<&str>, visualize: bool, debug: bool) -> Result<()> {
     let path = Path::new(policy_file);
-    
+
     // 拡張子を除いたファイル名を抽出（ポリシーの識別名として利用）
     let policy_name = path
         .file_stem()
@@ -268,11 +259,7 @@ fn run_verify(
 const TEAL_DST: &[u8] = b"TEAL_SYSTEM_V1_MPA_SIG";
 
 // 署名付きの決定コマンドを送る共通関数（user なし）
-fn run_signed_decision(
-    kind: DecisionKind,
-    id: &str,
-    audit_id: Option<&str>,
-) -> Result<()> {
+fn run_signed_decision(kind: DecisionKind, id: &str, audit_id: Option<&str>) -> Result<()> {
     let key_path = cmd::keygen::teal_private_key_path()?;
 
     if !key_path.exists() {
@@ -289,8 +276,7 @@ fn run_signed_decision(
         .map_err(|e| anyhow::anyhow!("Invalid BLS private key format: {:?}", e))?;
 
     let is_mgmt_decision =
-        matches!(kind, DecisionKind::Approve | DecisionKind::Deny)
-        && is_mgmt_id(id);
+        matches!(kind, DecisionKind::Approve | DecisionKind::Deny) && is_mgmt_id(id);
     if is_mgmt_decision && audit_id.is_none() {
         anyhow::bail!("audit_id is required for management commands");
     }
@@ -299,14 +285,14 @@ fn run_signed_decision(
         anyhow::bail!("audit_id is only valid for management APPROVE/DENY");
     }
     if let Some(value) = audit_id {
-        Uuid::parse_str(value)
-            .context("Invalid audit_id UUID")?;
+        Uuid::parse_str(value).context("Invalid audit_id UUID")?;
     }
 
     // 署名対象と送信コマンドを同じ条件で生成する
     let (message, command) = if is_mgmt_decision {
-        let audit_id = audit_id
-            .ok_or_else(|| anyhow::anyhow!("audit_id is required for management approval/denial"))?;
+        let audit_id = audit_id.ok_or_else(|| {
+            anyhow::anyhow!("audit_id is required for management approval/denial")
+        })?;
 
         (
             format!("{}:{}:{}", kind.as_str(), id, audit_id),
@@ -336,7 +322,7 @@ pub fn send_command(cmd: &str, print_resp: bool) -> Result<String> {
     let socket_path = "/tmp/teald.sock";
     let mut stream = UnixStream::connect(socket_path)
         .with_context(|| format!("Failed to connect to teald at {}", socket_path))?;
-    
+
     // コマンド末尾に改行がない場合は付与して送信
     if !cmd.ends_with('\n') {
         stream.write_all(format!("{}\n", cmd).as_bytes())?;

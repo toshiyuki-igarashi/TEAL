@@ -4,32 +4,32 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
-use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
-use teal_policy_engine::types::Effect;
 use crate::types::MpaState;
+use teal_policy_engine::types::Effect;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")] // JSON出力時は "ACCESS_DENIED" のようになる
 pub enum LogType {
     /// 1. Slow Path: ユーザー空間での判定 (MPAや承認プロセスを含む)
-    /// ※ PolicyEvalResult を詳細に含む
+    ///    ※ PolicyEvalResult を詳細に含む
     InteractiveDecision,
 
     /// 2. Slow Path: ポリシーによる自動許可 (承認プロセスなし)
-    /// ※ InteractiveDecision と統合しても良いが、分けると「自動」か「手動」か区別しやすい
+    ///    ※ InteractiveDecision と統合しても良いが、分けると「自動」か「手動」か区別しやすい
     AccessAllowed,
 
     /// 3. Slow Path: ポリシーによる拒否、または不正なリクエストによる拒否
     AccessDenied,
 
     /// 4. Internal: カーネルに対してチケットを発行した (TEAL -> Kernel)
-    /// ※ 「許可」と「チケット発行」のタイムラグや失敗を追跡するために重要
+    ///    ※ 「許可」と「チケット発行」のタイムラグや失敗を追跡するために重要
     TicketIssued,
 
     /// 5. Fast Path: カーネルキャッシュによる高速通過 (Kernel -> Audit)
-    /// ※ ユーザー空間デーモンを経由せず処理されたもの
+    ///    ※ ユーザー空間デーモンを経由せず処理されたもの
     TicketConsumed,
 
     /// 6. Internal: 未使用のまま期限切れとなったチケット (Sweeper)
@@ -49,7 +49,7 @@ pub struct AuditLogEntry {
     pub ts: DateTime<Utc>,
     pub host: String,
 
-    pub epoch: u32,  // 判定に適用されたポリシーのepoch
+    pub epoch: u32, // 判定に適用されたポリシーのepoch
 
     // 1. Reality (共通)
     pub syscall_context: SyscallContext,
@@ -77,23 +77,23 @@ pub struct SyscallContext {
 pub struct SubjectInfo {
     pub path: String, // 実行バイナリ (例: /bin/bash, /usr/bin/busybox)
     pub hash: String, // SHA-256
-    
+
     // アプレット名 (例: busybox経由で実行された "ls")
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub applet: Option<String>, 
+    pub applet: Option<String>,
 
     // スクリプトパス (例: bashで実行された "/opt/scripts/deploy.sh")
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub script_path: Option<String>, 
+    pub script_path: Option<String>,
 
     // 実際のコマンドライン引数 (例: "-u root --force")
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub args: Option<String>, 
+    pub args: Option<String>,
 
     // ログインコンテキスト (TTY情報)
     // チケット一覧取得APIなど、TTYが存在しないコンテキストではJSONから省略される
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_tty: Option<String>, 
+    pub session_tty: Option<String>,
 }
 
 /// 操作対象オブジェクト情報 (Object Information)
@@ -111,10 +111,10 @@ pub struct ObjectInfo {
     /// 移動先パス (RENAME時のみ使用)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_path: Option<String>,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_inode: Option<u64>,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_device_id: Option<u64>,
 }

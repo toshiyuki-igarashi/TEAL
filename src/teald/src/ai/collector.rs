@@ -5,23 +5,21 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
-
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use chrono::{DateTime, Utc};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{self, Duration, Instant};
 use uuid::Uuid;
 
-use teal_policy_engine::types::Effect;
-use crate::evidence::schema::{AuditLogEntry, AuthInfo};
-use crate::ai::types::AiEvent;
-use crate::ai::types::AiAnalysisRequest;
 use crate::ai::engine::AiAnalysisEngine;
-use crate::ai::results::{AiStoredAnalysis, append_result};
+use crate::ai::results::{append_result, AiStoredAnalysis};
+use crate::ai::types::AiAnalysisRequest;
+use crate::ai::types::AiEvent;
+use crate::evidence::schema::{AuditLogEntry, AuthInfo};
+use teal_policy_engine::types::Effect;
 
-static AI_ANALYSIS_BATCHES_DROPPED: AtomicU64 =
-    AtomicU64::new(0);
+static AI_ANALYSIS_BATCHES_DROPPED: AtomicU64 = AtomicU64::new(0);
 
 /// Collectorの設定
 #[derive(Debug, Clone)]
@@ -61,9 +59,7 @@ impl AiCollector {
     }
 
     /// 現在蓄積しているイベントから分析要求を生成
-    fn flush(&mut self, end_time: DateTime<Utc>)
-        -> Option<AiAnalysisRequest>
-    {
+    fn flush(&mut self, end_time: DateTime<Utc>) -> Option<AiAnalysisRequest> {
         let events = std::mem::take(&mut self.events);
         let start_time = self.window_start;
 
@@ -83,27 +79,17 @@ impl AiCollector {
     }
 
     /// AI分析要求をキューへ送る
-    fn submit(
-        request: AiAnalysisRequest,
-        tx: &mpsc::Sender<AiAnalysisRequest>,
-    ) {
+    fn submit(request: AiAnalysisRequest, tx: &mpsc::Sender<AiAnalysisRequest>) {
         match tx.try_send(request) {
             Ok(()) => {}
 
             Err(mpsc::error::TrySendError::Full(_)) => {
-                eprintln!(
-                    "[WARN] AI analysis queue full; analysis batch dropped"
-                );
-                AI_ANALYSIS_BATCHES_DROPPED.fetch_add(
-                    1,
-                    Ordering::Relaxed,
-                );
+                eprintln!("[WARN] AI analysis queue full; analysis batch dropped");
+                AI_ANALYSIS_BATCHES_DROPPED.fetch_add(1, Ordering::Relaxed);
             }
 
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                eprintln!(
-                    "[WARN] AI analysis receiver closed"
-                );
+                eprintln!("[WARN] AI analysis receiver closed");
             }
         }
     }
@@ -116,14 +102,9 @@ impl AiCollector {
     ) {
         let window = self.config.window;
 
-        let mut interval = time::interval_at(
-            Instant::now() + window,
-            window,
-        );
+        let mut interval = time::interval_at(Instant::now() + window, window);
 
-        interval.set_missed_tick_behavior(
-            time::MissedTickBehavior::Delay
-        );
+        interval.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
@@ -181,17 +162,16 @@ pub fn is_target_for_ai(log: &AuditLogEntry) -> bool {
 
         AuthInfo::SlowPath { policy_eval, .. } => {
             // 管理対象外は除外
-            if policy_eval.issued_ticket.as_ref()
+            if policy_eval
+                .issued_ticket
+                .as_ref()
                 .is_some_and(|ticket| ticket.ticket_id == NOT_MANAGED_TICKET_ID)
             {
                 return false;
             }
 
             // Allow / AuditOnlyのみ対象
-            matches!(
-                policy_eval.decision,
-                Effect::Allow | Effect::AuditOnly
-            )
+            matches!(policy_eval.decision, Effect::Allow | Effect::AuditOnly)
         }
     }
 }
@@ -213,23 +193,22 @@ pub async fn run_ai_analysis_worker(
     while let Some(request) = rx.recv().await {
         match engine.analyze_with_provenance(&request).await {
             Ok(outcome) => {
-                let record = AiStoredAnalysis::from_outcome(
-                    &request,
-                    engine.provider_name(),
-                    outcome,
-                );
+                let record =
+                    AiStoredAnalysis::from_outcome(&request, engine.provider_name(), outcome);
                 let id = record.result.analysis_id.clone();
                 let anomaly_count = record.result.anomalies.len();
                 // ファイルI/OがTokioワーカーをブロックしないよう分離する。
                 match tokio::task::spawn_blocking(move || append_result(&record)).await {
                     Ok(Ok(())) => eprintln!(
-                        "[INFO] AI analysis saved: id={}, anomalies={}", id, anomaly_count
+                        "[INFO] AI analysis saved: id={}, anomalies={}",
+                        id, anomaly_count
                     ),
-                    Ok(Err(e)) => eprintln!(
-                        "[ERROR] AI analysis save failed: id={}, error={}", id, e
-                    ),
+                    Ok(Err(e)) => {
+                        eprintln!("[ERROR] AI analysis save failed: id={}, error={}", id, e)
+                    }
                     Err(e) => eprintln!(
-                        "[ERROR] AI analysis storage task failed: id={}, error={}", id, e
+                        "[ERROR] AI analysis storage task failed: id={}, error={}",
+                        id, e
                     ),
                 }
             }
@@ -237,8 +216,7 @@ pub async fn run_ai_analysis_worker(
             Err(e) => {
                 eprintln!(
                     "[WARN] AI analysis failed: id={}, error={}",
-                    request.analysis_id,
-                    e
+                    request.analysis_id, e
                 );
             }
         }
@@ -248,16 +226,13 @@ pub async fn run_ai_analysis_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use crate::evidence::schema::{
-        AuditLogEntry, AuthInfo, IssuedTicketInfo, LogType,
-        PolicyEvalResult, SyscallContext, SubjectInfo, ObjectInfo,
+        AuditLogEntry, AuthInfo, IssuedTicketInfo, LogType, ObjectInfo, PolicyEvalResult,
+        SubjectInfo, SyscallContext,
     };
+    use chrono::Utc;
 
-    fn make_test_audit_entry(
-        ticket_id: Option<&str>,
-        effect: Effect,
-    ) -> AuditLogEntry {
+    fn make_test_audit_entry(ticket_id: Option<&str>, effect: Effect) -> AuditLogEntry {
         AuditLogEntry {
             ver: "1.5".to_string(),
             id: "evt-001".to_string(),
@@ -346,8 +321,7 @@ mod tests {
         ];
 
         for action in actions {
-            let mut entry =
-                make_test_audit_entry(None, Effect::Allow);
+            let mut entry = make_test_audit_entry(None, Effect::Allow);
 
             entry.syscall_context.action = action.to_string();
 

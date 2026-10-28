@@ -5,12 +5,12 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 use std::collections::HashMap;
-use std::io::Write;
 use std::io::Read;
+use std::io::Write;
 
-use quick_xml::reader::Reader;
-use quick_xml::events::Event;
 use colored::*;
+use quick_xml::events::Event;
+use quick_xml::reader::Reader;
 use tempfile::NamedTempFile;
 
 use crate::verify::ast::TealIrModel;
@@ -51,7 +51,7 @@ impl AlloyChecker {
                     // --- 【反例あり】 脆弱性が発見されたケース ---
                     let mut ce = self.parse_xml(&xml_content);
                     ce.is_violated = true;
-                    ce.goal_name = goal; 
+                    ce.goal_name = goal;
                     results.push(ce);
                 }
                 None => {
@@ -68,7 +68,7 @@ impl AlloyChecker {
     }
 
     /// 単一のゴールに対して Alloy を実行し、XMLまたは安全判定を返す
-    /// 戻り値: 
+    /// 戻り値:
     ///   Ok(Some(XML)) -> 反例あり
     ///   Ok(None)      -> 安全（反例なし）
     ///   Err(...)      -> 実行失敗（Java未インストールやモデルの論理エラー等）
@@ -86,8 +86,11 @@ impl AlloyChecker {
 
         // 3. Java プロセスを実行
         let output = std::process::Command::new("java")
-            .arg("-jar").arg(&self.alloy_jar_path)
-            .arg(als_path).arg(goal_name).arg(xml_path)
+            .arg("-jar")
+            .arg(&self.alloy_jar_path)
+            .arg(als_path)
+            .arg(goal_name)
+            .arg(xml_path)
             .output()?;
 
         // 4. プロセス自体の失敗（Java未インストール、メモリ不足等）
@@ -114,7 +117,7 @@ impl AlloyChecker {
         // 6. XMLがない場合、stdoutを確認して「本当に安全」なのか「Alloy内部の論理エラー」なのかを判定
         // これにより、Alloy側がパースエラー等で沈黙した場合の「偽の安全」を防ぐ
         if stdout.contains("No counterexample found") {
-            Ok(None) 
+            Ok(None)
         } else {
             anyhow::bail!(
                 "Alloyが期待通りの出力を返しませんでした。モデルの論理エラーの可能性があります。\nStdout: {}", 
@@ -125,7 +128,8 @@ impl AlloyChecker {
 
     /// Alloy コードの中から check 文を探してゴール名のリストを作る補助関数
     fn extract_goal_names(&self, als_code: &str) -> Vec<String> {
-        als_code.lines()
+        als_code
+            .lines()
             .filter(|line| line.trim().starts_with("check "))
             .filter_map(|line| {
                 // "check ShadowBypass for 5" -> "ShadowBypass"
@@ -137,14 +141,14 @@ impl AlloyChecker {
 
 #[derive(Default)]
 pub struct RawCounterExample {
-    pub goal_name: String,          // 検証ゴールの識別名
-    pub is_violated: bool,          // 脆弱性が見つかったか
-    pub rule_id: String,            // 原因となった rule_id
+    pub goal_name: String, // 検証ゴールの識別名
+    pub is_violated: bool, // 脆弱性が見つかったか
+    pub rule_id: String,   // 原因となった rule_id
     pub object_atom: String,
     pub new_object_atom: String,
-    pub subject_atom: String,       // 従来の表示用 ("Role_admin + Prog: /tmp/malware")
+    pub subject_atom: String, // 従来の表示用 ("Role_admin + Prog: /tmp/malware")
     pub subject_roles: Vec<String>, // Roleを個別に保持
-    pub subject_origin: String,     // プログラム(origin)を個別に保持
+    pub subject_origin: String, // プログラム(origin)を個別に保持
     pub action: String,
     pub path_map: HashMap<String, String>, // アトム名 -> 生パス
 }
@@ -171,27 +175,32 @@ impl AlloyChecker {
 
         let mut current_field = String::new();
         // 犯人を特定するための変数
-        let mut current_skolem = String::new(); 
-        let mut culprit_req_id = String::new(); 
+        let mut current_skolem = String::new();
+        let mut culprit_req_id = String::new();
 
         let mut buf = Vec::new();
-        
+
         loop {
             match reader.read_event_into(&mut buf) {
                 // --- <instance command="..."> からゴール名を取り出す ---
                 Ok(Event::Start(ref e)) if e.name().as_ref() == b"instance" => {
-                    if let Some(cmd_attr_res) = e.attributes()
-                        .find(|a| a.as_ref().unwrap().key.as_ref() == b"command") 
+                    if let Some(cmd_attr_res) = e
+                        .attributes()
+                        .find(|a| a.as_ref().unwrap().key.as_ref() == b"command")
                     {
-                        let attr = cmd_attr_res.unwrap(); 
+                        let attr = cmd_attr_res.unwrap();
                         let cmd_str = String::from_utf8_lossy(&attr.value);
-                        ce.goal_name = cmd_str.split_whitespace().nth(1)
-                            .unwrap_or("unknown").to_string();
+                        ce.goal_name = cmd_str
+                            .split_whitespace()
+                            .nth(1)
+                            .unwrap_or("unknown")
+                            .to_string();
                     }
                 }
                 // --- <field> タグ (通常のデータ) ---
                 Ok(Event::Start(ref e)) if e.name().as_ref() == b"field" => {
-                    current_field = e.attributes()
+                    current_field = e
+                        .attributes()
                         .find(|a| a.as_ref().unwrap().key.as_ref() == b"label")
                         .map(|a| String::from_utf8_lossy(&a.unwrap().value).into_owned())
                         .unwrap_or_default();
@@ -199,7 +208,8 @@ impl AlloyChecker {
                 }
                 // <skolem> タグ (真の犯人を教えてくれるタグ)
                 Ok(Event::Start(ref e)) if e.name().as_ref() == b"skolem" => {
-                    current_skolem = e.attributes()
+                    current_skolem = e
+                        .attributes()
                         .find(|a| a.as_ref().unwrap().key.as_ref() == b"label")
                         .map(|a| String::from_utf8_lossy(&a.unwrap().value).into_owned())
                         .unwrap_or_default();
@@ -208,13 +218,13 @@ impl AlloyChecker {
                 // --- <tuple> タグ (中身のアトム) ---
                 Ok(Event::Start(ref e)) if e.name().as_ref() == b"tuple" => {
                     let atoms = self.extract_atoms(&mut reader);
-                    
+
                     // もし現在 <skolem> の中なら、犯人IDを記録する！
                     if !current_skolem.is_empty() && current_skolem.ends_with("_r") {
                         if !atoms.is_empty() && atoms[0].starts_with("Request") {
                             culprit_req_id = atoms[0].clone();
                         }
-                    } 
+                    }
                     // 通常の <field> データなら ReqData に保存する
                     else if !current_field.is_empty() {
                         self.process_tuple(&current_field, atoms, &mut ce, &mut req_map);
@@ -229,7 +239,7 @@ impl AlloyChecker {
         // HashMapをランダムにループするのをやめ、犯人をピンポイントで引き抜く！
         // (もし skolem から取れなかった場合の保険として "Request$0" を指定しておく)
         if culprit_req_id.is_empty() {
-            culprit_req_id = "Request$0".to_string(); 
+            culprit_req_id = "Request$0".to_string();
         }
 
         if let Some(req) = req_map.get(&culprit_req_id) {
@@ -264,10 +274,13 @@ impl AlloyChecker {
         loop {
             match reader.read_event_into(&mut buf) {
                 // <atom label="xxx" /> または <atom label="xxx"></atom> を検知
-                Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) if e.name().as_ref() == b"atom" => {
-                    if let Some(label) = e.attributes()
+                Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e))
+                    if e.name().as_ref() == b"atom" =>
+                {
+                    if let Some(label) = e
+                        .attributes()
                         .find(|a| a.as_ref().unwrap().key.as_ref() == b"label")
-                        .map(|a| String::from_utf8_lossy(&a.unwrap().value).into_owned()) 
+                        .map(|a| String::from_utf8_lossy(&a.unwrap().value).into_owned())
                     {
                         atoms.push(label);
                     }
@@ -284,13 +297,15 @@ impl AlloyChecker {
     }
 
     fn process_tuple(
-        &self, 
-        field_label: &str, 
-        atoms: Vec<String>, 
+        &self,
+        field_label: &str,
+        atoms: Vec<String>,
         ce: &mut RawCounterExample,
-        req_map: &mut HashMap<String, ReqData>
+        req_map: &mut HashMap<String, ReqData>,
     ) {
-        if atoms.len() < 2 { return; }
+        if atoms.len() < 2 {
+            return;
+        }
 
         let id = atoms[0].clone();
 
@@ -327,7 +342,7 @@ pub struct DecodedViolation {
     pub counter_example_math: String,
     pub subject_info: String,
     pub object_path: String,
-    pub new_object_path: Option<String>,    // RENAME時の移動先パス
+    pub new_object_path: Option<String>, // RENAME時の移動先パス
     pub action: String,
     pub triggered_rule_id: String,
     pub rule_description: String,
@@ -335,9 +350,21 @@ pub struct DecodedViolation {
 
 impl DecodedViolation {
     pub fn render_terminal(&self) {
-        println!("\n{}", "------------------------------------------------------------".bright_black());
-        println!("{}", format!("❌ [VERIFY FAILURE] Goal: `{}`", self.goal_name).red().bold());
-        println!("{} {}\n", "Result:".bold(), "Vulnerability found (Counter-example detected)".yellow());
+        println!(
+            "\n{}",
+            "------------------------------------------------------------".bright_black()
+        );
+        println!(
+            "{}",
+            format!("❌ [VERIFY FAILURE] Goal: `{}`", self.goal_name)
+                .red()
+                .bold()
+        );
+        println!(
+            "{} {}\n",
+            "Result:".bold(),
+            "Vulnerability found (Counter-example detected)".yellow()
+        );
 
         // 数学的証明の表示
         println!("{}", "Counter-example:".bright_white().bold());
@@ -350,7 +377,12 @@ impl DecodedViolation {
         // Object の表示 (RENAME時は矢印で繋いで直感的に見せるか、行を追加する)
         if let Some(ref new_path) = self.new_object_path {
             // RENAMEの場合：移動元 -> 移動先 のように表示すると分かりやすいです
-            println!("  - {} {} -> {}", "Object: ".bold(), self.object_path, new_path.bright_magenta());
+            println!(
+                "  - {} {} -> {}",
+                "Object: ".bold(),
+                self.object_path,
+                new_path.bright_magenta()
+            );
         } else {
             // 通常のREAD/WRITE/DELETE等の場合
             println!("  - {} {}", "Object: ".bold(), self.object_path);
@@ -363,7 +395,10 @@ impl DecodedViolation {
         println!("{}", "Root Cause Analysis:".bright_white().bold());
         println!("  - {} \"{}\"", "rule_id:".bold(), self.triggered_rule_id);
         println!("    {}", self.rule_description.dimmed());
-        println!("{}", "------------------------------------------------------------".bright_black());
+        println!(
+            "{}",
+            "------------------------------------------------------------".bright_black()
+        );
     }
 }
 
@@ -374,12 +409,20 @@ impl AlloyChecker {
         &self,
         raw: &RawCounterExample,
         model: &TealIrModel,
-        _math_proofs: &HashMap<String, String>
+        _math_proofs: &HashMap<String, String>,
     ) -> DecodedViolation {
         // 1. Alloy 固有の $0 サフィックスを除去
         let clean_rule_id = raw.rule_id.split('$').next().unwrap_or("unknown");
-        let clean_obj_atom = raw.object_atom.split('$').next().unwrap_or(&raw.object_atom);
-        let clean_new_obj_atom = raw.new_object_atom.split('$').next().unwrap_or(&raw.new_object_atom);
+        let clean_obj_atom = raw
+            .object_atom
+            .split('$')
+            .next()
+            .unwrap_or(&raw.object_atom);
+        let clean_new_obj_atom = raw
+            .new_object_atom
+            .split('$')
+            .next()
+            .unwrap_or(&raw.new_object_atom);
 
         // --- 正確なパス復元ヘルパー ---
         // sanitize() した結果が Alloyのアトム名 と一致するものを managed_paths から探す
@@ -403,15 +446,25 @@ impl AlloyChecker {
         };
 
         // 3. ルールIDの逆引き (Alloy用ID -> 元の JSON ID)
-        let original_rule_id = model.rules.iter()
+        let original_rule_id = model
+            .rules
+            .iter()
             .find(|r| sanitize(&r.id) == clean_rule_id)
-            .map(|r| r.id.as_str()).unwrap_or(clean_rule_id);
+            .map(|r| r.id.as_str())
+            .unwrap_or(clean_rule_id);
 
         // 4. Role と Action のクリーンアップ ("Role_admin" -> "admin", "Op_READ" -> "READ")
-        let clean_action = raw.action.split('$').next().unwrap_or(&raw.action)
-            .strip_prefix("Op_").unwrap_or(&raw.action);
+        let clean_action = raw
+            .action
+            .split('$')
+            .next()
+            .unwrap_or(&raw.action)
+            .strip_prefix("Op_")
+            .unwrap_or(&raw.action);
 
-        let clean_roles: Vec<String> = raw.subject_roles.iter()
+        let clean_roles: Vec<String> = raw
+            .subject_roles
+            .iter()
             .map(|r| r.split('$').next().unwrap_or(r))
             .map(|r| r.strip_prefix("Role_").unwrap_or(r).to_string())
             .collect();
@@ -450,9 +503,10 @@ impl AlloyChecker {
             object_path: object_path.clone(), // Detected Attack Path の Object に使用
             new_object_path,
             triggered_rule_id: original_rule_id.to_string(),
-            subject_info: role_str,           // Detected Attack Path の Subject に使用
+            subject_info: role_str, // Detected Attack Path の Subject に使用
             action: clean_action.to_string(), // Detected Attack Path の Action に使用
-            rule_description: "ポリシー内の論理条件が重なり、このアクセスパスが成立しています。".into(),
+            rule_description: "ポリシー内の論理条件が重なり、このアクセスパスが成立しています。"
+                .into(),
         }
     }
 }
@@ -460,8 +514,8 @@ impl AlloyChecker {
 impl AlloyChecker {
     /// Alloy Visualizerを起動して、反例を視覚的にデバッグする (同期/待機型)
     pub fn open_gui(&self, als_code: &str, policy_name: &str) -> anyhow::Result<()> {
-        use std::io::Write;
         use anyhow::Context;
+        use std::io::Write;
 
         // 1. ファイル書き出し (ポリシー名をファイル名に含めて識別しやすくする)
         let file_path = format!("verify_debug_{}.als", policy_name.replace("-", "_"));
@@ -469,7 +523,10 @@ impl AlloyChecker {
             .context("Alloyデバッグファイルの生成に失敗しました")?;
         file.write_all(als_code.as_bytes())?;
 
-        println!("\n{}", "------------------------------------------------------------".bright_black());
+        println!(
+            "\n{}",
+            "------------------------------------------------------------".bright_black()
+        );
         println!("{} Alloy Visualizer を起動中...", "=>".bright_cyan().bold());
         println!("   {} {}", "Model File:".bold(), file_path);
 
@@ -477,11 +534,14 @@ impl AlloyChecker {
         let mut child = std::process::Command::new("java")
             .arg("-jar")
             .arg(&self.alloy_jar_path)
-            .arg(&file_path) 
+            .arg(&file_path)
             .spawn() // プロセスを起動
             .context("Alloy Visualizer の起動に失敗しました。JavaのインストールとJARのパスを確認してください。")?;
 
-        println!("=> {}", "GUIが開きました。Alloy上で 'Execute' を押し、グラフを確認してください。".yellow());
+        println!(
+            "=> {}",
+            "GUIが開きました。Alloy上で 'Execute' を押し、グラフを確認してください。".yellow()
+        );
         println!("   (確認が終わったら、Alloyのウィンドウを閉じて戻ってください)");
 
         // 3. 同期処理: GUIが閉じられるまで待機 (Wait)

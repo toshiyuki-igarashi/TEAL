@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 /*
  * TEAL CLI (teal-cli)
- * 
+ *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
@@ -9,11 +9,9 @@ use anyhow::{Context, Result};
 use std::fs::File;
 use std::path::Path;
 
-use teald::bundle::load_bundle_from_dir;
-use teald::bundle::{
-    compute_directory_hash, STAGE_TEAL_DIR, STAGE_LOCK_PATH,
-};
 use crate::run_signed_decision;
+use teald::bundle::load_bundle_from_dir;
+use teald::bundle::{compute_directory_hash, STAGE_LOCK_PATH, STAGE_TEAL_DIR};
 
 // teald クレートから共通型をインポート
 use teald::common::DecisionKind;
@@ -36,6 +34,7 @@ pub fn run() -> Result<()> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(STAGE_LOCK_PATH)
         .context("Failed to open staging lock file")?;
 
@@ -45,13 +44,16 @@ pub fn run() -> Result<()> {
         .context("Failed to acquire shared lock (LOCK_SH) on staging area")?;
 
     // 3. バンドル構文チェック & バリデーション
-    println!("  -> ステージングポリシー ({}) の妥当性を検証中...", STAGE_TEAL_DIR);
+    println!(
+        "  -> ステージングポリシー ({}) の妥当性を検証中...",
+        STAGE_TEAL_DIR
+    );
     let _stage_bundle = load_bundle_from_dir(STAGE_TEAL_DIR)
         .context("Failed to load/validate staged policy bundle")?;
 
     // 4. 決定論的結合ハッシュの計算 (diff と共通ロジック)
-    let stage_hash = compute_directory_hash(STAGE_TEAL_DIR)
-        .context("Failed to compute staged policy hash")?;
+    let stage_hash =
+        compute_directory_hash(STAGE_TEAL_DIR).context("Failed to compute staged policy hash")?;
     println!("  -> ステージングポリシー結合ハッシュ: {}", stage_hash);
 
     // ロックの明示的解放（送信前に解放、またはスコープ終端で自動解放）
@@ -62,9 +64,11 @@ pub fn run() -> Result<()> {
     println!("  -> 更新要求に署名し、teald デーモンへ送信中...");
     run_signed_decision(DecisionKind::PolicyUpdate, &stage_hash, None)?;
 
-    println!("✅ ポリシー更新要求を送信しました (Staged Hash: {})", stage_hash);
+    println!(
+        "✅ ポリシー更新要求を送信しました (Staged Hash: {})",
+        stage_hash
+    );
     println!("   ※ 管理者の承認完了後、teald によりアトミックに本番適用されます。");
 
     Ok(())
 }
-

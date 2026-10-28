@@ -20,14 +20,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use teald::ai::adapters::common;
 use teald::ai::adapters::gemini::GeminiAdapter;
 use teald::ai::adapters::groq::GroqAdapter;
 use teald::ai::adapters::ollama::OllamaAdapter;
-use teald::ai::adapters::common;
 use teald::ai::engine::AiAnalysisEngine;
+use teald::ai::error::AiError;
 use teald::ai::provider::AiProvider;
 use teald::ai::types::{AiAnalysisRequest, AiAnalysisResult, AiEvent};
-use teald::ai::error::AiError;
 use teald::ai::AiConfig;
 
 #[derive(Args, Debug)]
@@ -105,7 +105,11 @@ fn calculate_sha256(content: &[u8]) -> String {
 /// Event-time replay. The window origin is the earliest event, NOT wall clock.
 /// A batch is flushed on max_events or when the next event falls outside its
 /// fixed-width window. Clock gaps do not create empty batches.
-fn split_batches(events: Vec<AiEvent>, window_seconds: u64, max_events: usize) -> Result<Vec<Vec<AiEvent>>> {
+fn split_batches(
+    events: Vec<AiEvent>,
+    window_seconds: u64,
+    max_events: usize,
+) -> Result<Vec<Vec<AiEvent>>> {
     if window_seconds == 0 || max_events == 0 {
         bail!("collector.window_seconds and collector.max_events must be greater than zero");
     }
@@ -151,7 +155,9 @@ pub fn run(args: EvalArgs) -> Result<()> {
     let mut events = Vec::new();
     for (idx, line) in BufReader::new(dataset_file).lines().enumerate() {
         let line = line.with_context(|| format!("Cannot read dataset line {}", idx + 1))?;
-        if line.trim().is_empty() { continue; }
+        if line.trim().is_empty() {
+            continue;
+        }
         let event: AiEvent = serde_json::from_str(&line)
             .with_context(|| format!("Invalid AiEvent at line {}", idx + 1))?;
         events.push(event);
@@ -159,9 +165,17 @@ pub fn run(args: EvalArgs) -> Result<()> {
     if events.is_empty() {
         bail!("Dataset contains no events: {}", args.dataset.display());
     }
-    events.sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then_with(|| a.event_id.cmp(&b.event_id)));
+    events.sort_by(|a, b| {
+        a.timestamp
+            .cmp(&b.timestamp)
+            .then_with(|| a.event_id.cmp(&b.event_id))
+    });
     let input_event_count = events.len();
-    let batches = split_batches(events, config.collector.window_seconds, config.collector.max_events)?;
+    let batches = split_batches(
+        events,
+        config.collector.window_seconds,
+        config.collector.max_events,
+    )?;
     let system_prompt = common::build_system_prompt(&config.prompt);
     let prompt_sha256 = calculate_sha256(system_prompt.as_bytes());
 
@@ -169,17 +183,42 @@ pub fn run(args: EvalArgs) -> Result<()> {
         "gemini" => {
             let g = config.gemini.context("Missing gemini config in ai.json")?;
             let model = g.model;
-            (Arc::new(GeminiAdapter::new(&model, Duration::from_secs(g.timeout_seconds), system_prompt, g.temperature)?), model)
+            (
+                Arc::new(GeminiAdapter::new(
+                    &model,
+                    Duration::from_secs(g.timeout_seconds),
+                    system_prompt,
+                    g.temperature,
+                )?),
+                model,
+            )
         }
         "groq" => {
             let g = config.groq.context("Missing groq config in ai.json")?;
             let model = g.model;
-            (Arc::new(GroqAdapter::new(&model, Duration::from_secs(g.timeout_seconds), system_prompt, g.temperature)?), model)
+            (
+                Arc::new(GroqAdapter::new(
+                    &model,
+                    Duration::from_secs(g.timeout_seconds),
+                    system_prompt,
+                    g.temperature,
+                )?),
+                model,
+            )
         }
         "ollama" => {
             let o = config.ollama.context("Missing ollama config in ai.json")?;
             let model = o.model;
-            (Arc::new(OllamaAdapter::new(&o.endpoint, &model, Duration::from_secs(o.timeout_seconds), system_prompt, o.temperature)?), model)
+            (
+                Arc::new(OllamaAdapter::new(
+                    &o.endpoint,
+                    &model,
+                    Duration::from_secs(o.timeout_seconds),
+                    system_prompt,
+                    o.temperature,
+                )?),
+                model,
+            )
         }
         other => bail!("Unsupported provider in evaluation: {}", other),
     };
@@ -191,7 +230,12 @@ pub fn run(args: EvalArgs) -> Result<()> {
     let mut batch_reports = Vec::with_capacity(total_batches);
     let mut aggregated_event_count = 0usize;
 
-    eprintln!("[INFO] AI evaluation: provider={}, model={}, batches={}", provider_name, model_name, batches.len());
+    eprintln!(
+        "[INFO] AI evaluation: provider={}, model={}, batches={}",
+        provider_name,
+        model_name,
+        batches.len()
+    );
     for (index, batch_events) in batches.into_iter().enumerate() {
         let time_window_start = batch_events.first().expect("nonempty batch").timestamp;
         let time_window_end = batch_events.last().expect("nonempty batch").timestamp;
@@ -206,9 +250,7 @@ pub fn run(args: EvalArgs) -> Result<()> {
 
         let started = Instant::now();
 
-        let outcome = runtime.block_on(
-            engine.analyze_with_provenance(&request)
-        );
+        let outcome = runtime.block_on(engine.analyze_with_provenance(&request));
 
         let elapsed_ms = started.elapsed().as_millis() as u64;
 
@@ -349,9 +391,17 @@ pub fn run(args: EvalArgs) -> Result<()> {
         batches: batch_reports,
     };
 
-    let output = OpenOptions::new().write(true).create_new(true).mode(0o600)
+    let output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
         .open(&args.out)
-        .with_context(|| format!("Cannot create eval output file (must not exist): {}", args.out.display()))?;
+        .with_context(|| {
+            format!(
+                "Cannot create eval output file (must not exist): {}",
+                args.out.display()
+            )
+        })?;
     let result = (|| -> Result<()> {
         let mut writer = BufWriter::new(output);
         serde_json::to_writer_pretty(&mut writer, &report)?;
@@ -363,8 +413,12 @@ pub fn run(args: EvalArgs) -> Result<()> {
         let _ = fs::remove_file(&args.out);
         return Err(error);
     }
-    eprintln!("[INFO] AI evaluation saved: {}, batches={}, events={}",
-        args.out.display(), report.batch_count, report.input_event_count);
+    eprintln!(
+        "[INFO] AI evaluation saved: {}, batches={}, events={}",
+        args.out.display(),
+        report.batch_count,
+        report.input_event_count
+    );
     Ok(())
 }
 
@@ -377,7 +431,8 @@ mod tests {
         AiEvent {
             event_id: id.into(),
             timestamp: DateTime::parse_from_rfc3339(&format!("2026-10-21T00:00:{second:02}Z"))
-                .unwrap().with_timezone(&Utc),
+                .unwrap()
+                .with_timezone(&Utc),
             log_type: LogType::AccessAllowed,
             epoch: 1,
             user: "root".into(),
@@ -398,9 +453,12 @@ mod tests {
 
     #[test]
     fn batches_split_by_time_and_count() {
-        let batches = split_batches(vec![
-            event(0, "a"), event(1, "b"), event(2, "c"), event(12, "d"),
-        ], 10, 2).unwrap();
+        let batches = split_batches(
+            vec![event(0, "a"), event(1, "b"), event(2, "c"), event(12, "d")],
+            10,
+            2,
+        )
+        .unwrap();
         assert_eq!(batches.len(), 3);
         assert_eq!(batches[0].len(), 2);
         assert_eq!(batches[1].len(), 1);

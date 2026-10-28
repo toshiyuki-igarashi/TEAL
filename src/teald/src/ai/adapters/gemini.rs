@@ -5,20 +5,16 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
-use std::sync::RwLock;
-use std::time::Duration;
-use async_trait::async_trait;
-use reqwest::Client;
-use serde_json::{json, Value};
-use crate::ai::error::{
-    AiError,
-    ProviderErrorCode,
-    ProviderFailure,
-};
+use super::common;
+use crate::ai::error::{AiError, ProviderErrorCode, ProviderFailure};
 use crate::ai::provider::AiProvider;
 use crate::ai::types::{AiAnalysisResult, AiOperationalContext, AiProviderRequest};
 use crate::ai::validate_temperature;
-use super::common;
+use async_trait::async_trait;
+use reqwest::Client;
+use serde_json::{json, Value};
+use std::sync::RwLock;
+use std::time::Duration;
 
 const API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -32,26 +28,51 @@ pub struct GeminiAdapter {
 }
 
 impl GeminiAdapter {
-    pub fn new(model: &str, timeout: Duration, system_prompt: String, temperature: Option<f32>) -> Result<Self, AiError> {
+    pub fn new(
+        model: &str,
+        timeout: Duration,
+        system_prompt: String,
+        temperature: Option<f32>,
+    ) -> Result<Self, AiError> {
         common::validate_model(model)?;
         validate_temperature(temperature).map_err(AiError::InvalidRequest)?;
-        if model.contains('/') { return Err(AiError::InvalidRequest("Gemini model must be a simple model ID".into())); }
-        if timeout.is_zero() { return Err(AiError::InvalidRequest("Gemini timeout must be positive".into())); }
+        if model.contains('/') {
+            return Err(AiError::InvalidRequest(
+                "Gemini model must be a simple model ID".into(),
+            ));
+        }
+        if timeout.is_zero() {
+            return Err(AiError::InvalidRequest(
+                "Gemini timeout must be positive".into(),
+            ));
+        }
         let api_key = std::env::var("GEMINI_API_KEY")
             .map_err(|_| AiError::Authentication("GEMINI_API_KEY is not set".into()))?;
-        if api_key.trim().is_empty() { return Err(AiError::Authentication("GEMINI_API_KEY is empty".into())); }
-        let client = Client::builder().timeout(timeout).build()
-            .map_err(|_| AiError::ProviderFailure(ProviderFailure {
+        if api_key.trim().is_empty() {
+            return Err(AiError::Authentication("GEMINI_API_KEY is empty".into()));
+        }
+        let client = Client::builder().timeout(timeout).build().map_err(|_| {
+            AiError::ProviderFailure(ProviderFailure {
                 code: ProviderErrorCode::Other,
                 http_status: None,
-            }))?;
-        Ok(Self { client, model: model.into(), api_key, system_prompt, temperature, operational_context: RwLock::new(None) })
+            })
+        })?;
+        Ok(Self {
+            client,
+            model: model.into(),
+            api_key,
+            system_prompt,
+            temperature,
+            operational_context: RwLock::new(None),
+        })
     }
 }
 
 #[async_trait]
 impl AiProvider for GeminiAdapter {
-    fn name(&self) -> &'static str { "gemini" }
+    fn name(&self) -> &'static str {
+        "gemini"
+    }
 
     async fn set_operational_context(&self, context: &AiOperationalContext) -> Result<(), AiError> {
         *self.operational_context.write().unwrap() = Some(context.clone());
@@ -81,7 +102,9 @@ impl AiProvider for GeminiAdapter {
 
         let started = std::time::Instant::now();
 
-        let response = self.client.post(&url)
+        let response = self
+            .client
+            .post(&url)
             .header("x-goog-api-key", &self.api_key)
             .json(&payload)
             .send()
@@ -109,8 +132,7 @@ impl AiProvider for GeminiAdapter {
             })
         };
 
-        let body: Value = response.json().await
-            .map_err(|_| invalid_response())?;
+        let body: Value = response.json().await.map_err(|_| invalid_response())?;
 
         let parts = body
             .pointer("/candidates/0/content/parts")

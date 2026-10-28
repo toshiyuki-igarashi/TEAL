@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 /*
  * TEAL CLI (teal-cli)
- * 
+ *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
@@ -32,14 +32,20 @@ pub fn run(wait_settle: bool, timeout_sec: u64, json_mode: bool) -> Result<()> {
     }
 
     // ログストーム収束待機モード (--wait-settle)
-    println!("{}", "⏳ Waiting for TEAL Netlink buffer to settle...".cyan());
+    println!(
+        "{}",
+        "⏳ Waiting for TEAL Netlink buffer to settle...".cyan()
+    );
     let start_time = Instant::now();
     let timeout = Duration::from_secs(timeout_sec);
     let mut settle_count: u32 = 1;
 
     loop {
         if start_time.elapsed() > timeout {
-            anyhow::bail!("Timeout ({}s) exceeded: Netlink buffer did not settle.", timeout_sec);
+            anyhow::bail!(
+                "Timeout ({}s) exceeded: Netlink buffer did not settle.",
+                timeout_sec
+            );
         }
 
         // ★ ロックを奪い合わないよう NETLINK_STATUS を送る

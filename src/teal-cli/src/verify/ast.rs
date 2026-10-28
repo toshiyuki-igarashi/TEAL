@@ -4,12 +4,11 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
+use crate::verify::VerifyGoal;
 use serde::Serialize;
 use std::collections::HashSet;
-use teal_policy_engine::types::{Effect, RuleType};
 use teal_policy_engine::raw::{RawPolicyV14, RawRule};
-use crate::verify::VerifyGoal;
-
+use teal_policy_engine::types::{Effect, RuleType};
 
 /// 検証用中間モデルのルート
 #[derive(Debug, Serialize)]
@@ -37,10 +36,10 @@ pub enum EntityCategory {
     Program,
     Script,
     Applet,
-    
+
     // Object関連
     ResourcePath,
-    
+
     // Action関連
     Operation,
 }
@@ -58,14 +57,14 @@ pub struct IrRule {
 pub enum IrExpr {
     /// 論理積 (A and B and ...)
     And(Vec<IrExpr>),
-    
+
     /// 論理和 (A or B or ...)
     Or(Vec<IrExpr>),
-    
+
     /// 属性と値の完全一致比較 (attribute = value)
     /// 例: Eq("subject.user", "alice")
     Eq(String, String),
-    
+
     /// 文字列マッチングや範囲指定などの複雑な条件
     /// 前回設計した IrTerm (Match, In, Range等) を格納します
     Term(IrTerm),
@@ -73,6 +72,7 @@ pub enum IrExpr {
 
 /// 検証ゴールから生成される、Alloyへの証明要求（assert）
 #[derive(Debug, Serialize)]
+#[allow(clippy::enum_variant_names)]
 pub enum IrAssertion {
     /// 指定された条件(condition)において、アクセスが許可される経路は存在しないことを証明
     AssertDeny { name: String, condition: IrExpr },
@@ -109,17 +109,11 @@ impl IrAssertion {
 pub enum IrTerm {
     /// 文字列パターンマッチ (glob: や prefix: の解決用)
     /// 例: Match { attr: "object.path", pattern: "glob:/etc/*" }
-    Match {
-        attr: String,
-        pattern: String,
-    },
+    Match { attr: String, pattern: String },
 
     /// 集合への包含判定
     /// 例: In { attr: "subject.role", values: ["admin", "operator"] }
-    In {
-        attr: String,
-        values: Vec<String>,
-    },
+    In { attr: String, values: Vec<String> },
 }
 
 // --- 実装ブロック (変換ロジック) ---
@@ -133,22 +127,40 @@ impl TealIrModel {
         let subj = &raw_rule.subject;
 
         if let Some(user) = &subj.user {
-            entities.insert(Entity { name: user.clone(), category: EntityCategory::User });
+            entities.insert(Entity {
+                name: user.clone(),
+                category: EntityCategory::User,
+            });
         }
         if let Some(uid) = subj.uid {
-            entities.insert(Entity { name: uid.to_string(), category: EntityCategory::Uid });
+            entities.insert(Entity {
+                name: uid.to_string(),
+                category: EntityCategory::Uid,
+            });
         }
         for role in &subj.roles {
-            entities.insert(Entity { name: role.clone(), category: EntityCategory::Role });
+            entities.insert(Entity {
+                name: role.clone(),
+                category: EntityCategory::Role,
+            });
         }
         if let Some(prog) = &subj.origin_program {
-            entities.insert(Entity { name: prog.clone(), category: EntityCategory::Program });
+            entities.insert(Entity {
+                name: prog.clone(),
+                category: EntityCategory::Program,
+            });
         }
         if let Some(script) = &subj.origin_script {
-            entities.insert(Entity { name: script.clone(), category: EntityCategory::Script });
+            entities.insert(Entity {
+                name: script.clone(),
+                category: EntityCategory::Script,
+            });
         }
         if let Some(applet) = &subj.origin_applet {
-            entities.insert(Entity { name: applet.clone(), category: EntityCategory::Applet });
+            entities.insert(Entity {
+                name: applet.clone(),
+                category: EntityCategory::Applet,
+            });
         }
 
         // ==========================================
@@ -156,11 +168,17 @@ impl TealIrModel {
         // ==========================================
         // from_rawでの skip 処理により、ここは安全に unwrap できる
         if let Some(obj) = &raw_rule.object {
-            entities.insert(Entity { name: obj.path.clone(), category: EntityCategory::ResourcePath });
-            
+            entities.insert(Entity {
+                name: obj.path.clone(),
+                category: EntityCategory::ResourcePath,
+            });
+
             // ルール定義内の new_path も Entity として登録
             if let Some(np) = &obj.new_path {
-                entities.insert(Entity { name: np.clone(), category: EntityCategory::ResourcePath });
+                entities.insert(Entity {
+                    name: np.clone(),
+                    category: EntityCategory::ResourcePath,
+                });
             }
         }
 
@@ -169,7 +187,10 @@ impl TealIrModel {
         // ==========================================
         let act = &raw_rule.action;
         for op in &act.ops {
-            entities.insert(Entity { name: op.to_string(), category: EntityCategory::Operation });
+            entities.insert(Entity {
+                name: op.to_string(),
+                category: EntityCategory::Operation,
+            });
         }
     }
 
@@ -210,13 +231,22 @@ impl TealIrModel {
             }));
         }
         if let Some(prog) = &subj.origin_program {
-            and_conditions.push(Self::process_matchable_attr("subject.origin_program", prog.clone()));
+            and_conditions.push(Self::process_matchable_attr(
+                "subject.origin_program",
+                prog.clone(),
+            ));
         }
         if let Some(script) = &subj.origin_script {
-            and_conditions.push(Self::process_matchable_attr("subject.origin_script", script.clone()));
+            and_conditions.push(Self::process_matchable_attr(
+                "subject.origin_script",
+                script.clone(),
+            ));
         }
         if let Some(applet) = &subj.origin_applet {
-            and_conditions.push(Self::process_matchable_attr("subject.origin_applet", applet.clone()));
+            and_conditions.push(Self::process_matchable_attr(
+                "subject.origin_applet",
+                applet.clone(),
+            ));
         }
 
         // ==========================================
@@ -225,8 +255,11 @@ impl TealIrModel {
         // subject_only の場合は object が None になるので安全にスキップされる
         if let Some(obj) = &raw_rule.object {
             // 1. 移動元(path)の条件
-            and_conditions.push(Self::process_matchable_attr("object.path", obj.path.clone()));
-            
+            and_conditions.push(Self::process_matchable_attr(
+                "object.path",
+                obj.path.clone(),
+            ));
+
             // 2. 移動先(new_path)の条件
             if let Some(np) = &obj.new_path {
                 and_conditions.push(Self::process_matchable_attr("object.new_path", np.clone()));
@@ -239,10 +272,13 @@ impl TealIrModel {
         // action は RawAction なので、その中の op フィールド等を使用
         if !raw_rule.action.ops.is_empty() {
             // 複数の操作(ops)がある場合は「いずれかに合致(OR)」のツリーを作る
-            let op_terms: Vec<IrExpr> = raw_rule.action.ops.iter()
+            let op_terms: Vec<IrExpr> = raw_rule
+                .action
+                .ops
+                .iter()
                 .map(|op| Self::process_matchable_attr("action.op", op.to_string()))
                 .collect();
-            
+
             // Andリストの中に「(READ or WRITE)」のようなOrブロックを追加
             and_conditions.push(IrExpr::Or(op_terms));
         }
@@ -252,7 +288,11 @@ impl TealIrModel {
     }
 
     /// RawPolicyV14 と ゴール定義から論理モデル(IR)を構築する
-    pub fn from_raw(raw: &RawPolicyV14, goals: &[VerifyGoal], policy_name: &str) -> anyhow::Result<Self> {
+    pub fn from_raw(
+        raw: &RawPolicyV14,
+        goals: &[VerifyGoal],
+        policy_name: &str,
+    ) -> anyhow::Result<Self> {
         let mut entities_set = HashSet::new();
         let mut ir_rules = Vec::new();
         let mut managed_paths_set = HashSet::new(); // 管理対象パスの集合
@@ -263,17 +303,17 @@ impl TealIrModel {
             // 1. AuditOnly はアクセス可否(状態)に影響しないため除外
             // 2. subject_only (Tier2 FastPath) は特定の客体を持たず、静的検証のノイズになるため除外
             if raw_rule.effect == Effect::AuditOnly || raw_rule.rule_type == RuleType::SubjectOnly {
-                continue; 
+                continue;
             }
 
             // 1. エンティティの抽出 (可変参照を渡して登録してもらう)
             // この時点で、対象となるルールには必ず `object` が存在することが保証される
             Self::extract_entity(raw_rule, &mut entities_set);
-            
+
             // --- このルールが対象とするオブジェクトパスを「管理対象」として記録 ---
             if let Some(obj) = &raw_rule.object {
                 managed_paths_set.insert(obj.path.clone());
-                
+
                 // RENAME時の移動先（new_path）も管理対象として登録する
                 if let Some(np) = &obj.new_path {
                     managed_paths_set.insert(np.clone());
@@ -296,16 +336,16 @@ impl TealIrModel {
         let mut assertions = Vec::new();
         for goal in goals {
             // ゴール独自のエンティティ（ターゲットパスなど）を登録
-            entities_set.insert(Entity { 
-                name: goal.target.clone(), 
-                category: EntityCategory::ResourcePath 
+            entities_set.insert(Entity {
+                name: goal.target.clone(),
+                category: EntityCategory::ResourcePath,
             });
 
             // new_target も検証用の Entity として登録する
             if let Some(nt) = &goal.new_target {
-                entities_set.insert(Entity { 
+                entities_set.insert(Entity {
                     name: nt.clone(),
-                    category: EntityCategory::ResourcePath 
+                    category: EntityCategory::ResourcePath,
                 });
             }
 
@@ -326,7 +366,10 @@ impl TealIrModel {
         let mut conds = Vec::new();
 
         // 1. ターゲット（パス）条件
-        conds.push(Self::process_matchable_attr("object.path", goal.target.clone()));
+        conds.push(Self::process_matchable_attr(
+            "object.path",
+            goal.target.clone(),
+        ));
 
         // 移動先（new_target）の条件
         // goal.yaml に new_target が指定されている場合のみ、AND条件に追加する
@@ -337,11 +380,11 @@ impl TealIrModel {
         // 2. Action条件 (ops)
         if !goal.action.is_empty() {
             conds.push(IrExpr::Term(IrTerm::In {
-                attr: "action.op".into(), 
+                attr: "action.op".into(),
                 values: goal.action.clone(),
             }));
         }
-        
+
         // 3. Subject 属性の構築
         if let Some(roles) = &goal.role_set {
             if !roles.is_empty() {
@@ -361,7 +404,10 @@ impl TealIrModel {
         }
 
         if let Some(p) = &goal.program {
-            conds.push(Self::process_matchable_attr("subject.origin_program", p.clone()));
+            conds.push(Self::process_matchable_attr(
+                "subject.origin_program",
+                p.clone(),
+            ));
         }
 
         if let Some(s) = &goal.script {
@@ -371,7 +417,7 @@ impl TealIrModel {
         if let Some(a) = &goal.applet {
             conds.push(IrExpr::Eq("subject.origin_applet".into(), a.clone()));
         }
-   
+
         // まとめて AND 条件にする
         let condition = IrExpr::And(conds);
         let name = goal.name.clone();
@@ -381,8 +427,10 @@ impl TealIrModel {
             "deny" => Ok(IrAssertion::AssertDeny { name, condition }),
             "need_approval" => Ok(IrAssertion::AssertNeedApprovalBypass { name, condition }),
             "allow" => Ok(IrAssertion::AssertAllow { name, condition }),
-            _ => Err(anyhow::anyhow!("Unknown expected_effect: {}", goal.expected_effect)),
+            _ => Err(anyhow::anyhow!(
+                "Unknown expected_effect: {}",
+                goal.expected_effect
+            )),
         }
     }
 }
-

@@ -11,15 +11,14 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-use teal_policy_engine::errors::CompileWarnings;
-use teal_policy_engine::load::load_json_file;
-use teal_policy_engine::schema::validate_against_schema;
-use teal_policy_engine::raw::RawRolesV1;
 use teal_policy_engine::compile::compile_roles_v1;
+use teal_policy_engine::errors::CompileWarnings;
 use teal_policy_engine::ir::CompiledRoles;
+use teal_policy_engine::load::load_json_file;
+use teal_policy_engine::raw::RawRolesV1;
+use teal_policy_engine::schema::validate_against_schema;
 
-const ROLES_SCHEMA_JSON: &str =
-    include_str!("../../schema/roles_v1_0.schema.json");
+const ROLES_SCHEMA_JSON: &str = include_str!("../../schema/roles_v1_0.schema.json");
 
 static SCHEMA: OnceLock<Value> = OnceLock::new();
 
@@ -34,10 +33,9 @@ fn roles_schema_value() -> &'static Value {
 /// (CompiledRoles, CompileWarnings) を返す。
 pub fn load_roles<P: AsRef<Path>>(path: P) -> Result<(CompiledRoles, CompileWarnings)> {
     let p = path.as_ref();
-    
+
     // 1) file -> Value
-    let v = load_json_file(p)
-        .with_context(|| format!("load roles json: {}", p.display()))?;
+    let v = load_json_file(p).with_context(|| format!("load roles json: {}", p.display()))?;
 
     // 2) schema validate
     validate_against_schema(&v, roles_schema_value())
@@ -48,8 +46,8 @@ pub fn load_roles<P: AsRef<Path>>(path: P) -> Result<(CompiledRoles, CompileWarn
         .with_context(|| format!("deserialize roles raw struct failed: {}", p.display()))?;
 
     // 4) compile
-    let (core, warnings) = compile_roles_v1(raw)
-        .with_context(|| format!("compile roles failed: {}", p.display()))?;
+    let (core, warnings) =
+        compile_roles_v1(raw).with_context(|| format!("compile roles failed: {}", p.display()))?;
 
     let compiled = CompiledRoles {
         roles_file: p.to_path_buf(),

@@ -5,30 +5,30 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
+use anyhow::Result;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use tokio::sync::mpsc;
-use anyhow::Result;
 
 // プロジェクト内の必要なモジュールをインポート
-use crate::state::app_state;
-use crate::types::{
-    Request, InternalEvent, PolicyDecision, EntityId, PendingEntry,
-    ApprovedTicket, PolicyResult, TicketPayload
-};
 use crate::bundle::policy_snapshot;
 use crate::decide::request_to_ctx;
-use crate::netlink::{TealNetlinkMessage, NlWriter};
-use crate::types::{next_audit_ticket_id, ACTIVE_TICKETS, to_kernel_dev};
 use crate::evidence::{ensure_program_hash, invalidate_hash_cache_for_request};
+use crate::netlink::{NlWriter, TealNetlinkMessage};
+use crate::state::app_state;
+use crate::types::{next_audit_ticket_id, to_kernel_dev, ACTIVE_TICKETS};
+use crate::types::{
+    ApprovedTicket, EntityId, InternalEvent, PendingEntry, PolicyDecision, PolicyResult, Request,
+    TicketPayload,
+};
 
+use teal_policy_engine::eval::evaluate;
+use teal_policy_engine::ir::PathMatcher;
+use teal_policy_engine::ir::{CompiledRule, Decision};
+use teal_policy_engine::raw::{TEAL_TICKET_FLG_PARENT_MATCH, TEAL_TICKET_FLG_SILENT_IO};
 use teal_policy_engine::types::Action;
 use teal_policy_engine::types::AuditLevel;
-use teal_policy_engine::ir::{CompiledRule, Decision};
-use teal_policy_engine::ir::PathMatcher;
-use teal_policy_engine::util::{uid_to_name, ktime_prefix};
-use teal_policy_engine::eval::evaluate;
-use teal_policy_engine::raw::{TEAL_TICKET_FLG_SILENT_IO, TEAL_TICKET_FLG_PARENT_MATCH};
+use teal_policy_engine::util::{ktime_prefix, uid_to_name};
 
 // =========================================================================
 // ワーカーのメインループ
@@ -36,19 +36,22 @@ use teal_policy_engine::raw::{TEAL_TICKET_FLG_SILENT_IO, TEAL_TICKET_FLG_PARENT_
 
 /// 特急レーン（ENFORCEモード）専用のワーカー
 pub async fn decision_worker_loop(
-    mut rx_decision: mpsc::Receiver<TealNetlinkMessage>, 
+    mut rx_decision: mpsc::Receiver<TealNetlinkMessage>,
     internal_tx: mpsc::Sender<InternalEvent>,
     nl_tx: NlWriter,
 ) {
     loop {
         // 1. Netlinkモジュールから安全にパース済みのメッセージを受け取る
         let Some(msg) = rx_decision.recv().await else {
-            eprintln!("{}[INFO] Decision Channel closed, exiting worker.", ktime_prefix());
+            eprintln!(
+                "{}[INFO] Decision Channel closed, exiting worker.",
+                ktime_prefix()
+            );
             break;
         };
 
         let nl_req = match msg {
-            TealNetlinkMessage::Req(r) => r,
+            TealNetlinkMessage::Req(r) => *r,
             _ => continue, // Decisionレーンには Req (ENFORCE) しか来ない想定
         };
 
@@ -69,7 +72,12 @@ pub async fn decision_worker_loop(
         // 4. カーネルへの即時応答（Netlink経由で TICKET_ADD または APPROVE/DENY を送信）
         // (内部で policy_result.ticket.take() されて ticket は None になる)
         if let Err(e) = reply_to_kernel(&nl_tx, &req, &mut policy_result).await {
-            eprintln!("{}[ERROR] Failed to reply to kernel for REQ {}: {}", ktime_prefix(), req.id, e);
+            eprintln!(
+                "{}[ERROR] Failed to reply to kernel for REQ {}: {}",
+                ktime_prefix(),
+                req.id,
+                e
+            );
             let _ = nl_tx.send_deny(req.id).await;
         }
 
@@ -77,14 +85,18 @@ pub async fn decision_worker_loop(
         let event = InternalEvent::Resolved {
             req_line,
             parsed_req: req,
-            decision: policy_result.decision.clone(), 
+            decision: policy_result.decision.clone(),
             rule_id: policy_result.rule_id.clone(),
             ticket_id: issued_ticket_id,
             epoch: policy_result.current_epoch,
         };
 
         if let Err(e) = internal_tx.send(event).await {
-            eprintln!("{}[ERROR] Failed to delegate log to Audit Lane: {}", ktime_prefix(), e);
+            eprintln!(
+                "{}[ERROR] Failed to delegate log to Audit Lane: {}",
+                ktime_prefix(),
+                e
+            );
         }
     }
 }
@@ -92,36 +104,26 @@ pub async fn decision_worker_loop(
 // ============================================================================
 // 1. メイン関数（非同期化し、ロック期間を最小化）
 // ============================================================================
-pub async fn process_policy_decision(
-    req: &mut Request
-) -> PolicyResult {
+pub async fn process_policy_decision(req: &mut Request) -> PolicyResult {
     let current = policy_snapshot();
     let compiled = &current.bundle;
     let current_epoch = current.epoch;
 
     let target_uid = req.uid;
 
-    let request_user = tokio::task::spawn_blocking(move || {
-        uid_to_name(target_uid).ok()
-    })
-    .await
-    .unwrap_or(None);
+    let request_user = tokio::task::spawn_blocking(move || uid_to_name(target_uid).ok())
+        .await
+        .unwrap_or(None);
 
     let session_info = {
         let state = app_state().lock().await;
 
-        state.check_registered_session(
-            &req.session_tty,
-            req.uid,
-            request_user.as_deref()
-        )
+        state.check_registered_session(&req.session_tty, req.uid, request_user.as_deref())
     };
 
-    let ctx =
-        request_to_ctx(req, &compiled.roles, session_info);
+    let ctx = request_to_ctx(req, &compiled.roles, session_info);
 
-    let decision =
-        evaluate(&compiled.policy, &ctx);
+    let decision = evaluate(&compiled.policy, &ctx);
 
     match decision {
         //
@@ -149,12 +151,7 @@ pub async fn process_policy_decision(
                 ensure_program_hash(req).await;
             }
 
-            apply_matched_rule(
-                rule,
-                req,
-                current_epoch
-            )
-            .await
+            apply_matched_rule(rule, req, current_epoch).await
         }
     }
 }
@@ -166,28 +163,28 @@ fn build_not_managed_result(req: &Request, current_epoch: u32) -> PolicyResult {
     let payload = TicketPayload {
         ticket_id: "T-000000000".to_string(), // 予約値0
         uid: req.uid,
-        op: 0xFFFFFFFF,             // Alpha版: 対象外は全操作許可マスク
+        op: 0xFFFFFFFF, // Alpha版: 対象外は全操作許可マスク
         prog_dev: req.prog_dev,
         prog_ino: req.prog_ino,
         script_dev: req.script_dev,
         script_ino: req.script_ino,
-        applet_hash: 0,             // Alphaフェーズ固定
+        applet_hash: 0, // Alphaフェーズ固定
         target_dev: req.target_dev,
         target_ino: req.target_ino,
         new_target_dev: req.new_target_dev,
         new_target_ino: req.new_target_ino,
-        expires_in_sec: u64::MAX,   // Epochが変わるまで無限
+        expires_in_sec: u64::MAX, // Epochが変わるまで無限
         flags: 0,
-        uses_left: 1,               // 予約値0でもプロトコル要件として1以上
-        epoch: current_epoch,       // グローバルEpochと紐付け
+        uses_left: 1,         // 予約値0でもプロトコル要件として1以上
+        epoch: current_epoch, // グローバルEpochと紐付け
         audit_flags: AuditLevel::Silent.to_u32(),
     };
-    
+
     PolicyResult {
         decision: PolicyDecision::NotManaged,
         rule_id: None,
         ticket: Some(payload),
-        current_epoch
+        current_epoch,
     }
 }
 
@@ -199,7 +196,7 @@ fn build_no_match_result(current_epoch: u32) -> PolicyResult {
         decision: PolicyDecision::NoRuleMatched,
         rule_id: None,
         ticket: None,
-        current_epoch
+        current_epoch,
     }
 }
 
@@ -227,21 +224,19 @@ async fn apply_matched_rule(r: &CompiledRule, req: &Request, current_epoch: u32)
                 decision: decision_kind,
                 rule_id: Some(r.id.clone()),
                 ticket: Some(ticket),
-                current_epoch
+                current_epoch,
             }
-        },
+        }
         PolicyDecision::NeedApproval => {
             // キューの操作を伴うため、内部でロックを取って安全に処理
             process_need_approval(r, req, current_epoch).await
-        },
-        _ => {
-            PolicyResult {
-                decision: decision_kind,
-                rule_id: Some(r.id.clone()),
-                ticket: None,
-                current_epoch
-            }
         }
+        _ => PolicyResult {
+            decision: decision_kind,
+            rule_id: Some(r.id.clone()),
+            ticket: None,
+            current_epoch,
+        },
     }
 }
 
@@ -249,10 +244,10 @@ async fn apply_matched_rule(r: &CompiledRule, req: &Request, current_epoch: u32)
 // 5. 許可(ALLOW)チケットの生成ロジック（純粋な関数になり、ロック非依存に）
 // ============================================================================
 fn generate_allow_ticket(
-    r: &CompiledRule, 
-    req: &Request, 
-    ticket_seq: String, 
-    current_epoch: u32
+    r: &CompiledRule,
+    req: &Request,
+    ticket_seq: String,
+    current_epoch: u32,
 ) -> TicketPayload {
     let mut flags = r.ticket_profile.flags;
     let mut target_dev = req.target_dev;
@@ -271,10 +266,10 @@ fn generate_allow_ticket(
                     if meta.is_dir() {
                         target_dev = to_kernel_dev(meta.dev()) as u64;
                         target_ino = meta.ino();
-                        
+
                         // 包括フラグを追加
                         flags |= TEAL_TICKET_FLG_PARENT_MATCH;
-                        
+
                         // ログストームを確実に止めるため、無制限・長寿命化
                         uses_left = u32::MAX;
                         if expires_in_sec == 0 {
@@ -310,7 +305,11 @@ fn generate_allow_ticket(
 // ============================================================================
 // 6. NeedApproval 特有の処理 (究極までロックを最小化したJIT Hydration)
 // ============================================================================
-async fn process_need_approval(r: &CompiledRule, req: &Request, current_epoch: u32) -> PolicyResult {
+async fn process_need_approval(
+    r: &CompiledRule,
+    req: &Request,
+    current_epoch: u32,
+) -> PolicyResult {
     // 【フェーズ1: 準備】
     // Uuid生成やメモリ確保を伴う重い処理は、ロックを取る「前」に済ませておく
     let pending_entry = PendingEntry::from_rule(r, req, current_epoch);
@@ -320,7 +319,10 @@ async fn process_need_approval(r: &CompiledRule, req: &Request, current_epoch: u
         let mut state = app_state().lock().await;
 
         // 1. HashMapから該当ルールのチケットを探す
-        let target_ticket_id = state.fast.approved.values()
+        let target_ticket_id = state
+            .fast
+            .approved
+            .values()
             .find(|t| t.rule_id == r.id)
             .map(|t| t.ticket_id.clone());
 
@@ -362,9 +364,9 @@ async fn process_need_approval(r: &CompiledRule, req: &Request, current_epoch: u
             epoch: current_epoch,
             audit_flags: r.audit_level.to_u32(),
         };
-        
+
         PolicyResult {
-            decision: PolicyDecision::Approved(approved),
+            decision: PolicyDecision::Approved(Box::new(approved)),
             rule_id: Some(r.id.clone()),
             ticket: Some(payload),
             current_epoch,
@@ -380,7 +382,11 @@ async fn process_need_approval(r: &CompiledRule, req: &Request, current_epoch: u
 }
 
 // --- カーネルへの応答 ---
-async fn reply_to_kernel(nl_tx: &NlWriter, req: &Request, policy_result: &mut PolicyResult) -> Result<()> {
+async fn reply_to_kernel(
+    nl_tx: &NlWriter,
+    req: &Request,
+    policy_result: &mut PolicyResult,
+) -> Result<()> {
     match &mut policy_result.decision {
         PolicyDecision::NotManaged => {
             if let Some(ticket) = policy_result.ticket.take() {
@@ -393,18 +399,15 @@ async fn reply_to_kernel(nl_tx: &NlWriter, req: &Request, policy_result: &mut Po
         PolicyDecision::Allow => {
             if let Some(ticket) = policy_result.ticket.take() {
                 // 先にチケットの妥当性を確認
-                let approved = ApprovedTicket::from_result_with_req(
-                    policy_result,
-                    &ticket,
-                    req,
-                ).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Failed to create ApprovedTicket: \
+                let approved = ApprovedTicket::from_result_with_req(policy_result, &ticket, req)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Failed to create ApprovedTicket: \
                          rule_id={:?}, ticket_epoch={}",
-                        policy_result.rule_id,
-                        ticket.epoch
-                    )
-                })?;
+                            policy_result.rule_id,
+                            ticket.epoch
+                        )
+                    })?;
 
                 // まず元のリクエストを許可（レイテンシ最小化）
                 nl_tx.send_approve(req.id).await?;
@@ -413,10 +416,7 @@ async fn reply_to_kernel(nl_tx: &NlWriter, req: &Request, policy_result: &mut Po
                 nl_tx.send_ticket_add(ticket).await?;
 
                 // teald 側の台帳に登録
-                ACTIVE_TICKETS.insert(
-                    approved.ticket_id.clone(),
-                    approved,
-                );
+                ACTIVE_TICKETS.insert(approved.ticket_id.clone(), approved);
 
                 Ok(())
             } else {
@@ -440,16 +440,19 @@ async fn reply_to_kernel(nl_tx: &NlWriter, req: &Request, policy_result: &mut Po
             approved.origin_applet = req.raw_applet.clone();
 
             approved.object_id = EntityId::new((req.target_dev, req.target_ino));
-            
+
             // new_object_id がある場合のみセット
             if req.new_target_dev != 0 || req.new_target_ino != 0 {
-                approved.new_object_id = Some(EntityId::new((req.new_target_dev, req.new_target_ino)));
+                approved.new_object_id =
+                    Some(EntityId::new((req.new_target_dev, req.new_target_ino)));
             } else {
                 approved.new_object_id = None;
             }
 
-            approved.op_mask = Action::parse(&req.raw_action).unwrap_or(Action::Unknown).to_mask();
-            ACTIVE_TICKETS.insert(approved.ticket_id.clone(), approved.clone());
+            approved.op_mask = Action::parse(&req.raw_action)
+                .unwrap_or(Action::Unknown)
+                .to_mask();
+            ACTIVE_TICKETS.insert(approved.ticket_id.clone(), (**approved).clone());
 
             if let Some(ticket) = policy_result.ticket.take() {
                 let _ = nl_tx.send_approve(req.id).await;
@@ -463,4 +466,3 @@ async fn reply_to_kernel(nl_tx: &NlWriter, req: &Request, policy_result: &mut Po
         PolicyDecision::Deny | PolicyDecision::NoRuleMatched => nl_tx.send_deny(req.id).await,
     }
 }
-

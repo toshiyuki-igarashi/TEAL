@@ -19,9 +19,7 @@ pub enum AiError {
 
     /// API利用制限超過
     #[error("AI rate limit exceeded{}", .retry_after.map(|d| format!(" (retry after {d:?})")).unwrap_or_default())]
-    RateLimited {
-        retry_after: Option<Duration>,
-    },
+    RateLimited { retry_after: Option<Duration> },
 
     /// AI応答の形式・内容が不正
     #[error("Invalid AI response: {0}")]
@@ -88,16 +86,28 @@ pub struct ValidationFailure {
 }
 
 impl ValidationFailure {
-    pub fn new(code: ValidationCode, field: Option<&'static str>, anomaly_index: Option<usize>) -> Self {
-        Self { code, field: field.map(str::to_owned), anomaly_index }
+    pub fn new(
+        code: ValidationCode,
+        field: Option<&'static str>,
+        anomaly_index: Option<usize>,
+    ) -> Self {
+        Self {
+            code,
+            field: field.map(str::to_owned),
+            anomaly_index,
+        }
     }
 }
 
 impl std::fmt::Display for ValidationFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self.code)?;
-        if let Some(field) = &self.field { write!(f, " field={field}")?; }
-        if let Some(index) = self.anomaly_index { write!(f, " anomaly_index={index}")?; }
+        if let Some(field) = &self.field {
+            write!(f, " field={field}")?;
+        }
+        if let Some(index) = self.anomaly_index {
+            write!(f, " anomaly_index={index}")?;
+        }
         Ok(())
     }
 }

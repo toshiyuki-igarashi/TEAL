@@ -5,14 +5,14 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
-pub mod types;
-pub mod provider;
-pub mod error;
 pub mod adapters;
-pub mod engine;
 pub mod aggregator;
 pub mod collector;
+pub mod engine;
+pub mod error;
+pub mod provider;
 pub mod results;
+pub mod types;
 
 use std::fs;
 use std::path::Path;
@@ -21,9 +21,9 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use self::adapters::ollama::OllamaAdapter;
-use self::adapters::groq::GroqAdapter;
 use self::adapters::gemini::GeminiAdapter;
+use self::adapters::groq::GroqAdapter;
+use self::adapters::ollama::OllamaAdapter;
 use self::collector::AiCollectorConfig;
 use self::engine::AiAnalysisEngine;
 use self::provider::AiProvider;
@@ -111,7 +111,9 @@ where
             return Err(D::Error::custom("prompt example description is invalid"));
         }
         if !example.input.is_object() || !example.expected.is_object() {
-            return Err(D::Error::custom("prompt example input/expected must be objects"));
+            return Err(D::Error::custom(
+                "prompt example input/expected must be objects",
+            ));
         }
         let input = serde_json::to_string(&example.input).map_err(D::Error::custom)?;
         let expected = serde_json::to_string(&example.expected).map_err(D::Error::custom)?;
@@ -120,7 +122,9 @@ where
         }
         // Reuse the same structural validation as the actual model output.
         if crate::ai::adapters::common::parse_output("example", &expected).is_err() {
-            return Err(D::Error::custom("prompt example expected output does not match AI output schema"));
+            return Err(D::Error::custom(
+                "prompt example expected output does not match AI output schema",
+            ));
         }
     }
     Ok(examples)
@@ -185,16 +189,17 @@ fn build_ai_runtime(config: AiConfig) -> Result<Option<AiRuntime>, String> {
         return Ok(None);
     }
     let c = config.collector;
-    if c.window_seconds == 0 || c.max_events == 0 || c.event_queue_capacity == 0 || c.analysis_queue_capacity == 0 {
+    if c.window_seconds == 0
+        || c.max_events == 0
+        || c.event_queue_capacity == 0
+        || c.analysis_queue_capacity == 0
+    {
         return Err("AI collector settings must be greater than zero".into());
     }
     if config.aggregator.max_group_events == 0 {
-        return Err(
-            "AI aggregator.max_group_events must be greater than zero".into()
-        );
+        return Err("AI aggregator.max_group_events must be greater than zero".into());
     }
-    let system_prompt =
-        adapters::common::build_system_prompt(&config.prompt);
+    let system_prompt = adapters::common::build_system_prompt(&config.prompt);
 
     let provider: Arc<dyn AiProvider> = match config.provider.as_str() {
         "ollama" => {
@@ -208,28 +213,40 @@ fn build_ai_runtime(config: AiConfig) -> Result<Option<AiRuntime>, String> {
                 Duration::from_secs(o.timeout_seconds),
                 system_prompt,
                 o.temperature,
-            ).map_err(|e| format!("Ollama provider initialization failed: {e}"))?;
+            )
+            .map_err(|e| format!("Ollama provider initialization failed: {e}"))?;
             Arc::new(adapter)
         }
         "groq" => {
             let c = config.groq.ok_or("Missing groq configuration")?;
 
-            Arc::new(GroqAdapter::new(&c.model, Duration::from_secs(c.timeout_seconds), system_prompt, c.temperature)
-                .map_err(|e| format!("Groq provider initialization failed: {e}"))?)
+            Arc::new(
+                GroqAdapter::new(
+                    &c.model,
+                    Duration::from_secs(c.timeout_seconds),
+                    system_prompt,
+                    c.temperature,
+                )
+                .map_err(|e| format!("Groq provider initialization failed: {e}"))?,
+            )
         }
         "gemini" => {
             let c = config.gemini.ok_or("Missing gemini configuration")?;
-            Arc::new(GeminiAdapter::new(&c.model, Duration::from_secs(c.timeout_seconds), system_prompt, c.temperature)
-                .map_err(|e| format!("Gemini provider initialization failed: {e}"))?)
+            Arc::new(
+                GeminiAdapter::new(
+                    &c.model,
+                    Duration::from_secs(c.timeout_seconds),
+                    system_prompt,
+                    c.temperature,
+                )
+                .map_err(|e| format!("Gemini provider initialization failed: {e}"))?,
+            )
         }
         other => return Err(format!("Unsupported AI provider: {other}")),
     };
 
     Ok(Some(AiRuntime {
-        engine: Arc::new(AiAnalysisEngine::new(
-            provider,
-            config.aggregator,
-        )),
+        engine: Arc::new(AiAnalysisEngine::new(provider, config.aggregator)),
         collector: AiCollectorConfig {
             window: Duration::from_secs(c.window_seconds),
             max_events: c.max_events,

@@ -95,7 +95,8 @@ fn generate_events(
             .ok()
             .and_then(|n| n.checked_mul(interval_ms))
             .context("Timestamp offset overflow")?;
-        let timestamp = start.checked_add_signed(Duration::milliseconds(offset_ms))
+        let timestamp = start
+            .checked_add_signed(Duration::milliseconds(offset_ms))
             .context("Timestamp overflow")?;
 
         let (action, target_path, new_path) = match scenario {
@@ -109,11 +110,7 @@ fn generate_events(
                 format!("/data/documents/file_{i:06}.txt"),
                 Some(format!("/data/documents/file_{i:06}.enc")),
             ),
-            Scenario::MassDelete => (
-                "UNLINK",
-                format!("/data/documents/file_{i:06}.txt"),
-                None,
-            ),
+            Scenario::MassDelete => ("UNLINK", format!("/data/documents/file_{i:06}.txt"), None),
         };
         let (user, pid, binary) = match scenario {
             Scenario::NormalRename => ("testuser", 2100, "/usr/bin/mv"),
@@ -147,8 +144,12 @@ pub fn run(args: GenerateArgs) -> Result<()> {
     let start = DateTime::parse_from_rfc3339(&args.start)
         .with_context(|| format!("Invalid --start RFC3339 timestamp: {}", args.start))?
         .with_timezone(&Utc);
-    let count = args.events.unwrap_or_else(|| args.scenario.default_events());
-    let interval_ms = args.interval_ms.unwrap_or_else(|| args.scenario.default_interval_ms());
+    let count = args
+        .events
+        .unwrap_or_else(|| args.scenario.default_events());
+    let interval_ms = args
+        .interval_ms
+        .unwrap_or_else(|| args.scenario.default_interval_ms());
     let events = generate_events(args.scenario, count, start, interval_ms)?;
 
     let output = OpenOptions::new()
@@ -156,7 +157,12 @@ pub fn run(args: GenerateArgs) -> Result<()> {
         .create_new(true)
         .mode(0o600)
         .open(&args.out)
-        .with_context(|| format!("Cannot create dataset (must not exist): {}", args.out.display()))?;
+        .with_context(|| {
+            format!(
+                "Cannot create dataset (must not exist): {}",
+                args.out.display()
+            )
+        })?;
 
     let result = (|| -> Result<()> {
         let mut writer = BufWriter::new(output);
@@ -173,7 +179,10 @@ pub fn run(args: GenerateArgs) -> Result<()> {
     }
     eprintln!(
         "[INFO] Synthetic dataset saved: scenario={}, events={}, interval_ms={}, out={}",
-        args.scenario.label(), events.len(), interval_ms, args.out.display()
+        args.scenario.label(),
+        events.len(),
+        interval_ms,
+        args.out.display()
     );
     Ok(())
 }
@@ -183,31 +192,45 @@ mod tests {
     use super::*;
 
     fn start() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(DEFAULT_START).unwrap().with_timezone(&Utc)
+        DateTime::parse_from_rfc3339(DEFAULT_START)
+            .unwrap()
+            .with_timezone(&Utc)
     }
 
     #[test]
     fn normal_rename_has_non_suspicious_targets_and_slow_cadence() {
         let events = generate_events(Scenario::NormalRename, 5, start(), 10_000).unwrap();
         assert_eq!(events.len(), 5);
-        assert!(events.iter().all(|e| e.action == "RENAME" && e.new_path.as_deref().unwrap().ends_with(".txt")));
-        assert_eq!((events[1].timestamp - events[0].timestamp).num_seconds(), 10);
+        assert!(events
+            .iter()
+            .all(|e| e.action == "RENAME" && e.new_path.as_deref().unwrap().ends_with(".txt")));
+        assert_eq!(
+            (events[1].timestamp - events[0].timestamp).num_seconds(),
+            10
+        );
     }
 
     #[test]
     fn mass_rename_is_reproducible_and_aggregatable() {
         let a = generate_events(Scenario::MassRename, 100, start(), 100).unwrap();
         let b = generate_events(Scenario::MassRename, 100, start(), 100).unwrap();
-        assert_eq!(serde_json::to_vec(&a).unwrap(), serde_json::to_vec(&b).unwrap());
+        assert_eq!(
+            serde_json::to_vec(&a).unwrap(),
+            serde_json::to_vec(&b).unwrap()
+        );
         assert_eq!(a.len(), 100);
-        assert!(a.iter().all(|e| e.action == "RENAME" && e.new_path.as_deref().unwrap().ends_with(".enc")));
+        assert!(a
+            .iter()
+            .all(|e| e.action == "RENAME" && e.new_path.as_deref().unwrap().ends_with(".enc")));
         assert_eq!((a[99].timestamp - a[0].timestamp).num_milliseconds(), 9900);
     }
 
     #[test]
     fn mass_delete_uses_unlink_without_destination() {
         let events = generate_events(Scenario::MassDelete, 100, start(), 100).unwrap();
-        assert!(events.iter().all(|e| e.action == "UNLINK" && e.new_path.is_none()));
+        assert!(events
+            .iter()
+            .all(|e| e.action == "UNLINK" && e.new_path.is_none()));
         assert_eq!(events[0].event_id, "synthetic-mass-delete-000000");
     }
 

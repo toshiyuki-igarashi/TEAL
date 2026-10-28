@@ -5,27 +5,27 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
-use std::fs;
-use std::path::Path;
-use std::sync::Arc;
 use anyhow::{Context, Result};
 use arc_swap::ArcSwapOption;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::fs;
+use std::path::Path;
+use std::sync::Arc;
 
-use crate::roles::load_roles;
 use crate::policy::load_policies_listed_in_bundle;
+use crate::roles::load_roles;
 
-use teal_policy_engine::load::load_json_file;
-use teal_policy_engine::schema::validate_against_schema;
-use teal_policy_engine::raw::RawBundleV1;
 use teal_policy_engine::ir::CompiledBundle;
+use teal_policy_engine::load::load_json_file;
+use teal_policy_engine::raw::RawBundleV1;
+use teal_policy_engine::schema::validate_against_schema;
 use teal_policy_engine::util::ktime_prefix;
 
 // --- ディレクトリ・ファイルパス定数の共通定義 ---
 pub const DEFAULT_TEAL_DIR: &str = "/etc/teal.d";
-pub const STAGE_TEAL_DIR: &str   = "/etc/teal.d/new";
-pub const STAGE_LOCK_PATH: &str  = "/etc/teal.d/.stage.lock";
+pub const STAGE_TEAL_DIR: &str = "/etc/teal.d/new";
+pub const STAGE_LOCK_PATH: &str = "/etc/teal.d/.stage.lock";
 const BUNDLE_SCHEMA_JSON: &str = include_str!("../../schema/bundle_v1_0.schema.json");
 
 static SCHEMA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
@@ -42,22 +42,21 @@ pub struct PolicySnapshot {
     pub bundle: Arc<CompiledBundle>,
 }
 
-pub static BUNDLE: ArcSwapOption<PolicySnapshot> =
-    ArcSwapOption::const_empty();
+pub static BUNDLE: ArcSwapOption<PolicySnapshot> = ArcSwapOption::const_empty();
 
 /// カーネルのREGISTER応答で提示されたEpochを使って初期化する。
 /// Epochは起動セッション内で一度だけ設定し、その後はupdate_bundle/advance_epochで進める。
 pub fn init_bundle_at_epoch(bundle: CompiledBundle, epoch: u32) -> Result<()> {
-    anyhow::ensure!(epoch != 0, "Epoch 0 is reserved for kernel-unsynchronized state");
+    anyhow::ensure!(
+        epoch != 0,
+        "Epoch 0 is reserved for kernel-unsynchronized state"
+    );
     let snapshot = Arc::new(PolicySnapshot {
         epoch,
         bundle: Arc::new(bundle),
     });
 
-    let previous = BUNDLE.compare_and_swap(
-        &None::<Arc<PolicySnapshot>>,
-        Some(snapshot),
-    );
+    let previous = BUNDLE.compare_and_swap(&None::<Arc<PolicySnapshot>>, Some(snapshot));
 
     if previous.is_some() {
         anyhow::bail!("PolicySnapshot already initialized");
@@ -73,10 +72,7 @@ pub fn init_bundle(bundle: CompiledBundle) -> Result<()> {
 }
 
 /// バンドルの更新処理、更新処理は同時に複数実行されない前提
-pub fn update_bundle(
-    new_bundle: CompiledBundle,
-    expected_epoch: u32,
-) -> Result<u32> {
+pub fn update_bundle(new_bundle: CompiledBundle, expected_epoch: u32) -> Result<u32> {
     let current = policy_snapshot();
 
     if current.epoch != expected_epoch {
@@ -87,7 +83,9 @@ pub fn update_bundle(
         );
     }
 
-    let new_epoch = current.epoch.checked_add(1)
+    let new_epoch = current
+        .epoch
+        .checked_add(1)
         .ok_or_else(|| anyhow::anyhow!("Policy epoch overflow"))?;
 
     BUNDLE.store(Some(Arc::new(PolicySnapshot {
@@ -111,7 +109,9 @@ pub fn advance_epoch(expected_epoch: u32) -> Result<u32> {
         );
     }
 
-    let new_epoch = current.epoch.checked_add(1)
+    let new_epoch = current
+        .epoch
+        .checked_add(1)
         .ok_or_else(|| anyhow::anyhow!("Policy epoch overflow"))?;
 
     BUNDLE.store(Some(Arc::new(PolicySnapshot {
@@ -124,9 +124,7 @@ pub fn advance_epoch(expected_epoch: u32) -> Result<u32> {
 
 /// 現在有効なポリシーバンドルを取得 (Wait-Free)
 pub fn policy_snapshot() -> Arc<PolicySnapshot> {
-    BUNDLE
-        .load_full()
-        .expect("BUNDLE not initialized")
+    BUNDLE.load_full().expect("BUNDLE not initialized")
 }
 
 /// 現在有効なポリシーを取得 (Wait-Free)
@@ -150,8 +148,12 @@ pub fn load_bundle_from_dir<P: AsRef<Path>>(dir: P) -> Result<CompiledBundle> {
         .with_context(|| format!("bundle schema validation failed: {}", bundle_path.display()))?;
 
     // 3) Value -> RawBundleV1
-    let raw_bundle: RawBundleV1 = serde_json::from_value(v)
-        .with_context(|| format!("deserialize bundle raw struct failed: {}", bundle_path.display()))?;
+    let raw_bundle: RawBundleV1 = serde_json::from_value(v).with_context(|| {
+        format!(
+            "deserialize bundle raw struct failed: {}",
+            bundle_path.display()
+        )
+    })?;
 
     // 4) roles
     let (roles, mut warnings) = load_roles(&roles_path)
@@ -208,12 +210,18 @@ pub fn collect_policy_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) -> 
         return Ok(());
     }
 
-    for entry in fs::read_dir(dir).with_context(|| format!("Failed to read dir: {}", dir.display()))? {
+    for entry in
+        fs::read_dir(dir).with_context(|| format!("Failed to read dir: {}", dir.display()))?
+    {
         let entry = entry?;
         let path = entry.path();
-        
+
         // 隠しファイル（.stage.lock 等）を除外
-        if path.file_name().and_then(|n| n.to_str()).map_or(false, |n| n.starts_with('.')) {
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with('.'))
+        {
             continue;
         }
 
@@ -227,4 +235,3 @@ pub fn collect_policy_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) -> 
     }
     Ok(())
 }
-

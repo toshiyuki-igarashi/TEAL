@@ -5,10 +5,10 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
-use tokio::sync::Mutex; 
-use std::sync::{Arc, OnceLock}; // ArcとOnceLockはstdでOK
+use crate::types::{AppState, FastState, SlowState, TealDeviceState};
 use std::collections::HashMap;
-use crate::types::{AppState, FastState, SlowState, TealDeviceState}; // types.rsを参照
+use std::sync::{Arc, OnceLock}; // ArcとOnceLockはstdでOK
+use tokio::sync::Mutex; // types.rsを参照
 
 pub static APP_STATE: OnceLock<Arc<Mutex<AppState>>> = OnceLock::new();
 
@@ -22,23 +22,21 @@ pub fn app_state() -> &'static Arc<Mutex<AppState>> {
 
 /// state の初期化
 pub async fn init_state() {
-    set_app_state(
-        Arc::new(Mutex::new(AppState {
-            fast: FastState {
-                drafts: HashMap::new(),
-                approved: HashMap::new(),
-            },
-            slow: SlowState {
-                pending_requests: HashMap::new(),
-                registered_keys: HashMap::new(),
-                pending_ctl: None,
-                active_tty_sessions: HashMap::new(),
-            },
-            dev: TealDeviceState {
-                dev_teal_path: String::from("netlink:teal_ctrl"),
-                device_file: None, 
-            },
-            is_flushed: false,
-        }))
-    )
+    set_app_state(Arc::new(Mutex::new(AppState {
+        fast: FastState {
+            drafts: HashMap::new(),
+            approved: HashMap::new(),
+        },
+        slow: SlowState {
+            pending_requests: HashMap::new(),
+            registered_keys: HashMap::new(),
+            pending_ctl: None,
+            active_tty_sessions: HashMap::new(),
+        },
+        dev: TealDeviceState {
+            dev_teal_path: String::from("netlink:teal_ctrl"),
+            device_file: None,
+        },
+        is_flushed: false,
+    })))
 }

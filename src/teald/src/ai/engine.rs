@@ -8,15 +8,12 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::ai::aggregator::aggregate_events;
 use crate::ai::error::{AiError, ValidationCode, ValidationFailure};
 use crate::ai::provider::AiProvider;
 use crate::ai::types::{
-    AiAnalysisRequest,
-    AiAnalysisResult,
-    AiOperationalContext,
-    AiProviderRequest,
+    AiAnalysisRequest, AiAnalysisResult, AiOperationalContext, AiProviderRequest,
 };
-use crate::ai::aggregator::aggregate_events;
 use crate::ai::AggregatorConfig;
 
 /// Providerが実際に評価した集約と、その全元イベントの対応関係を保持する。
@@ -52,10 +49,7 @@ impl AiAnalysisEngine {
     }
 
     /// 監査イベントをAIで分析
-    pub async fn analyze(
-        &self,
-        request: &AiAnalysisRequest,
-    ) -> Result<AiAnalysisResult, AiError> {
+    pub async fn analyze(&self, request: &AiAnalysisRequest) -> Result<AiAnalysisResult, AiError> {
         Ok(self.analyze_with_provenance(request).await?.result)
     }
 
@@ -71,7 +65,8 @@ impl AiAnalysisEngine {
         let mut sorted_request = request.clone();
 
         sorted_request.events.sort_by(|a, b| {
-            a.timestamp.cmp(&b.timestamp)
+            a.timestamp
+                .cmp(&b.timestamp)
                 .then_with(|| a.event_id.cmp(&b.event_id))
         });
 
@@ -105,24 +100,18 @@ impl AiAnalysisEngine {
     }
 
     /// 分析要求の基本的な整合性検証
-    fn validate_request(
-        request: &AiAnalysisRequest,
-    ) -> Result<(), AiError> {
+    fn validate_request(request: &AiAnalysisRequest) -> Result<(), AiError> {
         if request.analysis_id.trim().is_empty() {
-            return Err(AiError::InvalidRequest(
-                "analysis_id is empty".to_string()
-            ));
+            return Err(AiError::InvalidRequest("analysis_id is empty".to_string()));
         }
 
         if request.host.trim().is_empty() {
-            return Err(AiError::InvalidRequest(
-                "host is empty".to_string()
-            ));
+            return Err(AiError::InvalidRequest("host is empty".to_string()));
         }
 
         if request.time_window_start > request.time_window_end {
             return Err(AiError::InvalidRequest(
-                "Invalid analysis time window".to_string()
+                "Invalid analysis time window".to_string(),
             ));
         }
 
@@ -131,15 +120,14 @@ impl AiAnalysisEngine {
 
         for event in &request.events {
             if event.event_id.trim().is_empty() {
-                return Err(AiError::InvalidRequest(
-                    "event_id is empty".to_string()
-                ));
+                return Err(AiError::InvalidRequest("event_id is empty".to_string()));
             }
 
             if !ids.insert(event.event_id.as_str()) {
-                return Err(AiError::InvalidRequest(
-                    format!("Duplicate event_id: {}", event.event_id)
-                ));
+                return Err(AiError::InvalidRequest(format!(
+                    "Duplicate event_id: {}",
+                    event.event_id
+                )));
             }
         }
 
@@ -156,9 +144,14 @@ impl AiAnalysisEngine {
             AiError::Validation(ValidationFailure::new(code, Some(field), index))
         }
         if result.analysis_id != request.analysis_id {
-            return Err(invalid(ValidationCode::AnalysisIdMismatch, "analysis_id", None));
+            return Err(invalid(
+                ValidationCode::AnalysisIdMismatch,
+                "analysis_id",
+                None,
+            ));
         }
-        let event_ids: HashSet<&str> = provider_request.events
+        let event_ids: HashSet<&str> = provider_request
+            .events
             .iter()
             .flat_map(|event| event.evidence_event_ids.iter())
             .map(String::as_str)
@@ -167,41 +160,49 @@ impl AiAnalysisEngine {
             if !anomaly.confidence_score.is_finite()
                 || !(0.0..=1.0).contains(&anomaly.confidence_score)
             {
-                return Err(invalid(ValidationCode::InvalidConfidence, "confidence_score", Some(index)));
+                return Err(invalid(
+                    ValidationCode::InvalidConfidence,
+                    "confidence_score",
+                    Some(index),
+                ));
             }
             if anomaly.evidence_event_ids.is_empty() {
-                return Err(invalid(ValidationCode::MissingEvidence, "evidence_event_ids", Some(index)));
+                return Err(invalid(
+                    ValidationCode::MissingEvidence,
+                    "evidence_event_ids",
+                    Some(index),
+                ));
             }
             if anomaly.evidence_event_ids.len() > 3 {
-                return Err(invalid(ValidationCode::InvalidEvidenceCount, "evidence_event_ids", Some(index)));
+                return Err(invalid(
+                    ValidationCode::InvalidEvidenceCount,
+                    "evidence_event_ids",
+                    Some(index),
+                ));
             }
             for id in &anomaly.evidence_event_ids {
                 if !event_ids.contains(id.as_str()) {
-                    return Err(invalid(ValidationCode::UnknownEvidenceId, "evidence_event_ids", Some(index)));
+                    return Err(invalid(
+                        ValidationCode::UnknownEvidenceId,
+                        "evidence_event_ids",
+                        Some(index),
+                    ));
                 }
             }
         }
         Ok(())
     }
-
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-    use crate::ai::PromptConfig;
     use crate::ai::adapters::common::build_system_prompt;
+    use crate::ai::PromptConfig;
+    use chrono::Utc;
 
-    use crate::ai::adapters::mock::{
-        MockAdapter,
-        MockResponse,
-    };
-    use crate::ai::types::{
-        AiAnomaly,
-        AiEvent,
-        Severity,
-    };
+    use crate::ai::adapters::mock::{MockAdapter, MockResponse};
+    use crate::ai::types::{AiAnomaly, AiEvent, Severity};
     use crate::evidence::schema::LogType;
 
     fn test_request() -> AiAnalysisRequest {
@@ -244,10 +245,7 @@ mod tests {
             attack_type: Some("ransomware".to_string()),
             summary: "Mass file rename detected".to_string(),
             explanation: "Suspicious rename activity".to_string(),
-            evidence_event_ids: vec![
-                "evt-001".to_string(),
-                "evt-002".to_string(),
-            ],
+            evidence_event_ids: vec!["evt-001".to_string(), "evt-002".to_string()],
             confidence_score: 0.95,
         }
     }
@@ -257,9 +255,7 @@ mod tests {
         let provider = Arc::new(MockAdapter::new());
         let engine = AiAnalysisEngine::new(provider, AggregatorConfig::default());
 
-        let result = engine.analyze(&test_request())
-            .await
-            .unwrap();
+        let result = engine.analyze(&test_request()).await.unwrap();
 
         assert_eq!(engine.provider_name(), "mock");
         assert_eq!(result.analysis_id, "A-001");
@@ -270,18 +266,13 @@ mod tests {
     async fn test_with_anomaly() {
         let provider = Arc::new(MockAdapter::new());
 
-        provider.set_response(
-            MockResponse::Success(vec![test_anomaly()])
-        );
+        provider.set_response(MockResponse::Success(vec![test_anomaly()]));
 
         // providerをcloneしてEngineに渡す
         let engine = AiAnalysisEngine::new(provider.clone(), AggregatorConfig::default());
 
         let mut request = test_request();
-        request.events = vec![
-            test_event("evt-001"),
-            test_event("evt-002"),
-        ];
+        request.events = vec![test_event("evt-001"), test_event("evt-002")];
 
         let result = engine.analyze(&request).await.unwrap();
 
@@ -300,9 +291,7 @@ mod tests {
     async fn test_invalid_evidence() {
         let provider = Arc::new(MockAdapter::new());
 
-        provider.set_response(
-            MockResponse::Success(vec![test_anomaly()])
-        );
+        provider.set_response(MockResponse::Success(vec![test_anomaly()]));
 
         let engine = AiAnalysisEngine::new(provider, AggregatorConfig::default());
 
@@ -311,10 +300,7 @@ mod tests {
 
         let result = engine.analyze(&request).await;
 
-        assert!(matches!(
-            result,
-            Err(AiError::Validation(_))
-        ));
+        assert!(matches!(result, Err(AiError::Validation(_))));
     }
 
     #[tokio::test]
@@ -324,24 +310,16 @@ mod tests {
         let mut anomaly = test_anomaly();
         anomaly.confidence_score = 1.5;
 
-        provider.set_response(
-            MockResponse::Success(vec![anomaly])
-        );
+        provider.set_response(MockResponse::Success(vec![anomaly]));
 
         let engine = AiAnalysisEngine::new(provider, AggregatorConfig::default());
 
         let mut request = test_request();
-        request.events = vec![
-            test_event("evt-001"),
-            test_event("evt-002"),
-        ];
+        request.events = vec![test_event("evt-001"), test_event("evt-002")];
 
         let result = engine.analyze(&request).await;
 
-        assert!(matches!(
-            result,
-            Err(AiError::Validation(_))
-        ));
+        assert!(matches!(result, Err(AiError::Validation(_))));
     }
 
     #[tokio::test]
@@ -353,10 +331,7 @@ mod tests {
 
         let result = engine.analyze(&test_request()).await;
 
-        assert!(matches!(
-            result,
-            Err(AiError::Timeout)
-        ));
+        assert!(matches!(result, Err(AiError::Timeout)));
     }
 
     #[tokio::test]
@@ -369,10 +344,7 @@ mod tests {
 
         let result = engine.analyze(&request).await;
 
-        assert!(matches!(
-            result,
-            Err(AiError::InvalidRequest(_))
-        ));
+        assert!(matches!(result, Err(AiError::InvalidRequest(_))));
     }
 
     #[tokio::test]
@@ -384,9 +356,7 @@ mod tests {
             description: "Monthly database backup".to_string(),
         };
 
-        engine.set_operational_context(&context)
-            .await
-            .unwrap();
+        engine.set_operational_context(&context).await.unwrap();
 
         let saved = provider.operational_context().unwrap();
 
@@ -460,9 +430,7 @@ mod tests {
         let mut anomaly = test_anomaly();
         anomaly.evidence_event_ids = vec!["evt-010".to_string()];
 
-        provider.set_response(
-            MockResponse::Success(vec![anomaly])
-        );
+        provider.set_response(MockResponse::Success(vec![anomaly]));
 
         let engine = AiAnalysisEngine::new(provider.clone(), AggregatorConfig::default());
 
@@ -480,10 +448,7 @@ mod tests {
 
         // evt-010 は元イベントに存在するが、
         // AIに提示した代表イベントIDには含まれない
-        assert!(matches!(
-            result,
-            Err(AiError::Validation(_))
-        ));
+        assert!(matches!(result, Err(AiError::Validation(_))));
 
         let provider_request = provider.last_request().unwrap();
 
@@ -497,8 +462,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires local Ollama server and qwen3:1.7b"]
     async fn test_ollama_integration() {
-        use std::time::Duration;
         use crate::ai::adapters::ollama::OllamaAdapter;
+        use std::time::Duration;
 
         let provider = Arc::new(
             OllamaAdapter::new(
@@ -514,17 +479,11 @@ mod tests {
         let engine = AiAnalysisEngine::new(provider, AggregatorConfig::default());
 
         let mut request = test_request();
-        request.events = vec![
-            test_event("evt-001"),
-            test_event("evt-002"),
-        ];
+        request.events = vec![test_event("evt-001"), test_event("evt-002")];
 
         let result = engine.analyze(&request).await.unwrap();
 
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&result).unwrap()
-        );
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
 
         assert_eq!(result.analysis_id, request.analysis_id);
     }
@@ -532,9 +491,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires local Ollama server and qwen3:1.7b"]
     async fn test_ollama_mass_rename() {
-        use std::time::Duration as StdDuration;
-        use chrono::Duration as ChronoDuration;
         use crate::ai::adapters::ollama::OllamaAdapter;
+        use chrono::Duration as ChronoDuration;
+        use std::time::Duration as StdDuration;
 
         const EVENTS_NUM: i64 = 20;
 
@@ -555,22 +514,17 @@ mod tests {
         let start = Utc::now();
 
         request.time_window_start = start;
-        request.time_window_end =
-            start + ChronoDuration::seconds(60);
+        request.time_window_end = start + ChronoDuration::seconds(60);
 
         request.events = (0..EVENTS_NUM)
             .map(|i| {
                 let mut event = test_event(&format!("evt-{i:03}"));
 
-                event.timestamp =
-                    start + ChronoDuration::milliseconds(i * 500);
+                event.timestamp = start + ChronoDuration::milliseconds(i * 500);
 
-                event.target_path =
-                    format!("/data/documents/file_{i:03}.txt");
+                event.target_path = format!("/data/documents/file_{i:03}.txt");
 
-                event.new_path = Some(
-                    format!("/data/documents/file_{i:03}.enc")
-                );
+                event.new_path = Some(format!("/data/documents/file_{i:03}.enc"));
 
                 event
             })
@@ -578,10 +532,7 @@ mod tests {
 
         let result = engine.analyze(&request).await.unwrap();
 
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&result).unwrap()
-        );
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
 
         assert_eq!(result.analysis_id, request.analysis_id);
     }

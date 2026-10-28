@@ -6,15 +6,14 @@
  */
 // teald/src/pam_server.rs
 
-use tokio::net::{UnixListener, UnixStream};
-use tokio::io::AsyncReadExt;
+use serde::Deserialize;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use serde::Deserialize;
+use tokio::io::AsyncReadExt;
+use tokio::net::{UnixListener, UnixStream};
 
-
-use teal_policy_engine::util::normalize_tty_name;
 use teal_policy_engine::ir::RegisteredSession;
+use teal_policy_engine::util::normalize_tty_name;
 
 use crate::state::app_state; // AppStateへのアクセス用（※プロジェクトの構造に合わせてパスは調整してください）
 
@@ -38,14 +37,20 @@ pub async fn start_pam_listener() {
     let listener = match UnixListener::bind(socket_path) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("[ERROR] teald-PAM: Failed to bind PAM socket at {}: {}", socket_path, e);
+            eprintln!(
+                "[ERROR] teald-PAM: Failed to bind PAM socket at {}: {}",
+                socket_path, e
+            );
             return;
         }
     };
 
     // 2. クライアント（pam_teal.so）が書き込めるように権限を設定
     if let Err(e) = fs::set_permissions(socket_path, fs::Permissions::from_mode(0o777)) {
-        eprintln!("[WARN] teald-PAM: Failed to set permissions on PAM socket: {}", e);
+        eprintln!(
+            "[WARN] teald-PAM: Failed to set permissions on PAM socket: {}",
+            e
+        );
     }
 
     println!("[INFO] teald: Listening for PAM events on {}", socket_path);
@@ -67,7 +72,7 @@ pub async fn start_pam_listener() {
 /// 1つのPAM接続ストリームからデータを読み込み、パースを試みる
 async fn handle_pam_connection(mut stream: UnixStream) {
     let mut buffer = String::new();
-    
+
     // ストリームから終端（EOF）まで生文字列を非同期で読み込む
     if stream.read_to_string(&mut buffer).await.is_err() {
         eprintln!("[WARN] teald-PAM: Failed to read from PAM stream.");
@@ -81,7 +86,10 @@ async fn handle_pam_connection(mut stream: UnixStream) {
             process_pam_event(event).await;
         }
         Err(e) => {
-            eprintln!("[WARN] teald-PAM: Failed to parse JSON from PAM: {}. Received: {}", e, buffer);
+            eprintln!(
+                "[WARN] teald-PAM: Failed to parse JSON from PAM: {}. Received: {}",
+                e, buffer
+            );
         }
     }
 }
@@ -98,16 +106,16 @@ async fn process_pam_event(event: PamEvent) {
                 source_ip: event.source_ip.clone(),
                 auth_method: event.auth_method.clone(),
             };
-            
+
             {
                 // ロックを取得し、HashMapを更新したら即座にスコープを抜けてロックを解放する
                 let mut st = app_state().lock().await;
                 st.slow.active_tty_sessions.insert(normalized_key, session);
-            }   // ロック解除！
+            } // ロック解除！
 
             println!(
-                "[teald-PAM] Registered session: user={} at {} (from: {}, auth: {})", 
-                event.user, 
+                "[teald-PAM] Registered session: user={} at {} (from: {}, auth: {})",
+                event.user,
                 event.session_tty,
                 event.source_ip.as_deref().unwrap_or("-"),
                 event.auth_method.as_deref().unwrap_or("-")
@@ -117,15 +125,18 @@ async fn process_pam_event(event: PamEvent) {
             {
                 let mut st = app_state().lock().await;
                 st.slow.active_tty_sessions.remove(&normalized_key);
-            }   // ここでロック解除！
-            
+            } // ここでロック解除！
+
             println!(
-                "[teald-PAM] Removed session for TTY {} (normalized)", 
+                "[teald-PAM] Removed session for TTY {} (normalized)",
                 event.session_tty
             );
         }
         _ => {
-            eprintln!("[WARN] teald-PAM: Unknown action '{}' in parsed event", event.action);
+            eprintln!(
+                "[WARN] teald-PAM: Unknown action '{}' in parsed event",
+                event.action
+            );
         }
     }
 }
@@ -175,7 +186,7 @@ mod tests {
         // 5. 消えていることを確認
         {
             let st = app_state().lock().await;
-            assert!(st.slow.active_tty_sessions.get("pts9").is_none());
+            assert!(!st.slow.active_tty_sessions.contains_key("pts9"));
         }
     }
 }

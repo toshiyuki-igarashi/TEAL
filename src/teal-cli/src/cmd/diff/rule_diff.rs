@@ -4,13 +4,13 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
+use anyhow::Result;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use anyhow::Result;
 
-use teal_policy_engine::ir::{CompiledBundle, CompiledPolicy, CompiledRule, ActionMatcher};
+use super::{BundleDiffReport, GlobalDiffItem, RuleDiffItem, SecurityImpact};
+use teal_policy_engine::ir::{ActionMatcher, CompiledBundle, CompiledPolicy, CompiledRule};
 use teal_policy_engine::types::{AuditLevel, Effect, SystemType};
-use super::{BundleDiffReport, RuleDiffItem, GlobalDiffItem, SecurityImpact};
 
 /// 2つの CompiledBundle を比較して PolicyDiffReport を構築
 pub fn compare_policies(
@@ -57,8 +57,13 @@ pub fn compare_global_configs(
             new_value: format!("{:?}", stage.system_type),
             impact,
             description: match impact {
-                SecurityImpact::Relaxed => "Workstation mode permits non-standard interactive TTY (e.g. GUI sessions).".to_string(),
-                SecurityImpact::Hardened => "Server mode restricts interactive TTY to pure CUI (pts/tty).".to_string(),
+                SecurityImpact::Relaxed => {
+                    "Workstation mode permits non-standard interactive TTY (e.g. GUI sessions)."
+                        .to_string()
+                }
+                SecurityImpact::Hardened => {
+                    "Server mode restricts interactive TTY to pure CUI (pts/tty).".to_string()
+                }
                 _ => String::new(),
             },
         });
@@ -67,10 +72,14 @@ pub fn compare_global_configs(
     // 2. default_effect (マッチしなかった場合のフォールバック)
     if current.default_effect != stage.default_effect {
         let impact = match (current.default_effect, stage.default_effect) {
-            (Effect::Deny, Effect::Allow) | (Effect::Deny, Effect::AuditOnly) | (Effect::NeedApproval, Effect::Allow) => {
+            (Effect::Deny, Effect::Allow)
+            | (Effect::Deny, Effect::AuditOnly)
+            | (Effect::NeedApproval, Effect::Allow) => {
                 SecurityImpact::Relaxed // 全体拒否から全体許可への重大な緩和
             }
-            (Effect::Allow, Effect::Deny) | (Effect::AuditOnly, Effect::Deny) | (Effect::Allow, Effect::NeedApproval) => {
+            (Effect::Allow, Effect::Deny)
+            | (Effect::AuditOnly, Effect::Deny)
+            | (Effect::Allow, Effect::NeedApproval) => {
                 SecurityImpact::Hardened // 全体許可から全体遮断への強化
             }
             _ => SecurityImpact::Neutral,
@@ -80,7 +89,10 @@ pub fn compare_global_configs(
             old_value: format!("{:?}", current.default_effect),
             new_value: format!("{:?}", stage.default_effect),
             impact,
-            description: format!("Fallback effect changed from {:?} to {:?}", current.default_effect, stage.default_effect),
+            description: format!(
+                "Fallback effect changed from {:?} to {:?}",
+                current.default_effect, stage.default_effect
+            ),
         });
     }
 
@@ -112,8 +124,12 @@ pub fn compare_global_configs(
         };
         diffs.push(GlobalDiffItem {
             key: "pre_approval_defaults.ttl_sec_max".to_string(),
-            old_value: curr_pad.ttl_sec_max.map_or("None (unlimited)".to_string(), |v| format!("{}s", v)),
-            new_value: stage_pad.ttl_sec_max.map_or("None (unlimited)".to_string(), |v| format!("{}s", v)),
+            old_value: curr_pad
+                .ttl_sec_max
+                .map_or("None (unlimited)".to_string(), |v| format!("{}s", v)),
+            new_value: stage_pad
+                .ttl_sec_max
+                .map_or("None (unlimited)".to_string(), |v| format!("{}s", v)),
             impact,
             description: "Hard limit cap for JIT pre-approval TTL changed.".to_string(),
         });
@@ -173,23 +189,15 @@ pub fn diff_rules(
     let mut items = Vec::new();
 
     // 1. current のルールを ID をキーにした HashMap に詰める
-    let mut current_map: HashMap<&str, &CompiledRule> = current_rules
-        .iter()
-        .map(|r| (r.id.as_str(), r))
-        .collect();
+    let mut current_map: HashMap<&str, &CompiledRule> =
+        current_rules.iter().map(|r| (r.id.as_str(), r)).collect();
 
     // 2. stage 側を走査（Added / Modified / Unchanged の判定）
     for stage_rule in stage_rules {
-        let stage_file = stage_rule
-            .source_file
-            .as_deref()
-            .unwrap_or("unknown.json");
+        let stage_file = stage_rule.source_file.as_deref().unwrap_or("unknown.json");
 
         if let Some(curr_rule) = current_map.remove(stage_rule.id.as_str()) {
-            let curr_file = curr_rule
-                .source_file
-                .as_deref()
-                .unwrap_or("unknown.json");
+            let curr_file = curr_rule.source_file.as_deref().unwrap_or("unknown.json");
 
             let is_same_file = curr_file == stage_file;
             let is_same_content = is_rule_equal(curr_rule, stage_rule);
@@ -358,8 +366,14 @@ pub fn inspect_rule_modification(
                 impacts.push(SecurityImpact::Hardened);
             }
 
-            let dropped_roles: HashSet<_> = c_mpa.approver_roles.difference(&s_mpa.approver_roles).collect();
-            let added_roles: HashSet<_> = s_mpa.approver_roles.difference(&c_mpa.approver_roles).collect();
+            let dropped_roles: HashSet<_> = c_mpa
+                .approver_roles
+                .difference(&s_mpa.approver_roles)
+                .collect();
+            let added_roles: HashSet<_> = s_mpa
+                .approver_roles
+                .difference(&c_mpa.approver_roles)
+                .collect();
             if !dropped_roles.is_empty() {
                 details.push(format!("mpa approver_roles removed: {:?}", dropped_roles));
                 impacts.push(SecurityImpact::Relaxed);
@@ -392,7 +406,8 @@ pub fn inspect_rule_modification(
             details.push("pre_approval disabled".to_string());
             impacts.push(SecurityImpact::Hardened);
         }
-    } else if stage.pre_approval.enabled && curr.pre_approval.ttl_sec != stage.pre_approval.ttl_sec {
+    } else if stage.pre_approval.enabled && curr.pre_approval.ttl_sec != stage.pre_approval.ttl_sec
+    {
         if stage.pre_approval.ttl_sec > curr.pre_approval.ttl_sec {
             details.push(format!(
                 "pre_approval ttl extended: {}s ➔ {}s",
@@ -409,7 +424,8 @@ pub fn inspect_rule_modification(
     }
 
     // 5) LoginContext (端末制約・IP等) の変更
-    if let (Some(c_ctx), Some(s_ctx)) = (&curr.subject.login_context, &stage.subject.login_context) {
+    if let (Some(c_ctx), Some(s_ctx)) = (&curr.subject.login_context, &stage.subject.login_context)
+    {
         if c_ctx.require_interactive_tty && !s_ctx.require_interactive_tty {
             details.push("login_context: require_interactive_tty relaxed to false".to_string());
             impacts.push(SecurityImpact::Relaxed);
@@ -425,13 +441,19 @@ pub fn inspect_rule_modification(
             (AuditLevel::Strict, AuditLevel::Standard)
             | (AuditLevel::Standard, AuditLevel::Silent)
             | (AuditLevel::Strict, AuditLevel::Silent) => {
-                details.push(format!("audit_level degraded: {:?} ➔ {:?}", curr.audit_level, stage.audit_level));
+                details.push(format!(
+                    "audit_level degraded: {:?} ➔ {:?}",
+                    curr.audit_level, stage.audit_level
+                ));
                 impacts.push(SecurityImpact::Relaxed);
             }
             (AuditLevel::Silent, AuditLevel::Standard)
             | (AuditLevel::Standard, AuditLevel::Strict)
             | (AuditLevel::Silent, AuditLevel::Strict) => {
-                details.push(format!("audit_level strengthened: {:?} ➔ {:?}", curr.audit_level, stage.audit_level));
+                details.push(format!(
+                    "audit_level strengthened: {:?} ➔ {:?}",
+                    curr.audit_level, stage.audit_level
+                ));
                 impacts.push(SecurityImpact::Hardened);
             }
             _ => {}
@@ -443,7 +465,10 @@ pub fn inspect_rule_modification(
         details.push("description updated".to_string());
     }
     if curr.out_reason != stage.out_reason {
-        details.push(format!("out_reason changed: \"{}\" ➔ \"{}\"", curr.out_reason, stage.out_reason));
+        details.push(format!(
+            "out_reason changed: \"{}\" ➔ \"{}\"",
+            curr.out_reason, stage.out_reason
+        ));
     }
 
     // 総合的な SecurityImpact の判定: 1つでも Relaxed があれば最悪ケースとして Relaxed
@@ -468,19 +493,30 @@ fn is_action_equal(a: &ActionMatcher, b: &ActionMatcher) -> bool {
     }
 }
 
-fn is_mpa_equal(a: &Option<teal_policy_engine::ir::MpaMatcher>, b: &Option<teal_policy_engine::ir::MpaMatcher>) -> bool {
+fn is_mpa_equal(
+    a: &Option<teal_policy_engine::ir::MpaMatcher>,
+    b: &Option<teal_policy_engine::ir::MpaMatcher>,
+) -> bool {
     match (a, b) {
         (None, None) => true,
-        (Some(ma), Some(mb)) => ma.threshold == mb.threshold && ma.approver_roles == mb.approver_roles,
+        (Some(ma), Some(mb)) => {
+            ma.threshold == mb.threshold && ma.approver_roles == mb.approver_roles
+        }
         _ => false,
     }
 }
 
-fn is_pre_approval_equal(a: &teal_policy_engine::ir::CompiledPreApproval, b: &teal_policy_engine::ir::CompiledPreApproval) -> bool {
+fn is_pre_approval_equal(
+    a: &teal_policy_engine::ir::CompiledPreApproval,
+    b: &teal_policy_engine::ir::CompiledPreApproval,
+) -> bool {
     a.enabled == b.enabled && a.ttl_sec == b.ttl_sec
 }
 
-fn is_subject_equal(a: &teal_policy_engine::ir::SubjectMatcher, b: &teal_policy_engine::ir::SubjectMatcher) -> bool {
+fn is_subject_equal(
+    a: &teal_policy_engine::ir::SubjectMatcher,
+    b: &teal_policy_engine::ir::SubjectMatcher,
+) -> bool {
     a.uid == b.uid
         && a.required_roles == b.required_roles
         && a.origin_applet == b.origin_applet
@@ -489,7 +525,10 @@ fn is_subject_equal(a: &teal_policy_engine::ir::SubjectMatcher, b: &teal_policy_
         && is_login_ctx_equal(&a.login_context, &b.login_context)
 }
 
-fn is_login_ctx_equal(a: &Option<teal_policy_engine::ir::LoginContextMatcher>, b: &Option<teal_policy_engine::ir::LoginContextMatcher>) -> bool {
+fn is_login_ctx_equal(
+    a: &Option<teal_policy_engine::ir::LoginContextMatcher>,
+    b: &Option<teal_policy_engine::ir::LoginContextMatcher>,
+) -> bool {
     match (a, b) {
         (None, None) => true,
         (Some(ca), Some(cb)) => {
@@ -502,15 +541,23 @@ fn is_login_ctx_equal(a: &Option<teal_policy_engine::ir::LoginContextMatcher>, b
     }
 }
 
-fn is_object_equal(a: &Option<teal_policy_engine::ir::ObjectMatcher>, b: &Option<teal_policy_engine::ir::ObjectMatcher>) -> bool {
+fn is_object_equal(
+    a: &Option<teal_policy_engine::ir::ObjectMatcher>,
+    b: &Option<teal_policy_engine::ir::ObjectMatcher>,
+) -> bool {
     match (a, b) {
         (None, None) => true,
-        (Some(oa), Some(ob)) => oa.kind == ob.kind && oa.path == ob.path && oa.new_path == ob.new_path,
+        (Some(oa), Some(ob)) => {
+            oa.kind == ob.kind && oa.path == ob.path && oa.new_path == ob.new_path
+        }
         _ => false,
     }
 }
 
-fn is_time_constraints_equal(a: &[teal_policy_engine::ir::TimeConstraintMatcher], b: &[teal_policy_engine::ir::TimeConstraintMatcher]) -> bool {
+fn is_time_constraints_equal(
+    a: &[teal_policy_engine::ir::TimeConstraintMatcher],
+    b: &[teal_policy_engine::ir::TimeConstraintMatcher],
+) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -520,4 +567,3 @@ fn is_time_constraints_equal(a: &[teal_policy_engine::ir::TimeConstraintMatcher]
             && ta.end_minutes_from_midnight == tb.end_minutes_from_midnight
     })
 }
-

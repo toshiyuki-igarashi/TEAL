@@ -5,14 +5,14 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
+pub mod compare;
 pub mod dataset;
 pub mod eval;
-pub mod compare;
 pub mod generate;
 
-use std::path::Path;
 use anyhow::Result;
 use clap::Subcommand;
+use std::path::Path;
 
 #[derive(Subcommand, Debug)]
 pub enum AiCommands {

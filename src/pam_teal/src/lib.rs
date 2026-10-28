@@ -3,14 +3,14 @@
 // TEAL PAM module (pam_teal)
 //
 // Copyright (c) 2026 Toshiyuki Igarashi
-use std::os::unix::net::UnixStream;
-use std::io::Write;
 use std::ffi::{CStr, CString};
+use std::io::Write;
 use std::os::raw::{c_char, c_int, c_void};
+use std::os::unix::net::UnixStream;
 
 // pam_sys から公式の型、Enum、生C関数インポート
+use pam_sys::raw::{pam_get_data, pam_get_item, pam_get_user, pam_set_data};
 use pam_sys::types::{PamHandle, PamItemType, PamReturnCode};
-use pam_sys::raw::{pam_set_data, pam_get_data, pam_get_item, pam_get_user};
 
 use serde::Serialize;
 
@@ -19,13 +19,13 @@ const TEAL_AUTH_METHOD_KEY: &[u8] = b"teal_auth_method\0";
 
 #[derive(Serialize)]
 struct PamLoginNotification {
-    action: String,       // "login" または "logout"
-    user: String,         // "toshiyuki"
-    session_tty: String,  // "pts4" など
-    
+    action: String,      // "login" または "logout"
+    user: String,        // "toshiyuki"
+    session_tty: String, // "pts4" など
+
     #[serde(skip_serializing_if = "Option::is_none")]
     source_ip: Option<String>,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     auth_method: Option<String>,
 }
@@ -46,14 +46,14 @@ extern "C" fn cleanup_string(_pamh: *mut PamHandle, data: *mut c_void, _pam_stat
 
 /// teald に UNIX Domain Socket 経由でイベント（JSON文字列）を送信する
 pub fn notify_teald(
-    action: &str, 
-    user: &str, 
-    tty: &str, 
+    action: &str,
+    user: &str,
+    tty: &str,
     source_ip: Option<String>,
     auth_method: Option<String>,
 ) {
     let socket_path = "/tmp/teal_pam.sock";
-    
+
     let notification = PamLoginNotification {
         action: action.to_string(),
         user: user.to_string(),
@@ -69,7 +69,7 @@ pub fn notify_teald(
             return;
         }
     };
-    
+
     if let Ok(mut stream) = UnixStream::connect(socket_path) {
         let mut payload = msg.into_bytes();
         payload.push(b'\n'); // デーモン側が1行バッファで読めるように改行を付与
@@ -81,7 +81,10 @@ pub fn notify_teald(
 unsafe fn get_session_info(pamh: *mut PamHandle) -> (String, String, Option<String>) {
     // 1. ユーザー名の取得 (pam_sys::raw::pam_get_user を使用)
     let mut user_ptr: *const c_char = std::ptr::null();
-    let user = if pam_get_user(pamh, &mut user_ptr, std::ptr::null()) == (PamReturnCode::SUCCESS as c_int) && !user_ptr.is_null() {
+    let user = if pam_get_user(pamh, &mut user_ptr, std::ptr::null())
+        == (PamReturnCode::SUCCESS as c_int)
+        && !user_ptr.is_null()
+    {
         CStr::from_ptr(user_ptr).to_string_lossy().into_owned()
     } else {
         "unknown".to_string()
@@ -89,17 +92,32 @@ unsafe fn get_session_info(pamh: *mut PamHandle) -> (String, String, Option<Stri
 
     // 2. TTYの取得 (PamItemType::TTY を使用)
     let mut tty_ptr: *const c_void = std::ptr::null();
-    let tty = if pam_get_item(pamh, PamItemType::TTY as c_int, &mut tty_ptr) == (PamReturnCode::SUCCESS as c_int) && !tty_ptr.is_null() {
-        CStr::from_ptr(tty_ptr as *const c_char).to_string_lossy().into_owned()
+    let tty = if pam_get_item(pamh, PamItemType::TTY as c_int, &mut tty_ptr)
+        == (PamReturnCode::SUCCESS as c_int)
+        && !tty_ptr.is_null()
+    {
+        CStr::from_ptr(tty_ptr as *const c_char)
+            .to_string_lossy()
+            .into_owned()
     } else {
         "unknown".to_string()
     };
 
     // 3. 接続元IP (RHOST) の取得
     let mut rhost_ptr: *const c_void = std::ptr::null();
-    let source_ip = if pam_get_item(pamh, PamItemType::RHOST as c_int, &mut rhost_ptr) == (PamReturnCode::SUCCESS as c_int) && !rhost_ptr.is_null() {
-        let s = CStr::from_ptr(rhost_ptr as *const c_char).to_string_lossy().trim().to_string();
-        if !s.is_empty() { Some(s) } else { None }
+    let source_ip = if pam_get_item(pamh, PamItemType::RHOST as c_int, &mut rhost_ptr)
+        == (PamReturnCode::SUCCESS as c_int)
+        && !rhost_ptr.is_null()
+    {
+        let s = CStr::from_ptr(rhost_ptr as *const c_char)
+            .to_string_lossy()
+            .trim()
+            .to_string();
+        if !s.is_empty() {
+            Some(s)
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -112,6 +130,13 @@ unsafe fn get_session_info(pamh: *mut PamHandle) -> (String, String, Option<Stri
 // =========================================================================
 
 /// --- 1. 認証フェーズのフック (パスワード等の認証時にsshdからlibpam経由で呼ばれる) ---
+/// 認証フェーズのフック (パスワード等の認証時にsshdからlibpam経由で呼ばれる)
+///
+/// # Safety
+///
+/// この関数は Linux-PAM フレームワーク（C-ABI）から直接呼び出されることを前提としています。
+/// 呼び出し元は、`pamh` が有効な PAM ハンドルを指す有効なポインタであること、
+/// および `_argv`（引数がある場合）が `_argc` 個の NULL 終端 C 文字列配列を指していることを保証する必要があります。
 #[no_mangle]
 pub unsafe extern "C" fn pam_sm_authenticate(
     pamh: *mut PamHandle,
@@ -136,6 +161,12 @@ pub unsafe extern "C" fn pam_sm_authenticate(
 }
 
 /// --- 2. セッション開始フェーズのフック ---
+/// セッション開始フェーズのフック
+///
+/// # Safety
+///
+/// この関数は Linux-PAM フレームワーク（C-ABI）から直接呼び出されることを前提としています。
+/// `pamh` は有効かつ初期化済みの PAM ハンドルポインタである必要があります。
 #[no_mangle]
 pub unsafe extern "C" fn pam_sm_open_session(
     pamh: *mut PamHandle,
@@ -145,13 +176,17 @@ pub unsafe extern "C" fn pam_sm_open_session(
 ) -> c_int {
     // ユーザー名、TTY、接続元IPを取得
     let (user, tty, source_ip) = get_session_info(pamh);
-    
+
     let mut auth_method: Option<String> = None;
 
     // ステップA: pam_get_data で auth フックが残したデータを検索
     let mut data_ptr: *const c_void = std::ptr::null();
-    let res = pam_get_data(pamh, TEAL_AUTH_METHOD_KEY.as_ptr() as *const c_char, &mut data_ptr);
-    
+    let res = pam_get_data(
+        pamh,
+        TEAL_AUTH_METHOD_KEY.as_ptr() as *const c_char,
+        &mut data_ptr,
+    );
+
     if res == (PamReturnCode::SUCCESS as c_int) && !data_ptr.is_null() {
         let c_str = CStr::from_ptr(data_ptr as *const c_char);
         auth_method = Some(c_str.to_string_lossy().into_owned());
@@ -168,16 +203,22 @@ pub unsafe extern "C" fn pam_sm_open_session(
     let log_ip = source_ip.as_deref().unwrap_or("127.0.0.1");
     let log_auth = auth_method.as_deref().unwrap_or("local/unspecified");
     println!(
-        "[TEAL PAM] User '{}' logged in on TTY '{}' from IP '{}' via '{}'", 
+        "[TEAL PAM] User '{}' logged in on TTY '{}' from IP '{}' via '{}'",
         user, tty, log_ip, log_auth
     );
 
     notify_teald("login", &user, &tty, source_ip, auth_method);
-    
+
     PamReturnCode::SUCCESS as c_int
 }
 
 /// --- 3. セッション終了フェーズのフック（ログアウト通知） ---
+/// セッション終了フェーズのフック（ログアウト通知）
+///
+/// # Safety
+///
+/// この関数は Linux-PAM フレームワーク（C-ABI）から直接呼び出されることを前提としています。
+/// `pamh` は有効かつ初期化済みの PAM ハンドルポインタである必要があります。
 #[no_mangle]
 pub unsafe extern "C" fn pam_sm_close_session(
     pamh: *mut PamHandle,
@@ -196,5 +237,33 @@ pub unsafe extern "C" fn pam_sm_close_session(
 }
 
 // 共有ライブラリの要件を満たすためのその他ダミーフック群
-#[no_mangle] pub unsafe extern "C" fn pam_sm_setcred(_pamh: *mut PamHandle, _f: c_int, _ac: c_int, _av: *const *const c_char) -> c_int { PamReturnCode::SUCCESS as c_int }
-#[no_mangle] pub unsafe extern "C" fn pam_sm_acct_mgmt(_pamh: *mut PamHandle, _f: c_int, _ac: c_int, _av: *const *const c_char) -> c_int { PamReturnCode::SUCCESS as c_int }
+
+/// PAM setcred フック（未使用のスタブ）
+///
+/// # Safety
+///
+/// Linux-PAM から呼び出される前提の C-ABI インターフェースです。
+#[no_mangle]
+pub unsafe extern "C" fn pam_sm_setcred(
+    _pamh: *mut PamHandle,
+    _f: c_int,
+    _ac: c_int,
+    _av: *const *const c_char,
+) -> c_int {
+    PamReturnCode::SUCCESS as c_int
+}
+
+/// PAM acct_mgmt フック（未使用のスタブ）
+///
+/// # Safety
+///
+/// Linux-PAM から呼び出される前提の C-ABI インターフェースです。
+#[no_mangle]
+pub unsafe extern "C" fn pam_sm_acct_mgmt(
+    _pamh: *mut PamHandle,
+    _f: c_int,
+    _ac: c_int,
+    _av: *const *const c_char,
+) -> c_int {
+    PamReturnCode::SUCCESS as c_int
+}

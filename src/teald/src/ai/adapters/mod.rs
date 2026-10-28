@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-pub mod ollama;
-pub mod mock;
-pub mod groq;
-pub mod gemini;
 pub mod common;
+pub mod gemini;
+pub mod groq;
+pub mod mock;
+pub mod ollama;

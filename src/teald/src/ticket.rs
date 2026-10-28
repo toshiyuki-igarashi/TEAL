@@ -17,24 +17,23 @@
 //!   Cargo.toml 例：
 //!   tokio = { version = "1", features = ["full"] }
 
+use anyhow::Result;
+use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
-use std::collections::HashMap;
-use anyhow::Result;
 use uuid::Uuid;
 
-use teal_policy_engine::types::RuleType;
+use teal_policy_engine::ir::{ActionMatcher, CompiledRule, PathMatcher};
+use teal_policy_engine::raw::{TEAL_TICKET_FLG_PARENT_MATCH, TEAL_TICKET_FLG_SILENT_IO};
 use teal_policy_engine::types::Action;
-use teal_policy_engine::raw::{TEAL_TICKET_FLG_SILENT_IO, TEAL_TICKET_FLG_PARENT_MATCH};
+use teal_policy_engine::types::RuleType;
 use teal_policy_engine::util::ktime_prefix;
-use teal_policy_engine::ir::{CompiledRule, ActionMatcher, PathMatcher};
 
 use crate::bundle::policy_snapshot;
 use crate::netlink::NlWriter;
-use crate::types::{PreApprovalDraft, PendingEntry, EntityId, ApprovedTicket, MpaState};
-use crate::types::TicketPayload;
 use crate::types::next_audit_ticket_id;
-
+use crate::types::TicketPayload;
+use crate::types::{ApprovedTicket, EntityId, MpaState, PendingEntry, PreApprovalDraft};
 
 // ==================================
 //  Ticketable 判定と Draft 生成
@@ -50,9 +49,11 @@ pub fn is_ticketable(rule: &CompiledRule) -> Result<(), String> {
     // 名無しルール (SubjectOnly または allow_nameless_ipc) の場合はチェックをスキップ
     if rule.rule_type != RuleType::SubjectOnly {
         // Standardルールの場合: object が存在し、かつ path が Exact であることを要求
-        let is_obj_exact = rule.object.as_ref()
+        let is_obj_exact = rule
+            .object
+            .as_ref()
             .and_then(|obj| obj.path.as_ref())
-            .map_or(false, |path| path.is_exact());
+            .is_some_and(|path| path.is_exact());
 
         if !is_obj_exact {
             return Err("object.path (exact) is required for standard TICKET".to_string());
@@ -67,7 +68,11 @@ pub fn is_ticketable(rule: &CompiledRule) -> Result<(), String> {
     }?;
 
     // 4. origin_program は必須かつ Exact であること
-    let is_origin_exact = rule.subject.origin_program.as_ref().map_or(false, |p| p.is_exact());
+    let is_origin_exact = rule
+        .subject
+        .origin_program
+        .as_ref()
+        .is_some_and(|p| p.is_exact());
     if !is_origin_exact {
         return Err("subject.origin_program (exact) is required for TICKET".to_string());
     }
@@ -75,7 +80,7 @@ pub fn is_ticketable(rule: &CompiledRule) -> Result<(), String> {
     // 5. スクリプト指定がある場合も Exact が必要
     if let Some(script) = &rule.subject.origin_script {
         if !script.is_exact() {
-             return Err("subject.origin_script (exact) is required if specified".to_string());
+            return Err("subject.origin_script (exact) is required if specified".to_string());
         }
     }
 
@@ -83,7 +88,11 @@ pub fn is_ticketable(rule: &CompiledRule) -> Result<(), String> {
 }
 
 /// rule_id を起点に Draft を作る。inodeの事前取得は行わない (Lazy Binding)
-pub async fn draft_from_rule(rule: &CompiledRule, uid: u32, epoch: u32) -> Result<PreApprovalDraft> {
+pub async fn draft_from_rule(
+    rule: &CompiledRule,
+    uid: u32,
+    epoch: u32,
+) -> Result<PreApprovalDraft> {
     let op_mask = rule.action_match.to_u32();
 
     let origin_program_id = EntityId::new((0, 0));
@@ -124,7 +133,6 @@ pub async fn draft_from_rule(rule: &CompiledRule, uid: u32, epoch: u32) -> Resul
     })
 }
 
-
 /// PendingEntry を起点に Draft を作る。
 pub async fn ticket_from_entry(rule: &CompiledRule, entry: &PendingEntry) -> ApprovedTicket {
     let op_mask = rule.action_match.to_u32();
@@ -136,16 +144,20 @@ pub async fn ticket_from_entry(rule: &CompiledRule, entry: &PendingEntry) -> App
     // 既存のID構築
     let origin_program_id = EntityId::new((entry.subject.prog_dev, entry.subject.prog_ino));
     let object_id = EntityId::new((entry.object.device_id, entry.object.inode));
-    
+
     // 移動先IDの構築 (両方の値が存在する場合のみ EntityId を生成)
-    let new_object_id = if let (Some(dev), Some(ino)) = (entry.object.new_device_id, entry.object.new_inode) {
-        Some(EntityId::new((dev, ino)))
-    } else {
-        None
-    };
+    let new_object_id =
+        if let (Some(dev), Some(ino)) = (entry.object.new_device_id, entry.object.new_inode) {
+            Some(EntityId::new((dev, ino)))
+        } else {
+            None
+        };
 
     let origin_script_id = if entry.subject.script_path.is_some() {
-        Some(EntityId::new((entry.subject.script_dev, entry.subject.script_ino)))
+        Some(EntityId::new((
+            entry.subject.script_dev,
+            entry.subject.script_ino,
+        )))
     } else {
         None
     };
@@ -205,8 +217,12 @@ pub async fn preload_silent_directory_tickets(nl_tx: &NlWriter) -> Result<()> {
         }
 
         // 3. object.path が存在し、Prefix バリアントであること
-        let Some(ref obj) = rule.object else { continue; };
-        let Some(PathMatcher::Prefix(ref prefix_path)) = obj.path else { continue; };
+        let Some(ref obj) = rule.object else {
+            continue;
+        };
+        let Some(PathMatcher::Prefix(ref prefix_path)) = obj.path else {
+            continue;
+        };
 
         // 4. ディレクトリが存在し、ディレクトリであることを確認して Dev/Inode を取得
         let Ok(meta) = fs::metadata(prefix_path) else {
@@ -269,7 +285,9 @@ pub async fn preload_silent_directory_tickets(nl_tx: &NlWriter) -> Result<()> {
         if let Err(e) = nl_tx.send_ticket_add(payload).await {
             eprintln!(
                 "{}[WARN] Failed to preload directory ticket for {}: {}",
-                ktime_prefix(), prefix_path.display(), e
+                ktime_prefix(),
+                prefix_path.display(),
+                e
             );
         } else {
             loaded_count += 1;

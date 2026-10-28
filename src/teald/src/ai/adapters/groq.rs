@@ -5,20 +5,16 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
-use std::sync::RwLock;
-use std::time::Duration;
-use async_trait::async_trait;
-use reqwest::{Client, header};
-use serde_json::{json, Value};
-use crate::ai::error::{
-    AiError,
-    ProviderErrorCode,
-    ProviderFailure,
-};
+use super::common;
+use crate::ai::error::{AiError, ProviderErrorCode, ProviderFailure};
 use crate::ai::provider::AiProvider;
 use crate::ai::types::{AiAnalysisResult, AiOperationalContext, AiProviderRequest};
 use crate::ai::validate_temperature;
-use super::common;
+use async_trait::async_trait;
+use reqwest::{header, Client};
+use serde_json::{json, Value};
+use std::sync::RwLock;
+use std::time::Duration;
 
 const API_URL: &str = "https://api.groq.com/openai/v1/chat/completions";
 
@@ -32,25 +28,46 @@ pub struct GroqAdapter {
 }
 
 impl GroqAdapter {
-    pub fn new(model: &str, timeout: Duration, system_prompt: String, temperature: Option<f32>) -> Result<Self, AiError> {
+    pub fn new(
+        model: &str,
+        timeout: Duration,
+        system_prompt: String,
+        temperature: Option<f32>,
+    ) -> Result<Self, AiError> {
         common::validate_model(model)?;
         validate_temperature(temperature).map_err(AiError::InvalidRequest)?;
-        if timeout.is_zero() { return Err(AiError::InvalidRequest("Groq timeout must be positive".into())); }
+        if timeout.is_zero() {
+            return Err(AiError::InvalidRequest(
+                "Groq timeout must be positive".into(),
+            ));
+        }
         let api_key = std::env::var("GROQ_API_KEY")
             .map_err(|_| AiError::Authentication("GROQ_API_KEY is not set".into()))?;
-        if api_key.trim().is_empty() { return Err(AiError::Authentication("GROQ_API_KEY is empty".into())); }
-        let client = Client::builder().timeout(timeout).build()
-            .map_err(|_| AiError::ProviderFailure(ProviderFailure {
+        if api_key.trim().is_empty() {
+            return Err(AiError::Authentication("GROQ_API_KEY is empty".into()));
+        }
+        let client = Client::builder().timeout(timeout).build().map_err(|_| {
+            AiError::ProviderFailure(ProviderFailure {
                 code: ProviderErrorCode::Other,
                 http_status: None,
-            }))?;
-        Ok(Self { client, model: model.into(), api_key, system_prompt, temperature, operational_context: RwLock::new(None) })
+            })
+        })?;
+        Ok(Self {
+            client,
+            model: model.into(),
+            api_key,
+            system_prompt,
+            temperature,
+            operational_context: RwLock::new(None),
+        })
     }
 }
 
 #[async_trait]
 impl AiProvider for GroqAdapter {
-    fn name(&self) -> &'static str { "groq" }
+    fn name(&self) -> &'static str {
+        "groq"
+    }
 
     async fn set_operational_context(&self, context: &AiOperationalContext) -> Result<(), AiError> {
         *self.operational_context.write().unwrap() = Some(context.clone());
@@ -76,7 +93,9 @@ impl AiProvider for GroqAdapter {
         if let Some(t) = self.temperature {
             payload["temperature"] = json!(t);
         }
-        let response = self.client.post(API_URL)
+        let response = self
+            .client
+            .post(API_URL)
             .header(header::AUTHORIZATION, format!("Bearer {}", self.api_key))
             .json(&payload)
             .send()
@@ -88,11 +107,12 @@ impl AiProvider for GroqAdapter {
         if !status.is_success() {
             return Err(common::status_error(status));
         }
-        let body: Value = response.json().await
-            .map_err(|_| AiError::ProviderFailure(ProviderFailure {
+        let body: Value = response.json().await.map_err(|_| {
+            AiError::ProviderFailure(ProviderFailure {
                 code: ProviderErrorCode::InvalidResponse,
                 http_status: Some(status.as_u16()),
-            }))?;
+            })
+        })?;
 
         let content = body
             .pointer("/choices/0/message/content")

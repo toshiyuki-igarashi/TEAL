@@ -78,9 +78,7 @@ impl From<&AuditLogEntry> for AiEvent {
         let ctx = &log.syscall_context;
 
         let (rule, ticket_id) = match &log.auth_info {
-            AuthInfo::SlowPath {
-                policy_eval, ..
-            } => (
+            AuthInfo::SlowPath { policy_eval, .. } => (
                 Some(policy_eval.rule_id.clone()),
                 policy_eval
                     .issued_ticket
@@ -88,9 +86,7 @@ impl From<&AuditLogEntry> for AiEvent {
                     .map(|t| t.ticket_id.clone()),
             ),
 
-            AuthInfo::FastPath {
-                ticket_context,
-            } => (
+            AuthInfo::FastPath { ticket_context } => (
                 Some(ticket_context.policy_rule.clone()),
                 Some(ticket_context.ticket_id.clone()),
             ),

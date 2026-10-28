@@ -9,24 +9,24 @@ use anyhow::Result;
 use neli::consts::genl::{Cmd, NlAttrType};
 use neli::consts::nl::{NlmF, NlmFFlags};
 use neli::consts::socket::NlFamily;
+use neli::err::SerError;
 use neli::genl::{Genlmsghdr, Nlattr};
-use neli::types::GenlBuffer;
+use neli::neli_enum;
 use neli::nl::{NlPayload, Nlmsghdr};
 use neli::socket::NlSocketHandle;
-use neli::neli_enum;
-use neli::err::SerError;
-use std::thread;
-use std::sync::{Arc, Mutex as StdMutex};
-use tokio::sync::oneshot;
-use std::time::Duration;
-use std::os::fd::AsRawFd;
-use tokio::sync::mpsc;
+use neli::types::GenlBuffer;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
+use std::thread;
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
-use teal_policy_engine::util::ktime_prefix;
 use crate::types::TicketPayload;
+use teal_policy_engine::util::ktime_prefix;
 
 // --- グローバル受信 PortID 管理 ---
 static RX_PORTID: AtomicU32 = AtomicU32::new(0);
@@ -47,7 +47,6 @@ fn parse_register_epoch(msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<u32> {
     }
     anyhow::bail!("REGISTER reply missing TEAL_ATTR_EPOCH")
 }
-
 
 pub fn set_rx_portid(portid: u32) {
     RX_PORTID.store(portid, Ordering::Relaxed);
@@ -110,14 +109,13 @@ pub enum TealAttr {
     // --- RENAME対応用 ---
     NewTargetDev = 29,
     NewTargetIno = 30,
-    NewTarget    = 31,
+    NewTarget = 31,
 
     // --- ログインコンテキスト（TTY）用 ---
-    SessionTty   = 32,
+    SessionTty = 32,
     Lane = 33,
 }
 impl NlAttrType for TealAttr {}
-
 
 // ==========================================
 // 2. ワーカーへ渡すためのメッセージ構造体
@@ -125,7 +123,7 @@ impl NlAttrType for TealAttr {}
 
 #[derive(Debug)]
 pub enum TealNetlinkMessage {
-    Req(TealReq),
+    Req(Box<TealReq>),
     Info(TealInfo),
 }
 
@@ -172,7 +170,7 @@ pub struct TealInfo {
     pub prog_ino: u64,
     pub target_dev: u32,
     pub target_ino: u64,
-    
+
     // RENAME 用の移動先情報
     pub new_target_dev: u32,
     pub new_target_ino: u64,
@@ -198,9 +196,13 @@ pub struct NlWriter {
 
 /// RAII: all cloned NlWriter instances share this transition gate.
 /// Dropping the guard resumes ticket dispatch.
-pub struct TicketTransitionGuard { gate: Arc<AtomicBool> }
+pub struct TicketTransitionGuard {
+    gate: Arc<AtomicBool>,
+}
 impl Drop for TicketTransitionGuard {
-    fn drop(&mut self) { self.gate.store(false, Ordering::Release); }
+    fn drop(&mut self) {
+        self.gate.store(false, Ordering::Release);
+    }
 }
 
 impl NlWriter {
@@ -209,38 +211,54 @@ impl NlWriter {
     }
 
     pub fn begin_ticket_transition(&self) -> Result<TicketTransitionGuard> {
-        self.ticket_transition.compare_exchange(
-            false, true, Ordering::AcqRel, Ordering::Acquire
-        ).map_err(|_| anyhow::anyhow!("ticket transition already active"))?;
-        Ok(TicketTransitionGuard { gate: Arc::clone(&self.ticket_transition) })
+        self.ticket_transition
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| anyhow::anyhow!("ticket transition already active"))?;
+        Ok(TicketTransitionGuard {
+            gate: Arc::clone(&self.ticket_transition),
+        })
     }
 
     pub async fn send_approve(&self, trans_id: u64) -> Result<()> {
-        self.tx.send(NetlinkSendRequest::Approve(trans_id)).await
+        self.tx
+            .send(NetlinkSendRequest::Approve(trans_id))
+            .await
             .map_err(|_| anyhow::anyhow!("Failed to queue APPROVE"))
     }
 
     pub async fn send_deny(&self, trans_id: u64) -> Result<()> {
-        self.tx.send(NetlinkSendRequest::Deny(trans_id)).await
+        self.tx
+            .send(NetlinkSendRequest::Deny(trans_id))
+            .await
             .map_err(|_| anyhow::anyhow!("Failed to queue DENY"))
     }
 
     pub async fn send_ticket_add(&self, ticket: TicketPayload) -> Result<()> {
-        anyhow::ensure!(!self.ticket_transition_active(), "TICKET_ADD suspended during epoch transition");
-        self.tx.send(NetlinkSendRequest::TicketAdd(ticket)).await
+        anyhow::ensure!(
+            !self.ticket_transition_active(),
+            "TICKET_ADD suspended during epoch transition"
+        );
+        self.tx
+            .send(NetlinkSendRequest::TicketAdd(ticket))
+            .await
             .map_err(|_| anyhow::anyhow!("Failed to queue TICKET_ADD"))
     }
 
     pub async fn send_mode_switch(&self, mode: u32) -> Result<()> {
-        self.tx.send(NetlinkSendRequest::ModeSwitch(mode)).await
+        self.tx
+            .send(NetlinkSendRequest::ModeSwitch(mode))
+            .await
             .map_err(|_| anyhow::anyhow!("Failed to queue MODE_SWITCH"))
     }
 
     pub async fn send_sync_epoch(&self, epoch: u32) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send(NetlinkSendRequest::SyncEpoch(epoch, tx)).await
+        self.tx
+            .send(NetlinkSendRequest::SyncEpoch(epoch, tx))
+            .await
             .map_err(|_| anyhow::anyhow!("Failed to queue SYNC_EPOCH"))?;
-        tokio::time::timeout(Duration::from_secs(5), rx).await
+        tokio::time::timeout(Duration::from_secs(5), rx)
+            .await
             .map_err(|_| anyhow::anyhow!("kernel POLICY_UPDATE ACK timed out"))?
             .map_err(|_| anyhow::anyhow!("Netlink sender stopped before ACK"))?
     }
@@ -252,7 +270,11 @@ impl NlWriter {
 
 /// カーネルの "teal_ctrl" ファミリーを解決し、非同期ソケットを準備する
 /// 戻り値: (送信用ハンドル, Decisionワーカー用Receiver, Auditワーカー用Receiver)
-pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessage>, mpsc::Receiver<TealNetlinkMessage>)> {
+pub async fn init_socket() -> Result<(
+    NlWriter,
+    mpsc::Receiver<TealNetlinkMessage>,
+    mpsc::Receiver<TealNetlinkMessage>,
+)> {
     // --- 1. ソケット接続とファミリー解決 ---
     let mut rx_sock = NlSocketHandle::connect(NlFamily::Generic, None, &[])?;
 
@@ -282,12 +304,19 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
     }
 
     let family_id = rx_sock.resolve_genl_family("teal_ctrl")?;
-    eprintln!("{}[INFO] Resolved teal_ctrl family ID: {}", ktime_prefix(), family_id);
+    eprintln!(
+        "{}[INFO] Resolved teal_ctrl family ID: {}",
+        ktime_prefix(),
+        family_id
+    );
 
     // --- 2. REGISTER 送信 (同期ハンドシェイク) ---
     let mut attrs = GenlBuffer::new();
     attrs.push(Nlattr::new(
-        false, false, TealAttr::Lane, 1u32.to_ne_bytes().as_ref()
+        false,
+        false,
+        TealAttr::Lane,
+        1u32.to_ne_bytes().as_ref(),
     )?);
 
     let genlhdr = Genlmsghdr::new(TealCmd::Register, 1, attrs);
@@ -303,7 +332,8 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
     // REGISTERには通常のGeneric Netlink応答とNLMSG_ERROR(ACK)の両方が届く。
     // 最初のrecv()だけを読み捨てず、必ずEpochを含む応答を待つ。
     let next_epoch = loop {
-        let reply = rx_sock.recv::<u16, Genlmsghdr<TealCmd, TealAttr>>()?
+        let reply = rx_sock
+            .recv::<u16, Genlmsghdr<TealCmd, TealAttr>>()?
             .ok_or_else(|| anyhow::anyhow!("REGISTER socket closed"))?;
         match reply.nl_payload {
             NlPayload::Payload(genl) if genl.cmd == TealCmd::Register => {
@@ -317,17 +347,22 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
     let rx_portid = rx_sock.pid().unwrap_or(0);
     anyhow::ensure!(rx_portid != 0, "Netlink PortID missing");
     set_rx_portid(rx_portid);
-    eprintln!("{}[INFO] REGISTER next kernel Epoch: {}", ktime_prefix(), next_epoch);
+    eprintln!(
+        "{}[INFO] REGISTER next kernel Epoch: {}",
+        ktime_prefix(),
+        next_epoch
+    );
 
     // RXソケットとは独立したTXソケット
-    let mut tx_sock = NlSocketHandle::connect(
-        NlFamily::Generic, None, &[]
-    )?;
+    let mut tx_sock = NlSocketHandle::connect(NlFamily::Generic, None, &[])?;
 
     // TX REGISTER
     let mut attrs = GenlBuffer::new();
     attrs.push(Nlattr::new(
-        false, false, TealAttr::Lane, 2u32.to_ne_bytes().as_ref()
+        false,
+        false,
+        TealAttr::Lane,
+        2u32.to_ne_bytes().as_ref(),
     )?);
 
     let genlhdr = Genlmsghdr::new(TealCmd::Register, 1, attrs);
@@ -408,12 +443,7 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
     let worker_sock = Arc::clone(&tx_sock);
 
     tokio::spawn(async move {
-        netlink_send_worker_loop(
-            send_rx,
-            worker_sock,
-            family_id,
-            ticket_transition,
-        ).await;
+        netlink_send_worker_loop(send_rx, worker_sock, family_id, ticket_transition).await;
     });
 
     // --- 4. 初期モード同期 ---
@@ -422,32 +452,38 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
     // --- 5. 受信スレッドの起動 ---
     let (tx_decision, rx_decision) = mpsc::channel(1024);
     let (tx_audit, rx_audit) = mpsc::channel(1024);
-    
+
     thread::spawn(move || {
-        eprintln!("{}[INFO] Netlink dedicated receiver thread started.", ktime_prefix());
-        enum Incoming { Request(TealReq), Information(TealInfo), Ignore, Error(String) }
+        eprintln!(
+            "{}[INFO] Netlink dedicated receiver thread started.",
+            ktime_prefix()
+        );
+        enum Incoming {
+            Request(Box<TealReq>),
+            Information(TealInfo),
+            Ignore,
+            Error(String),
+        }
         loop {
             // Parse the message while holding the socket guard: neli 0.6 may
             // return data borrowed from its internal receive buffer.
             let incoming = {
                 match rx_sock.recv::<u16, Genlmsghdr<TealCmd, TealAttr>>() {
-                    Ok(Some(msg)) => {
-                        match msg.nl_payload {
-                            NlPayload::Payload(genl) => match genl.cmd {
-                                TealCmd::Req => match parse_req_msg(&genl) {
-                                    Ok(req) => Incoming::Request(req),
-                                    Err(e) => Incoming::Error(format!("REQ parse failed: {e}")),
-                                },
-                                TealCmd::Info => match parse_info_msg(&genl) {
-                                    Ok(info) => Incoming::Information(info),
-                                    Err(e) => Incoming::Error(format!("INFO parse failed: {e}")),
-                                },
-                                _ => Incoming::Ignore,
+                    Ok(Some(msg)) => match msg.nl_payload {
+                        NlPayload::Payload(genl) => match genl.cmd {
+                            TealCmd::Req => match parse_req_msg(&genl) {
+                                Ok(req) => Incoming::Request(Box::new(req)),
+                                Err(e) => Incoming::Error(format!("REQ parse failed: {e}")),
                             },
-                            NlPayload::Ack(_) => Incoming::Ignore,
+                            TealCmd::Info => match parse_info_msg(&genl) {
+                                Ok(info) => Incoming::Information(info),
+                                Err(e) => Incoming::Error(format!("INFO parse failed: {e}")),
+                            },
                             _ => Incoming::Ignore,
-                        }
-                    }
+                        },
+                        NlPayload::Ack(_) => Incoming::Ignore,
+                        _ => Incoming::Ignore,
+                    },
                     Ok(None) => Incoming::Ignore,
                     Err(e) => Incoming::Error(format!("{:?}", e)),
                 }
@@ -466,8 +502,11 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
                 }
                 Incoming::Ignore => {}
                 Incoming::Error(err_str) => {
-                    if err_str.contains("EAGAIN") || err_str.contains("WouldBlock") ||
-                       err_str.contains("timed out") || err_str.contains("Resource temporarily unavailable") {
+                    if err_str.contains("EAGAIN")
+                        || err_str.contains("WouldBlock")
+                        || err_str.contains("timed out")
+                        || err_str.contains("Resource temporarily unavailable")
+                    {
                         continue;
                     }
                     eprintln!("{}[ERROR-NETLINK] recv: {}", ktime_prefix(), err_str);
@@ -480,47 +519,104 @@ pub async fn init_socket() -> Result<(NlWriter, mpsc::Receiver<TealNetlinkMessag
     Ok((nl_tx, rx_decision, rx_audit))
 }
 
-
 // ==========================================
 // 4. TLV パースヘルパー (C -> Rust)
 // ==========================================
 
 fn parse_req_msg(genl_msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<TealReq> {
     let mut req = TealReq::default();
-    
+
     for attr in genl_msg.get_attr_handle().iter() {
         match attr.nla_type.nla_type {
-            TealAttr::TransId   => req.trans_id = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::Pid       => req.pid = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::Ppid      => req.ppid = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::SessionId => req.session_id = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::Uid       => req.uid = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::Gid       => req.gid = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::ProgDev   => req.prog_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::ProgIno   => req.prog_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::TargetDev => req.target_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::TargetIno => req.target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::ScriptDev => req.script_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::ScriptIno => req.script_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::Flags     => req.flags = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            
-            // 文字列のパース（終端のNUL文字をトリムしてString化）
-            TealAttr::Program   => req.program = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
-            TealAttr::Action    => req.action = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
-            TealAttr::Target    => req.target = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
-            TealAttr::Script    => req.script = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
-            TealAttr::Applet    => req.applet = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
-            TealAttr::LsmLabel  => req.lsm_label = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
-            TealAttr::ArgsHead  => req.args_head = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
+            TealAttr::TransId => {
+                req.trans_id = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::Pid => req.pid = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::Ppid => req.ppid = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::SessionId => {
+                req.session_id = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::Uid => req.uid = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::Gid => req.gid = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::ProgDev => {
+                req.prog_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::ProgIno => {
+                req.prog_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::TargetDev => {
+                req.target_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::TargetIno => {
+                req.target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::ScriptDev => {
+                req.script_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::ScriptIno => {
+                req.script_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::Flags => {
+                req.flags = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
 
-            TealAttr::NewTargetDev => req.new_target_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::NewTargetIno => req.new_target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::NewTarget    => req.new_target    = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
+            // 文字列のパース（終端のNUL文字をトリムしてString化）
+            TealAttr::Program => {
+                req.program = String::from_utf8_lossy(attr.nla_payload.as_ref())
+                    .trim_end_matches('\0')
+                    .to_string()
+            }
+            TealAttr::Action => {
+                req.action = String::from_utf8_lossy(attr.nla_payload.as_ref())
+                    .trim_end_matches('\0')
+                    .to_string()
+            }
+            TealAttr::Target => {
+                req.target = String::from_utf8_lossy(attr.nla_payload.as_ref())
+                    .trim_end_matches('\0')
+                    .to_string()
+            }
+            TealAttr::Script => {
+                req.script = String::from_utf8_lossy(attr.nla_payload.as_ref())
+                    .trim_end_matches('\0')
+                    .to_string()
+            }
+            TealAttr::Applet => {
+                req.applet = String::from_utf8_lossy(attr.nla_payload.as_ref())
+                    .trim_end_matches('\0')
+                    .to_string()
+            }
+            TealAttr::LsmLabel => {
+                req.lsm_label = String::from_utf8_lossy(attr.nla_payload.as_ref())
+                    .trim_end_matches('\0')
+                    .to_string()
+            }
+            TealAttr::ArgsHead => {
+                req.args_head = String::from_utf8_lossy(attr.nla_payload.as_ref())
+                    .trim_end_matches('\0')
+                    .to_string()
+            }
+
+            TealAttr::NewTargetDev => {
+                req.new_target_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::NewTargetIno => {
+                req.new_target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::NewTarget => {
+                req.new_target = String::from_utf8_lossy(attr.nla_payload.as_ref())
+                    .trim_end_matches('\0')
+                    .to_string()
+            }
 
             // SessionTty の文字列パース
-            TealAttr::SessionTty   => req.session_tty    = String::from_utf8_lossy(attr.nla_payload.as_ref()).trim_end_matches('\0').to_string(),
+            TealAttr::SessionTty => {
+                req.session_tty = String::from_utf8_lossy(attr.nla_payload.as_ref())
+                    .trim_end_matches('\0')
+                    .to_string()
+            }
 
-            _ => {} 
+            _ => {}
         }
     }
     Ok(req)
@@ -528,19 +624,35 @@ fn parse_req_msg(genl_msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<TealReq> {
 
 fn parse_info_msg(genl_msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<TealInfo> {
     let mut info = TealInfo::default();
-    
+
     for attr in genl_msg.get_attr_handle().iter() {
         match attr.nla_type.nla_type {
-            TealAttr::InfoEvt     => info.is_expired = attr.nla_payload.as_ref()[0] == 1,
-            TealAttr::TicketId    => info.ticket_id = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::Uid         => info.uid = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::UsesLeft    => info.uses_left = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::ProgDev     => info.prog_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::ProgIno     => info.prog_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::TargetDev   => info.target_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::TargetIno   => info.target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::NewTargetDev => info.new_target_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
-            TealAttr::NewTargetIno => info.new_target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::InfoEvt => info.is_expired = attr.nla_payload.as_ref()[0] == 1,
+            TealAttr::TicketId => {
+                info.ticket_id = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::Uid => info.uid = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?),
+            TealAttr::UsesLeft => {
+                info.uses_left = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::ProgDev => {
+                info.prog_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::ProgIno => {
+                info.prog_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::TargetDev => {
+                info.target_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::TargetIno => {
+                info.target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::NewTargetDev => {
+                info.new_target_dev = u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
+            TealAttr::NewTargetIno => {
+                info.new_target_ino = u64::from_ne_bytes(attr.nla_payload.as_ref().try_into()?)
+            }
 
             _ => {}
         }
@@ -550,24 +662,13 @@ fn parse_info_msg(genl_msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<TealInfo> 
 
 // Wait for the ACK corresponding to a specific POLICY_UPDATE sequence.
 // Ignore replies belonging to earlier TX commands.
-fn wait_policy_update_ack(
-    sock: &NlSocketHandle,
-    seq: u32,
-    epoch: u32,
-) -> Result<()> {
+fn wait_policy_update_ack(sock: &NlSocketHandle, seq: u32, epoch: u32) -> Result<()> {
     // SO_RCVTIMEO is already configured for the TX socket.
     let fd = sock.as_raw_fd();
     let mut buf = [0u8; 65536];
 
     loop {
-        let n = unsafe {
-            libc::recv(
-                fd,
-                buf.as_mut_ptr() as *mut libc::c_void,
-                buf.len(),
-                0,
-            )
-        };
+        let n = unsafe { libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0) };
 
         if n < 0 {
             let err = std::io::Error::last_os_error();
@@ -607,9 +708,7 @@ fn wait_policy_update_ack(
                         anyhow::bail!("Short Netlink ACK");
                     }
 
-                    let error = i32::from_ne_bytes(
-                        header[16..20].try_into()?
-                    );
+                    let error = i32::from_ne_bytes(header[16..20].try_into()?);
 
                     if error == 0 {
                         eprintln!(
@@ -621,10 +720,7 @@ fn wait_policy_update_ack(
                         return Ok(());
                     }
 
-                    anyhow::bail!(
-                        "POLICY_UPDATE rejected by kernel: errno={}",
-                        error
-                    );
+                    anyhow::bail!("POLICY_UPDATE rejected by kernel: errno={}", error);
                 }
             }
 
@@ -645,7 +741,10 @@ pub async fn netlink_send_worker_loop(
     family_id: u16,
     ticket_transition: Arc<AtomicBool>,
 ) {
-    eprintln!("{}[INFO] Netlink Send Worker started on dedicated TX socket.", ktime_prefix());
+    eprintln!(
+        "{}[INFO] Netlink Send Worker started on dedicated TX socket.",
+        ktime_prefix()
+    );
     while let Some(req) = rx.recv().await {
         match req {
             NetlinkSendRequest::SyncEpoch(epoch, response) => {
@@ -678,19 +777,30 @@ pub async fn netlink_send_worker_loop(
                 // Dispatch-time check also covers requests queued before suspension.
                 if let NetlinkSendRequest::TicketAdd(ref ticket) = other {
                     if ticket_transition.load(Ordering::Acquire) {
-                        eprintln!("{}[INFO] dropping TICKET_ADD during epoch transition", ktime_prefix());
+                        eprintln!(
+                            "{}[INFO] dropping TICKET_ADD during epoch transition",
+                            ktime_prefix()
+                        );
                         continue;
                     }
                     if ticket.epoch != crate::bundle::policy_snapshot().epoch {
-                        eprintln!("{}[WARN] dropping stale TICKET_ADD epoch={}", ktime_prefix(), ticket.epoch);
+                        eprintln!(
+                            "{}[WARN] dropping stale TICKET_ADD epoch={}",
+                            ktime_prefix(),
+                            ticket.epoch
+                        );
                         continue;
                     }
                 }
                 let packet = match other {
                     NetlinkSendRequest::Approve(id) => build_approve(family_id, id),
                     NetlinkSendRequest::Deny(id) => build_deny(family_id, id),
-                    NetlinkSendRequest::TicketAdd(ref ticket) => build_ticket_add(family_id, ticket),
-                    NetlinkSendRequest::ModeSwitch(mode) => build_mode_switch_packet(family_id, mode),
+                    NetlinkSendRequest::TicketAdd(ref ticket) => {
+                        build_ticket_add(family_id, ticket)
+                    }
+                    NetlinkSendRequest::ModeSwitch(mode) => {
+                        build_mode_switch_packet(family_id, mode)
+                    }
                     NetlinkSendRequest::SyncEpoch(..) => unreachable!(),
                 };
                 match packet {
@@ -714,11 +824,7 @@ pub async fn netlink_send_worker_loop(
                     }
 
                     Err(e) => {
-                        eprintln!(
-                            "{}[ERROR] Netlink packet build: {}",
-                            ktime_prefix(),
-                            e
-                        );
+                        eprintln!("{}[ERROR] Netlink packet build: {}", ktime_prefix(), e);
                     }
                 }
             }
@@ -731,70 +837,238 @@ fn is_fatal_netlink_error(e: &SerError) -> bool {
     match e {
         SerError::Wrapped(boxed_err) => {
             let err_str = format!("{:?}", boxed_err);
-            err_str.contains("BrokenPipe") || err_str.contains("ConnectionReset") || err_str.contains("NotConnected")
-        },
+            err_str.contains("BrokenPipe")
+                || err_str.contains("ConnectionReset")
+                || err_str.contains("NotConnected")
+        }
         _ => false,
     }
 }
 
 // --- [構築ロジック] 各パケットのビルド ---
-fn build_approve(family_id: u16, trans_id: u64) -> Result<Nlmsghdr<u16, Genlmsghdr<TealCmd, TealAttr>>> {
+fn build_approve(
+    family_id: u16,
+    trans_id: u64,
+) -> Result<Nlmsghdr<u16, Genlmsghdr<TealCmd, TealAttr>>> {
     let mut attrs = GenlBuffer::new();
-    attrs.push(Nlattr::new(false, false, TealAttr::TransId, trans_id.to_ne_bytes().as_ref())?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::TransId,
+        trans_id.to_ne_bytes().as_ref(),
+    )?);
     let genlhdr = Genlmsghdr::new(TealCmd::Approve, 1, attrs);
-    Ok(Nlmsghdr::new(None, family_id, NlmFFlags::new(&[NlmF::Request]), None, None, NlPayload::Payload(genlhdr)))
+    Ok(Nlmsghdr::new(
+        None,
+        family_id,
+        NlmFFlags::new(&[NlmF::Request]),
+        None,
+        None,
+        NlPayload::Payload(genlhdr),
+    ))
 }
 
-fn build_deny(family_id: u16, trans_id: u64) -> Result<Nlmsghdr<u16, Genlmsghdr<TealCmd, TealAttr>>> {
+fn build_deny(
+    family_id: u16,
+    trans_id: u64,
+) -> Result<Nlmsghdr<u16, Genlmsghdr<TealCmd, TealAttr>>> {
     let mut attrs = GenlBuffer::new();
-    attrs.push(Nlattr::new(false, false, TealAttr::TransId, trans_id.to_ne_bytes().as_ref())?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::TransId,
+        trans_id.to_ne_bytes().as_ref(),
+    )?);
     let genlhdr = Genlmsghdr::new(TealCmd::Deny, 1, attrs);
-    Ok(Nlmsghdr::new(None, family_id, NlmFFlags::new(&[NlmF::Request]), None, None, NlPayload::Payload(genlhdr)))
+    Ok(Nlmsghdr::new(
+        None,
+        family_id,
+        NlmFFlags::new(&[NlmF::Request]),
+        None,
+        None,
+        NlPayload::Payload(genlhdr),
+    ))
 }
 
-fn build_ticket_add(family_id: u16, ticket: &TicketPayload) -> Result<Nlmsghdr<u16, Genlmsghdr<TealCmd, TealAttr>>> {
-    let mut expires_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-    expires_at = if ticket.expires_in_sec < u64::MAX { expires_at + ticket.expires_in_sec } else { u64::MAX };
-    let numeric_ticket_id: u64 = ticket.ticket_id.trim_start_matches("T-").parse().unwrap_or(0);
+fn build_ticket_add(
+    family_id: u16,
+    ticket: &TicketPayload,
+) -> Result<Nlmsghdr<u16, Genlmsghdr<TealCmd, TealAttr>>> {
+    let mut expires_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    expires_at = if ticket.expires_in_sec < u64::MAX {
+        expires_at + ticket.expires_in_sec
+    } else {
+        u64::MAX
+    };
+    let numeric_ticket_id: u64 = ticket
+        .ticket_id
+        .trim_start_matches("T-")
+        .parse()
+        .unwrap_or(0);
 
     let mut attrs = GenlBuffer::new();
-    attrs.push(Nlattr::new(false, false, TealAttr::Uid, ticket.uid.to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::Op, ticket.op.to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::ProgDev, (ticket.prog_dev as u32).to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::ProgIno, ticket.prog_ino.to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::ScriptDev, (ticket.script_dev as u32).to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::ScriptIno, ticket.script_ino.to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::TargetDev, (ticket.target_dev as u32).to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::TargetIno, ticket.target_ino.to_ne_bytes().as_ref())?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::Uid,
+        ticket.uid.to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::Op,
+        ticket.op.to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::ProgDev,
+        (ticket.prog_dev as u32).to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::ProgIno,
+        ticket.prog_ino.to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::ScriptDev,
+        (ticket.script_dev as u32).to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::ScriptIno,
+        ticket.script_ino.to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::TargetDev,
+        (ticket.target_dev as u32).to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::TargetIno,
+        ticket.target_ino.to_ne_bytes().as_ref(),
+    )?);
 
     // RENAME 用の移動先情報 (Dev/Ino)
-    attrs.push(Nlattr::new(false, false, TealAttr::NewTargetDev, (ticket.new_target_dev as u32).to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::NewTargetIno, ticket.new_target_ino.to_ne_bytes().as_ref())?);
-    
-    attrs.push(Nlattr::new(false, false, TealAttr::ExpiresAt, expires_at.to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::Flags, ticket.flags.to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::UsesLeft, ticket.uses_left.to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::TicketId, numeric_ticket_id.to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::Epoch, ticket.epoch.to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::AuditFlg, ticket.audit_flags.to_ne_bytes().as_ref())?);
-    attrs.push(Nlattr::new(false, false, TealAttr::AppletHash, ticket.applet_hash.to_ne_bytes().as_ref())?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::NewTargetDev,
+        (ticket.new_target_dev as u32).to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::NewTargetIno,
+        ticket.new_target_ino.to_ne_bytes().as_ref(),
+    )?);
+
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::ExpiresAt,
+        expires_at.to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::Flags,
+        ticket.flags.to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::UsesLeft,
+        ticket.uses_left.to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::TicketId,
+        numeric_ticket_id.to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::Epoch,
+        ticket.epoch.to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::AuditFlg,
+        ticket.audit_flags.to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::AppletHash,
+        ticket.applet_hash.to_ne_bytes().as_ref(),
+    )?);
 
     let genlhdr = Genlmsghdr::new(TealCmd::TicketAdd, 1, attrs);
-    Ok(Nlmsghdr::new(None, family_id, NlmFFlags::new(&[NlmF::Request]), None, None, NlPayload::Payload(genlhdr)))
+    Ok(Nlmsghdr::new(
+        None,
+        family_id,
+        NlmFFlags::new(&[NlmF::Request]),
+        None,
+        None,
+        NlPayload::Payload(genlhdr),
+    ))
 }
 
-fn build_mode_switch_packet(family_id: u16, mode: u32) -> Result<Nlmsghdr<u16, Genlmsghdr<TealCmd, TealAttr>>> {
+fn build_mode_switch_packet(
+    family_id: u16,
+    mode: u32,
+) -> Result<Nlmsghdr<u16, Genlmsghdr<TealCmd, TealAttr>>> {
     let mut attrs = GenlBuffer::new();
-    attrs.push(Nlattr::new(false, false, TealAttr::Flags, mode.to_ne_bytes().as_ref())?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::Flags,
+        mode.to_ne_bytes().as_ref(),
+    )?);
     let genlhdr = Genlmsghdr::new(TealCmd::ModeSwitch, 1, attrs);
-    Ok(Nlmsghdr::new(None, family_id, NlmFFlags::new(&[NlmF::Request]), None, None, NlPayload::Payload(genlhdr)))
+    Ok(Nlmsghdr::new(
+        None,
+        family_id,
+        NlmFFlags::new(&[NlmF::Request]),
+        None,
+        None,
+        NlPayload::Payload(genlhdr),
+    ))
 }
 
-fn build_sync_epoch_packet(family_id: u16, epoch: u32) -> Result<Nlmsghdr<u16, Genlmsghdr<TealCmd, TealAttr>>> {
+fn build_sync_epoch_packet(
+    family_id: u16,
+    epoch: u32,
+) -> Result<Nlmsghdr<u16, Genlmsghdr<TealCmd, TealAttr>>> {
     let mut attrs = GenlBuffer::new();
-    attrs.push(Nlattr::new(false, false, TealAttr::Epoch, epoch.to_ne_bytes().as_ref())?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::Epoch,
+        epoch.to_ne_bytes().as_ref(),
+    )?);
     let genlhdr = Genlmsghdr::new(TealCmd::PolicyUpdate, 1, attrs);
-    Ok(Nlmsghdr::new(None, family_id, NlmFFlags::new(&[NlmF::Request, NlmF::Ack]), None, None, NlPayload::Payload(genlhdr)))
+    Ok(Nlmsghdr::new(
+        None,
+        family_id,
+        NlmFFlags::new(&[NlmF::Request, NlmF::Ack]),
+        None,
+        None,
+        NlPayload::Payload(genlhdr),
+    ))
 }
 
 /// Generic Netlink のプロトコル番号 ("16")
@@ -816,7 +1090,7 @@ pub fn get_netlink_socket_metrics() -> (f64, u64) {
 
     let reader = BufReader::new(file);
 
-    for line in reader.lines().flatten() {
+    for line in reader.lines().map_while(Result::ok) {
         let fields: Vec<&str> = line.split_whitespace().collect();
         // フォーマット: sk Eth Pid Groups Rmem Wmem Dump Locks Drops Inode
         //               0  1   2   3      4    5    6    7     8     9

@@ -97,12 +97,15 @@ fn parse_args() -> Config {
 
         match a.as_str() {
             "--loops" => {
-                let v = it.next().unwrap_or_else(|| usage_and_exit(Some("missing value for --loops")));
+                let v = it
+                    .next()
+                    .unwrap_or_else(|| usage_and_exit(Some("missing value for --loops")));
                 loops = Some(parse_u64(&v, "loops"));
             }
             "--repeat" => {
-                let v =
-                    it.next().unwrap_or_else(|| usage_and_exit(Some("missing value for --repeat")));
+                let v = it
+                    .next()
+                    .unwrap_or_else(|| usage_and_exit(Some("missing value for --repeat")));
                 repeat = parse_u32(&v, "repeat");
                 if repeat == 0 {
                     usage_and_exit(Some("--repeat must be >= 1"));
@@ -111,7 +114,9 @@ fn parse_args() -> Config {
             "--no-warmup" => warmup = false,
             "--raw" => raw = true,
             "--path" => {
-                let v = it.next().unwrap_or_else(|| usage_and_exit(Some("missing value for --path")));
+                let v = it
+                    .next()
+                    .unwrap_or_else(|| usage_and_exit(Some("missing value for --path")));
                 path = Some(v);
             }
             "--" => after_double_dash = true,
@@ -126,7 +131,8 @@ fn parse_args() -> Config {
 
     let kind = match sub.as_str() {
         "exec" => {
-            let cmd = cmd.unwrap_or_else(|| usage_and_exit(Some("exec requires `-- <cmd> [args...]`")));
+            let cmd =
+                cmd.unwrap_or_else(|| usage_and_exit(Some("exec requires `-- <cmd> [args...]`")));
             TestKind::Exec { cmd, cmd_args }
         }
         "open" => {
@@ -279,4 +285,3 @@ fn main() {
         }
     }
 }
-

@@ -6,7 +6,6 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
-
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -50,7 +49,11 @@ fn matches_filters(event: &AiEvent, args: &CreateArgs) -> bool {
     if args.to.is_some_and(|to| event.timestamp >= to) {
         return false;
     }
-    if args.action.as_deref().is_some_and(|a| !event.action.eq_ignore_ascii_case(a)) {
+    if args
+        .action
+        .as_deref()
+        .is_some_and(|a| !event.action.eq_ignore_ascii_case(a))
+    {
         return false;
     }
     if args.binary.as_deref().is_some_and(|b| event.binary != b) {
@@ -76,7 +79,12 @@ pub fn create(audit_file: &Path, args: CreateArgs) -> Result<()> {
         .create_new(true)
         .mode(0o600)
         .open(&args.out)
-        .with_context(|| format!("Cannot create dataset (must not exist): {}", args.out.display()))?;
+        .with_context(|| {
+            format!(
+                "Cannot create dataset (must not exist): {}",
+                args.out.display()
+            )
+        })?;
 
     let result = (|| -> Result<(usize, usize, usize)> {
         let mut writer = BufWriter::new(output);
@@ -108,11 +116,9 @@ pub fn create(audit_file: &Path, args: CreateArgs) -> Result<()> {
 
             if let Some(event) = collect_ai_event(&entry) {
                 if matches_filters(&event, &args) {
-                    serde_json::to_writer(&mut writer, &event)
-                        .with_context(|| format!(
-                            "Failed to serialize event at line {}",
-                            index + 1
-                        ))?;
+                    serde_json::to_writer(&mut writer, &event).with_context(|| {
+                        format!("Failed to serialize event at line {}", index + 1)
+                    })?;
                     writer.write_all(b"\n")?;
                     count += 1;
                 }
@@ -152,7 +158,8 @@ mod tests {
         AiEvent {
             event_id: "evt-001".into(),
             timestamp: DateTime::parse_from_rfc3339("2026-10-20T12:00:00Z")
-                .unwrap().with_timezone(&Utc),
+                .unwrap()
+                .with_timezone(&Utc),
             log_type: teald::evidence::schema::LogType::AccessAllowed,
             epoch: 1,
             user: "root".into(),
@@ -182,16 +189,25 @@ mod tests {
             out: PathBuf::from("unused.jsonl"),
         };
         assert!(matches_filters(&event, &args));
-        let end_exclusive = CreateArgs { to: Some(event.timestamp), ..args };
+        let end_exclusive = CreateArgs {
+            to: Some(event.timestamp),
+            ..args
+        };
         assert!(!matches_filters(&event, &end_exclusive));
     }
 
     #[test]
     fn invalid_time_window_is_rejected() {
         let t = DateTime::parse_from_rfc3339("2026-10-20T00:00:00Z")
-            .unwrap().with_timezone(&Utc);
-        let args = CreateArgs { from: Some(t), to: Some(t), action: None,
-            binary: None, out: PathBuf::from("unused.jsonl") };
+            .unwrap()
+            .with_timezone(&Utc);
+        let args = CreateArgs {
+            from: Some(t),
+            to: Some(t),
+            action: None,
+            binary: None,
+            out: PathBuf::from("unused.jsonl"),
+        };
         assert!(create(Path::new("unused-audit.jsonl"), args).is_err());
     }
 }

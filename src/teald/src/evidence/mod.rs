@@ -5,18 +5,18 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
-pub mod schema;
 mod context;
+pub mod schema;
 mod storage;
 
-use once_cell::sync::Lazy;
 use dashmap::DashMap;
+use once_cell::sync::Lazy;
 
 use std::fs::File;
 use std::io::{self, Read};
 use std::os::unix::fs::MetadataExt;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 
@@ -27,24 +27,20 @@ use tokio::sync::mpsc;
 use tokio::task;
 use uuid::Uuid;
 
-use teal_policy_engine::util::{uid_to_name, ktime_prefix, u32_to_str};
 use teal_policy_engine::types::Effect;
+use teal_policy_engine::util::{ktime_prefix, u32_to_str, uid_to_name};
 
-use crate::types::{
-    PreApprovalDraft, ApprovedTicket, PendingEntry, MgmtPendingCtl, MgmtCtlKind,
-    KernelEventLog, Request
-};
-use crate::types::{EntityId, to_kernel_dev};
-use crate::ai::types::AiEvent;
-use crate::ai::collector::{
-    collect_ai_event,
-    AiCollector,
-    run_ai_analysis_worker,
-};
-use crate::ai::AiRuntime;
 use self::schema::{
-    AuditLogEntry, AuthInfo, LogType, ObjectInfo, PolicyEvalResult, SubjectInfo,
-    SyscallContext, TicketRef, IssuedTicketInfo,
+    AuditLogEntry, AuthInfo, IssuedTicketInfo, LogType, ObjectInfo, PolicyEvalResult, SubjectInfo,
+    SyscallContext, TicketRef,
+};
+use crate::ai::collector::{collect_ai_event, run_ai_analysis_worker, AiCollector};
+use crate::ai::types::AiEvent;
+use crate::ai::AiRuntime;
+use crate::types::{to_kernel_dev, EntityId};
+use crate::types::{
+    ApprovedTicket, KernelEventLog, MgmtCtlKind, MgmtPendingCtl, PendingEntry, PreApprovalDraft,
+    Request,
 };
 
 // グローバルなシングルトンインスタンス
@@ -62,7 +58,7 @@ pub struct EvidenceManager {
 }
 
 impl EvidenceManager {
-    const FLUSH_INTERVAL_MS: u64 = 1000;    // 1秒
+    const FLUSH_INTERVAL_MS: u64 = 1000; // 1秒
 
     /// 初期化関数 (main.rs の冒頭で一度だけ呼ぶ)
     pub fn init(buffer_size: usize, ai_runtime: Option<AiRuntime>) {
@@ -85,7 +81,7 @@ impl EvidenceManager {
                 if let Err(e) = storage::write_log(&entry) {
                     eprintln!("{}[ERROR] Log Write Error: {}", ktime_prefix(), e);
                     continue;
-               }
+                }
 
                 // AIが有効なときだけ変換・配送する。
                 if let Some(ai_tx) = &ai_tx {
@@ -106,7 +102,8 @@ impl EvidenceManager {
 
         // 2. 定期同期タスク (1秒おき)
         task::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(Self::FLUSH_INTERVAL_MS));
+            let mut interval =
+                tokio::time::interval(tokio::time::Duration::from_millis(Self::FLUSH_INTERVAL_MS));
             loop {
                 interval.tick().await;
                 if let Err(e) = storage::force_flush() {
@@ -120,19 +117,29 @@ impl EvidenceManager {
         task::spawn(async move {
             use tokio::signal::unix::{signal, SignalKind};
             let mut sighup = signal(SignalKind::hangup()).expect("Failed to setup SIGHUP handler");
-            
+
             loop {
                 sighup.recv().await;
-                eprintln!("{}[INFO] SIGHUP received. Reopening audit log...", ktime_prefix());
+                eprintln!(
+                    "{}[INFO] SIGHUP received. Reopening audit log...",
+                    ktime_prefix()
+                );
                 if let Err(e) = storage::reopen_log() {
-                    eprintln!("{}[ERROR] Failed to rotate log via SIGHUP: {}", ktime_prefix(), e);
+                    eprintln!(
+                        "{}[ERROR] Failed to rotate log via SIGHUP: {}",
+                        ktime_prefix(),
+                        e
+                    );
                 }
             }
         });
 
         // GLOBAL_MANAGER にセット (2回呼ぶとパニックまたはエラーになる)
         if GLOBAL_MANAGER.set(EvidenceManager { tx }).is_err() {
-            eprintln!("{}[ERROR]EvidenceManager is already initialized!", ktime_prefix());
+            eprintln!(
+                "{}[ERROR]EvidenceManager is already initialized!",
+                ktime_prefix()
+            );
         }
     }
 
@@ -143,39 +150,54 @@ impl EvidenceManager {
     /// 便利関数: static アクセス
     pub fn instance() -> &'static EvidenceManager {
         GLOBAL_MANAGER.get().unwrap_or_else(|| {
-            panic!("{}[ERROR]EvidenceManager is not initialized", ktime_prefix());
+            panic!(
+                "{}[ERROR]EvidenceManager is not initialized",
+                ktime_prefix()
+            );
         })
     }
 
     /// 便利関数: インスタンス取得すら隠蔽して直接ログを打てるようにする
-    pub async fn log_fast_path_static(log_type: LogType, event_log: &KernelEventLog, ticket: &ApprovedTicket) {
+    pub async fn log_fast_path_static(
+        log_type: LogType,
+        event_log: &KernelEventLog,
+        ticket: &ApprovedTicket,
+    ) {
         // グローバルインスタンス経由で送信
-        Self::instance().enqueue_fast_path(log_type, event_log, ticket).await;
+        Self::instance()
+            .enqueue_fast_path(log_type, event_log, ticket)
+            .await;
     }
 
     /// Fast Path (チケット消費時) のログ記録
     /// 軽量化のため args は無し、TicketID参照のみ
-    async fn enqueue_fast_path(&self, log_type: LogType, event_log: &KernelEventLog, ticket: &ApprovedTicket) {
+    async fn enqueue_fast_path(
+        &self,
+        log_type: LogType,
+        event_log: &KernelEventLog,
+        ticket: &ApprovedTicket,
+    ) {
         // Hash取得
-        let hash = ticket.origin_program_sha256
+        let hash = ticket
+            .origin_program_sha256
             .clone()
             .unwrap_or_else(|| "HASH_NOT_CALCULATED".to_string());
 
         let entry = AuditLogEntry {
             ver: "1.5".to_string(),
             id: Uuid::new_v4().to_string(),
-            log_type: log_type,
+            log_type,
             ts: Utc::now(),
             host: get_hostname(),
             epoch: ticket.epoch,
             syscall_context: SyscallContext {
                 uid: event_log.uid,
                 user: uid_to_name(event_log.uid).unwrap_or_else(|_| "".to_string()),
-                pid: 0,                         // pid: u32 => TODO: INFO より
-                action: "-".to_string(),        // [TODO] INFOより
+                pid: 0,                  // pid: u32 => TODO: INFO より
+                action: "-".to_string(), // [TODO] INFOより
                 subject: SubjectInfo {
                     path: ticket.origin_program.to_string(),
-                    hash: hash,
+                    hash,
                     applet: ticket.origin_applet.clone(),
                     script_path: ticket.origin_script.clone(),
                     args: None,
@@ -184,7 +206,7 @@ impl EvidenceManager {
                 object: ObjectInfo {
                     kind: u32_to_str(ticket.op_mask),
                     path: ticket.object.clone(),
-                    
+
                     // ソース (移動元) --- 物理的な実体 (Reality) ---
                     inode: event_log.obj_ino,
                     device_id: event_log.obj_dev,
@@ -192,8 +214,12 @@ impl EvidenceManager {
                     // 移動先についても event_log が情報を持っていれば優先する
                     // (なければ ticket の情報をセカンダリとして使う)
                     new_path: ticket.new_object.clone(),
-                    new_inode: event_log.new_obj_ino.or(ticket.new_object_id.map(|e| e.ino)),
-                    new_device_id: event_log.new_obj_dev.or(ticket.new_object_id.map(|e| e.dev)),
+                    new_inode: event_log
+                        .new_obj_ino
+                        .or(ticket.new_object_id.map(|e| e.ino)),
+                    new_device_id: event_log
+                        .new_obj_dev
+                        .or(ticket.new_object_id.map(|e| e.dev)),
                 },
             },
             environment_context: None,
@@ -224,7 +250,9 @@ impl EvidenceManager {
         pending: &PendingEntry,
     ) {
         // グローバルインスタンス経由で送信
-        Self::instance().enqueue_slow_path(log_type, decision, is_cache, ticket_id, pending).await;
+        Self::instance()
+            .enqueue_slow_path(log_type, decision, is_cache, ticket_id, pending)
+            .await;
     }
 
     /// Slow Path (承認時) のログ記録
@@ -239,9 +267,11 @@ impl EvidenceManager {
     ) {
         // 1. Enrich: コンテキスト解決
         let env_ctx = context::ContextResolver::resolve(pending.subject.pid);
-        
+
         // 2. Hash取得
-        let hash = pending.subject.program_hash
+        let hash = pending
+            .subject
+            .program_hash
             .clone()
             .unwrap_or_else(|| "HASH_NOT_CALCULATED".to_string());
 
@@ -275,7 +305,7 @@ impl EvidenceManager {
                     path: pending.object.path.clone(),
                     inode: pending.object.inode,
                     device_id: pending.object.device_id,
-                    
+
                     new_path: pending.object.new_path.clone(),
                     new_inode: pending.object.new_inode,
                     new_device_id: pending.object.new_device_id,
@@ -316,7 +346,9 @@ impl EvidenceManager {
         ticket: &ApprovedTicket,
     ) {
         // グローバルインスタンス経由で送信
-        Self::instance().enqueue_ticket_add(log_type, decision, draft, ticket).await;
+        Self::instance()
+            .enqueue_ticket_add(log_type, decision, draft, ticket)
+            .await;
     }
 
     /// Ticket Add (承認時) のログ記録
@@ -329,7 +361,8 @@ impl EvidenceManager {
         ticket: &ApprovedTicket,
     ) {
         // 2. Hash取得
-        let hash = ticket.origin_program_sha256
+        let hash = ticket
+            .origin_program_sha256
             .clone()
             .unwrap_or_else(|| "HASH_NOT_CALCULATED".to_string());
 
@@ -356,12 +389,12 @@ impl EvidenceManager {
                 },
                 object: ObjectInfo {
                     kind: u32_to_str(ticket.op_mask),
-                    
+
                     // --- Source (移動元) ---
                     path: ticket.object.clone(),
                     inode: ticket.object_id.ino,
                     device_id: ticket.object_id.dev,
-                    
+
                     // --- Destination (移動先: RENAME時のみ) ---
                     new_path: ticket.new_object.clone(),
                     new_inode: ticket.new_object_id.map(|e| e.ino),
@@ -376,9 +409,9 @@ impl EvidenceManager {
                     mpa_level_required: draft.mpa_state.threshold,
                     decision,
                     issued_ticket: Some(IssuedTicketInfo {
-                            ticket_id: ticket.ticket_id.clone(),
-                            ttl_sec: ticket.ttl_sec,
-                        }),
+                        ticket_id: ticket.ticket_id.clone(),
+                        ttl_sec: ticket.ttl_sec,
+                    }),
                 },
                 mpa_proof: draft.mpa_state.clone(),
             },
@@ -395,7 +428,9 @@ impl EvidenceManager {
         pending_ctl: &MgmtPendingCtl,
     ) {
         // グローバルインスタンス経由で送信
-        Self::instance().enqueue_mgmt_ctl(log_type, decision, pending_ctl).await;
+        Self::instance()
+            .enqueue_mgmt_ctl(log_type, decision, pending_ctl)
+            .await;
     }
 
     /// ライフサイクル管理（Start/Stop/PolicyUpdate/Flush）のログ記録
@@ -410,10 +445,26 @@ impl EvidenceManager {
 
         // MgmtCtlKind に応じて、ログに出力する文字列を動的に切り替える
         let (action_str, object_path, arg_str) = match pending_ctl.kind {
-            MgmtCtlKind::Start      => ("enable enforce mode", "system:mode/enforce", "start".to_string()),
-            MgmtCtlKind::Stop       => ("disable enforce mode", "system:mode/audit", "stop".to_string()),
-            MgmtCtlKind::PolicyUpdate => ("update policies", "system:policy/update", format!("policy-update {}", pending_ctl.target_hash)),
-            MgmtCtlKind::Flush      => ("flush caches and lockdown", "system:network/lockdown", "flush".to_string()),
+            MgmtCtlKind::Start => (
+                "enable enforce mode",
+                "system:mode/enforce",
+                "start".to_string(),
+            ),
+            MgmtCtlKind::Stop => (
+                "disable enforce mode",
+                "system:mode/audit",
+                "stop".to_string(),
+            ),
+            MgmtCtlKind::PolicyUpdate => (
+                "update policies",
+                "system:policy/update",
+                format!("policy-update {}", pending_ctl.target_hash),
+            ),
+            MgmtCtlKind::Flush => (
+                "flush caches and lockdown",
+                "system:network/lockdown",
+                "flush".to_string(),
+            ),
         };
 
         let entry = AuditLogEntry {
@@ -470,7 +521,11 @@ impl EvidenceManager {
     /// 共通の送信ロジック
     async fn send_entry(&self, entry: AuditLogEntry) {
         if let Err(e) = self.tx.send(entry).await {
-            eprintln!("{}[ERROR]Evidence: Failed to send log to channel: {}", ktime_prefix(), e);
+            eprintln!(
+                "{}[ERROR]Evidence: Failed to send log to channel: {}",
+                ktime_prefix(),
+                e
+            );
         }
     }
 }
@@ -512,14 +567,11 @@ pub struct ProcessBinding {
     pub sha256: String,
 }
 
-pub static FILE_HASH_CACHE: Lazy<DashMap<EntityId, FileHashEntry>>
-    = Lazy::new(DashMap::new);
+pub static FILE_HASH_CACHE: Lazy<DashMap<EntityId, FileHashEntry>> = Lazy::new(DashMap::new);
 
-pub static PROCESS_BINDINGS: Lazy<DashMap<ProcessKey, ProcessBinding>>
-    = Lazy::new(DashMap::new);
+pub static PROCESS_BINDINGS: Lazy<DashMap<ProcessKey, ProcessBinding>> = Lazy::new(DashMap::new);
 
-static HASH_LOCKS: Lazy<DashMap<EntityId, Arc<Mutex<()>>>> =
-    Lazy::new(DashMap::new);
+static HASH_LOCKS: Lazy<DashMap<EntityId, Arc<Mutex<()>>>> = Lazy::new(DashMap::new);
 
 fn file_meta(file: &File) -> io::Result<(EntityId, FileMeta)> {
     let metadata = file.metadata()?;
@@ -547,19 +599,12 @@ pub async fn ensure_program_hash(req: &mut Request) {
 
     let pid = req.pid;
 
-    let file_id = EntityId::new((
-        req.prog_dev,
-        req.prog_ino,
-    ));
+    let file_id = EntityId::new((req.prog_dev, req.prog_ino));
 
     let path = req.raw_program.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        get_or_calculate_bound_program_hash(
-            pid,
-            file_id,
-            &path,
-        )
+        get_or_calculate_bound_program_hash(pid, file_id, &path)
     })
     .await;
 
@@ -571,23 +616,16 @@ pub async fn ensure_program_hash(req: &mut Request) {
         Ok(Err(e)) => {
             eprintln!(
                 "[WARN] SHA256 calculation failed for {}: {}",
-                req.raw_program,
-                e
+                req.raw_program, e
             );
 
-            req.prog_sha256 =
-                Some("HASH_CALC_FAILED".to_string());
+            req.prog_sha256 = Some("HASH_CALC_FAILED".to_string());
         }
 
         Err(e) => {
-            eprintln!(
-                "[WARN] SHA256 worker failed for {}: {}",
-                req.raw_program,
-                e
-            );
+            eprintln!("[WARN] SHA256 worker failed for {}: {}", req.raw_program, e);
 
-            req.prog_sha256 =
-                Some("HASH_CALC_FAILED".to_string());
+            req.prog_sha256 = Some("HASH_CALC_FAILED".to_string());
         }
     }
 }
@@ -612,24 +650,16 @@ fn calculate_sha256_from_file(file: &mut File) -> io::Result<String> {
     Ok(format!("sha256:{:x}", result))
 }
 
-pub fn get_or_calculate_program_hash(
-    expected_id: EntityId,
-    path: &str,
-) -> io::Result<String> {
+pub fn get_or_calculate_program_hash(expected_id: EntityId, path: &str) -> io::Result<String> {
     get_or_calculate_hash(path, Some(expected_id))
 }
 
-pub fn get_or_calculate_file_hash(
-    path: &str,
-) -> io::Result<String> {
+pub fn get_or_calculate_file_hash(path: &str) -> io::Result<String> {
     get_or_calculate_hash(path, None)
 }
 
 /// ファイルのSHA256ハッシュを取得
-fn get_or_calculate_hash(
-    path: &str,
-    expected_id: Option<EntityId>,
-) -> io::Result<String> {
+fn get_or_calculate_hash(path: &str, expected_id: Option<EntityId>) -> io::Result<String> {
     //
     // 1. ファイルをopen
     //
@@ -648,10 +678,7 @@ fn get_or_calculate_hash(
                 io::ErrorKind::InvalidData,
                 format!(
                     "program identity mismatch: expected dev={} ino={}, actual dev={} ino={}",
-                    file_id.dev,
-                    file_id.ino,
-                    actual_id.dev,
-                    actual_id.ino,
+                    file_id.dev, file_id.ino, actual_id.dev, actual_id.ino,
                 ),
             ));
         }
@@ -682,12 +709,7 @@ fn get_or_calculate_hash(
 
     let _guard = lock
         .lock()
-        .map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                "hash lock poisoned",
-            )
-        })?;
+        .map_err(|_| io::Error::other("hash lock poisoned"))?;
 
     //
     // 4. lock待ち中にファイルが変更されている可能性があるので
@@ -755,9 +777,7 @@ fn get_or_calculate_hash(
 }
 
 fn process_start_time(pid: u32) -> io::Result<u64> {
-    let stat = std::fs::read_to_string(
-        format!("/proc/{}/stat", pid)
-    )?;
+    let stat = std::fs::read_to_string(format!("/proc/{}/stat", pid))?;
 
     // comm は "(...)" 内に空白を含む可能性があるので、
     // 単純な split_whitespace() をファイル全体には使わない。
@@ -769,8 +789,7 @@ fn process_start_time(pid: u32) -> io::Result<u64> {
     })?;
 
     // ')' の後は field 3 (state) から始まる
-    let fields: Vec<&str> =
-        stat[end_comm + 1..].split_whitespace().collect();
+    let fields: Vec<&str> = stat[end_comm + 1..].split_whitespace().collect();
 
     // starttime は field 22
     // field 3 を index 0 とすると 22 - 3 = 19
@@ -805,10 +824,7 @@ pub fn get_or_calculate_bound_program_hash(
     //
     let process_key = process_start_time(pid)
         .ok()
-        .map(|start_time| ProcessKey {
-            pid,
-            start_time,
-        });
+        .map(|start_time| ProcessKey { pid, start_time });
 
     //
     // 1. 同一プロセス・同一実行ファイルなら、
@@ -832,8 +848,7 @@ pub fn get_or_calculate_bound_program_hash(
     //
     // 2. ProcessBindingがない、またはexec後
     //
-    let hash =
-        get_or_calculate_program_hash(file_id, path)?;
+    let hash = get_or_calculate_program_hash(file_id, path)?;
 
     //
     // 3. 今回確定した実体をprocessへbind
@@ -861,23 +876,14 @@ pub fn invalidate_hash_cache_for_request(req: &Request) {
     match action.as_str() {
         "WRITE" | "UNLINK" | "RENAME" => {
             if req.target_dev != 0 || req.target_ino != 0 {
-                let file_id = EntityId::new((
-                    req.target_dev,
-                    req.target_ino,
-                ));
+                let file_id = EntityId::new((req.target_dev, req.target_ino));
 
                 FILE_HASH_CACHE.remove(&file_id);
             }
 
             // RENAME先に実体IDがある場合も保守的にinvalidate
-            if action == "RENAME"
-                && (req.new_target_dev != 0
-                    || req.new_target_ino != 0)
-            {
-                let file_id = EntityId::new((
-                    req.new_target_dev,
-                    req.new_target_ino,
-                ));
+            if action == "RENAME" && (req.new_target_dev != 0 || req.new_target_ino != 0) {
+                let file_id = EntityId::new((req.new_target_dev, req.new_target_ino));
 
                 FILE_HASH_CACHE.remove(&file_id);
             }

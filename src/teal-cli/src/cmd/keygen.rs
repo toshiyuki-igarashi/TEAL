@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 /*
  * TEAL CLI (teal-cli)
- * 
+ *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
@@ -57,8 +57,8 @@ pub fn run() -> Result<()> {
     let mut ikm = [0u8; 32];
     rng.fill_bytes(&mut ikm);
 
-    let sk = SecretKey::key_gen(&ikm, &[])
-        .map_err(|e| anyhow::anyhow!("Key gen failed: {:?}", e))?;
+    let sk =
+        SecretKey::key_gen(&ikm, &[]).map_err(|e| anyhow::anyhow!("Key gen failed: {:?}", e))?;
     let pk = sk.sk_to_pk();
 
     // 3. 秘密鍵の保存 (0600)

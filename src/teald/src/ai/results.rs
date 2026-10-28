@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 use std::fs::OpenOptions;
-use std::os::unix::fs::OpenOptionsExt;
 use std::io::{self, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
@@ -64,7 +64,11 @@ pub fn append_result(record: &AiStoredAnalysis) -> io::Result<()> {
 fn append_result_to(path: &Path, record: &AiStoredAnalysis) -> io::Result<()> {
     let mut bytes = serde_json::to_vec(record).map_err(io::Error::other)?;
     bytes.push(b'\n');
-    let mut file = OpenOptions::new().create(true).append(true).mode(0o600).open(path)?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)?;
     file.write_all(&bytes)?;
     file.sync_data()?;
     Ok(())
@@ -77,15 +81,26 @@ mod tests {
 
     #[test]
     fn write_record_and_provenance() {
-        let path = std::env::temp_dir().join(format!("teal-ai-result-{}.jsonl", uuid::Uuid::new_v4()));
+        let path =
+            std::env::temp_dir().join(format!("teal-ai-result-{}.jsonl", uuid::Uuid::new_v4()));
         let now = Utc::now();
         let record = AiStoredAnalysis {
-            version: "1.0", recorded_at: now,
-            provider: "mock".into(), host: "test-host".into(),
-            time_window_start: now, time_window_end: now,
-            input_event_count: 2, aggregated_event_count: 1,
-            result: AiAnalysisResult { analysis_id: "test-1".into(), anomalies: vec![] },
-            source_event_ids: HashMap::from([("test-1-agg-1".into(), vec!["e1".into(), "e2".into()])]),
+            version: "1.0",
+            recorded_at: now,
+            provider: "mock".into(),
+            host: "test-host".into(),
+            time_window_start: now,
+            time_window_end: now,
+            input_event_count: 2,
+            aggregated_event_count: 1,
+            result: AiAnalysisResult {
+                analysis_id: "test-1".into(),
+                anomalies: vec![],
+            },
+            source_event_ids: HashMap::from([(
+                "test-1-agg-1".into(),
+                vec!["e1".into(), "e2".into()],
+            )]),
         };
         append_result_to(&path, &record).unwrap();
         let line = std::fs::read_to_string(&path).unwrap();

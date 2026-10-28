@@ -11,12 +11,7 @@ use async_trait::async_trait;
 
 use crate::ai::error::AiError;
 use crate::ai::provider::AiProvider;
-use crate::ai::types::{
-    AiProviderRequest,
-    AiAnalysisResult,
-    AiAnomaly,
-    AiOperationalContext,
-};
+use crate::ai::types::{AiAnalysisResult, AiAnomaly, AiOperationalContext, AiProviderRequest};
 
 /// MockAdapter の応答モード
 #[derive(Debug, Clone)]
@@ -49,9 +44,7 @@ pub struct MockAdapter {
 impl MockAdapter {
     pub fn new() -> Self {
         Self {
-            response: RwLock::new(
-                MockResponse::Success(Vec::new())
-            ),
+            response: RwLock::new(MockResponse::Success(Vec::new())),
             operational_context: RwLock::new(None),
             last_request: RwLock::new(None),
         }
@@ -63,13 +56,8 @@ impl MockAdapter {
     }
 
     /// 設定済み運用コンテキストを取得
-    pub fn operational_context(
-        &self,
-    ) -> Option<AiOperationalContext> {
-        self.operational_context
-            .read()
-            .unwrap()
-            .clone()
+    pub fn operational_context(&self) -> Option<AiOperationalContext> {
+        self.operational_context.read().unwrap().clone()
     }
 
     pub fn last_request(&self) -> Option<AiProviderRequest> {
@@ -89,50 +77,31 @@ impl AiProvider for MockAdapter {
         "mock"
     }
 
-    async fn set_operational_context(
-        &self,
-        context: &AiOperationalContext,
-    ) -> Result<(), AiError> {
-        *self.operational_context
-            .write()
-            .unwrap() = Some(context.clone());
+    async fn set_operational_context(&self, context: &AiOperationalContext) -> Result<(), AiError> {
+        *self.operational_context.write().unwrap() = Some(context.clone());
 
         Ok(())
     }
 
-    async fn analyze(
-        &self,
-        request: &AiProviderRequest,
-    ) -> Result<AiAnalysisResult, AiError> {
+    async fn analyze(&self, request: &AiProviderRequest) -> Result<AiAnalysisResult, AiError> {
         *self.last_request.write().unwrap() = Some(request.clone());
 
         // ロック保持中に await しないよう、応答モードをコピーする
-        let response = self.response
-            .read()
-            .unwrap()
-            .clone();
+        let response = self.response.read().unwrap().clone();
 
         match response {
-            MockResponse::Success(anomalies) => {
-                Ok(AiAnalysisResult {
-                    analysis_id: request.analysis_id.clone(),
-                    anomalies,
-                })
-            }
+            MockResponse::Success(anomalies) => Ok(AiAnalysisResult {
+                analysis_id: request.analysis_id.clone(),
+                anomalies,
+            }),
 
             MockResponse::Timeout => Err(AiError::Timeout),
 
-            MockResponse::RateLimited => {
-                Err(AiError::RateLimited {
-                    retry_after: None,
-                })
-            }
+            MockResponse::RateLimited => Err(AiError::RateLimited { retry_after: None }),
 
-            MockResponse::Unavailable => {
-                Err(AiError::Unavailable(
-                    "Mock provider unavailable".to_string()
-                ))
-            }
+            MockResponse::Unavailable => Err(AiError::Unavailable(
+                "Mock provider unavailable".to_string(),
+            )),
         }
     }
 }
@@ -184,16 +153,11 @@ mod tests {
             description: "Monthly database backup".to_string(),
         };
 
-        mock.set_operational_context(&context)
-            .await
-            .unwrap();
+        mock.set_operational_context(&context).await.unwrap();
 
         let saved = mock.operational_context().unwrap();
 
-        assert_eq!(
-            saved.description,
-            "Monthly database backup"
-        );
+        assert_eq!(saved.description, "Monthly database backup");
     }
 
     #[tokio::test]
@@ -214,7 +178,10 @@ mod tests {
         let result = mock.analyze(&request).await.unwrap();
 
         assert_eq!(result.anomalies.len(), 1);
-        assert_eq!(result.anomalies[0].attack_type.as_deref(), Some("ransomware"));
+        assert_eq!(
+            result.anomalies[0].attack_type.as_deref(),
+            Some("ransomware")
+        );
         assert_eq!(result.anomalies[0].evidence_event_ids.len(), 2);
         assert_eq!(result.analysis_id, request.analysis_id);
 
@@ -228,10 +195,7 @@ mod tests {
             vec!["evt-001", "evt-002"]
         );
 
-        assert_eq!(
-            result.anomalies[0].confidence_score,
-            0.95
-        );
+        assert_eq!(result.anomalies[0].confidence_score, 0.95);
     }
 
     #[tokio::test]
@@ -254,9 +218,6 @@ mod tests {
 
         let result = mock.analyze(&test_request()).await;
 
-        assert!(matches!(
-            result,
-            Err(AiError::Unavailable(_))
-        ));
+        assert!(matches!(result, Err(AiError::Unavailable(_))));
     }
 }

@@ -6,8 +6,8 @@
  */
 use serde::{Deserialize, Serialize};
 
+use crate::types::{Action, AuditLevel, Effect, RuleType, SystemType};
 use crate::util::deserialize_ops_uppercase;
-use crate::types::{SystemType, RuleType, Effect, AuditLevel, Action};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -53,7 +53,7 @@ pub struct RawPreApprovalDefaults {
 #[serde(deny_unknown_fields)]
 pub struct RawRule {
     pub id: String,
-    
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
@@ -109,10 +109,10 @@ pub struct RawSubject {
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<String>,
-    
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_program: Option<String>,
-    
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_script: Option<String>,
 
@@ -162,7 +162,11 @@ pub struct RawObject {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawAction {
-    #[serde(default, deserialize_with = "deserialize_ops_uppercase", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_ops_uppercase",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub ops: Vec<Action>,
 }
 
@@ -189,23 +193,32 @@ pub struct RawPreApproval {
 #[derive(Debug, Deserialize, Clone, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct RawTicketProfile {
-    #[serde(default)] pub silent_io: bool,
-    #[serde(default)] pub inherit: bool,
-    #[serde(default)] pub allow_nameless_ipc: bool,
+    #[serde(default)]
+    pub silent_io: bool,
+    #[serde(default)]
+    pub inherit: bool,
+    #[serde(default)]
+    pub allow_nameless_ipc: bool,
 }
 
-pub const TEAL_TICKET_FLG_SILENT_IO: u32    = 1 << 0; // 0x01: サイレントIO特権
-pub const TEAL_TICKET_FLG_INHERIT: u32      = 1 << 1; // 0x02: 子プロセスへの継承
+pub const TEAL_TICKET_FLG_SILENT_IO: u32 = 1 << 0; // 0x01: サイレントIO特権
+pub const TEAL_TICKET_FLG_INHERIT: u32 = 1 << 1; // 0x02: 子プロセスへの継承
 pub const TEAL_TICKET_FLG_NAMELESS_IPC: u32 = 1 << 2; // 0x04: 匿名パイプ/ソケット特権
-// (1 << 3 は将来の予約領域)
+                                                      // (1 << 3 は将来の予約領域)
 pub const TEAL_TICKET_FLG_PARENT_MATCH: u32 = 1 << 4; // 0x10: 親ディレクトリ包括チケット
 
 impl RawTicketProfile {
     pub fn to_u32(&self) -> u32 {
         let mut flags = 0u32;
-        if self.silent_io { flags |= TEAL_TICKET_FLG_SILENT_IO; }
-        if self.inherit   { flags |= TEAL_TICKET_FLG_INHERIT;   }
-        if self.allow_nameless_ipc   { flags |= TEAL_TICKET_FLG_NAMELESS_IPC;   }
+        if self.silent_io {
+            flags |= TEAL_TICKET_FLG_SILENT_IO;
+        }
+        if self.inherit {
+            flags |= TEAL_TICKET_FLG_INHERIT;
+        }
+        if self.allow_nameless_ipc {
+            flags |= TEAL_TICKET_FLG_NAMELESS_IPC;
+        }
         flags
     }
 }
@@ -229,7 +242,7 @@ pub struct RawRolesV1 {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawRoleDef {
-    pub name: String,                // roleName (pattern は validate)
+    pub name: String, // roleName (pattern は validate)
     #[serde(default)]
     pub description: Option<String>,
 
@@ -279,4 +292,3 @@ pub struct RawDefaults {
 
     pub deny_if_role_unknown: bool,
 }
-

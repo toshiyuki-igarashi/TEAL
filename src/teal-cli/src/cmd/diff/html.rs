@@ -3,20 +3,24 @@
  * TEAL CLI (teal-cli)
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
+use anyhow::{Context, Result};
+use chrono::Local;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
-use anyhow::{Context, Result};
-use chrono::Local;
 
-use super::bundle_diff::{SecurityImpact as MgmtImpact};
+use super::bundle_diff::SecurityImpact as MgmtImpact;
 use super::{BundleDiffReport, RuleDiffItem, SecurityImpact};
 
 /// HTML レポートを生成してファイル出力
 pub fn generate_html_report(report: &BundleDiffReport, output_path: &Path) -> Result<()> {
     let html_content = render_html(report);
-    fs::write(output_path, html_content)
-        .with_context(|| format!("Failed to write HTML diff report: {}", output_path.display()))?;
+    fs::write(output_path, html_content).with_context(|| {
+        format!(
+            "Failed to write HTML diff report: {}",
+            output_path.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -24,16 +28,39 @@ fn render_html(report: &BundleDiffReport) -> String {
     let generated_time = Local::now().format("%Y-%m-%d %H:%M:%S %Z").to_string();
 
     // 統計集計
-    let added_count = report.rule_diffs.iter().filter(|r| matches!(r, RuleDiffItem::Added { .. })).count();
-    let removed_count = report.rule_diffs.iter().filter(|r| matches!(r, RuleDiffItem::Removed { .. })).count();
-    let modified_count = report.rule_diffs.iter().filter(|r| matches!(r, RuleDiffItem::Modified { .. })).count();
-    let relaxed_count = report.rule_diffs.iter().filter(|r| r.impact() == SecurityImpact::Relaxed).count();
-    let hardened_count = report.rule_diffs.iter().filter(|r| r.impact() == SecurityImpact::Hardened).count();
+    let added_count = report
+        .rule_diffs
+        .iter()
+        .filter(|r| matches!(r, RuleDiffItem::Added { .. }))
+        .count();
+    let removed_count = report
+        .rule_diffs
+        .iter()
+        .filter(|r| matches!(r, RuleDiffItem::Removed { .. }))
+        .count();
+    let modified_count = report
+        .rule_diffs
+        .iter()
+        .filter(|r| matches!(r, RuleDiffItem::Modified { .. }))
+        .count();
+    let relaxed_count = report
+        .rule_diffs
+        .iter()
+        .filter(|r| r.impact() == SecurityImpact::Relaxed)
+        .count();
+    let hardened_count = report
+        .rule_diffs
+        .iter()
+        .filter(|r| r.impact() == SecurityImpact::Hardened)
+        .count();
 
     // ファイル単位でグループ化
     let mut file_groups: BTreeMap<&str, Vec<&RuleDiffItem>> = BTreeMap::new();
     for item in &report.rule_diffs {
-        file_groups.entry(item.source_file()).or_default().push(item);
+        file_groups
+            .entry(item.source_file())
+            .or_default()
+            .push(item);
     }
 
     let mut out = String::new();
@@ -236,7 +263,7 @@ fn render_html(report: &BundleDiffReport) -> String {
     if let Some(ref config) = report.config_diff {
         out.push_str(r#"<div class="section-title">🏛️ バンドル構成・ガバナンス設定の差分</div>"#);
 
-         // (1) Management Governance Policy
+        // (1) Management Governance Policy
         if let Some(ref mgmt) = config.mgmt_diff {
             out.push_str(r#"<div class="card-block"><h3 style="margin-top:0;">Management Governance (MPA)</h3>"#);
             if mgmt.control_changes.is_empty() && mgmt.role_changes.is_empty() {
@@ -247,7 +274,8 @@ fn render_html(report: &BundleDiffReport) -> String {
                     out.push_str(r#"<h4 style="margin: 12px 0 6px 0; font-size: 14px;">管理ロール・メンバー変更</h4>"#);
                     out.push_str(r#"<table class="diff-table"><thead><tr><th>ロール名</th><th>追加UID</th><th>削除UID</th></tr></thead><tbody>"#);
                     for r in &mgmt.role_changes {
-                        out.push_str(&format!(r#"
+                        out.push_str(&format!(
+                            r#"
                         <tr>
                           <td><code>{}</code></td>
                           <td style="color:#86efac;">{}</td>
@@ -255,8 +283,16 @@ fn render_html(report: &BundleDiffReport) -> String {
                         </tr>
                         "#,
                             escape_html(&r.role_name),
-                            if r.added_uids.is_empty() { "-".into() } else { format!("{:?}", r.added_uids) },
-                            if r.removed_uids.is_empty() { "-".into() } else { format!("{:?}", r.removed_uids) }
+                            if r.added_uids.is_empty() {
+                                "-".into()
+                            } else {
+                                format!("{:?}", r.added_uids)
+                            },
+                            if r.removed_uids.is_empty() {
+                                "-".into()
+                            } else {
+                                format!("{:?}", r.removed_uids)
+                            }
                         ));
                     }
                     out.push_str("</tbody></table>");
@@ -269,9 +305,9 @@ fn render_html(report: &BundleDiffReport) -> String {
                     for c in &mgmt.control_changes {
                         let (badge_class, badge_label) = match c.impact {
                             MgmtImpact::Critical => ("badge-relaxed", "🚨 CRITICAL (MPA弱化)"),
-                            MgmtImpact::Warning  => ("badge-relaxed", "⚠️ WARNING (ロール変更)"),
+                            MgmtImpact::Warning => ("badge-relaxed", "⚠️ WARNING (ロール変更)"),
                             MgmtImpact::Stricter => ("badge-hardened", "🛡️ STRICTER (強化)"),
-                            MgmtImpact::Neutral  => ("badge-neutral", "⚪ NEUTRAL"),
+                            MgmtImpact::Neutral => ("badge-neutral", "⚪ NEUTRAL"),
                         };
                         let mut details = Vec::new();
                         if let Some((old_t, new_t)) = c.threshold_change {
@@ -282,26 +318,44 @@ fn render_html(report: &BundleDiffReport) -> String {
                         }
                         // 起案可能ロール (initiator)
                         if !c.added_initiator_roles.is_empty() {
-                            details.push(format!("追加された起案ロール: {:?}", c.added_initiator_roles));
+                            details.push(format!(
+                                "追加された起案ロール: {:?}",
+                                c.added_initiator_roles
+                            ));
                         }
                         if !c.removed_initiator_roles.is_empty() {
-                            details.push(format!("削除された起案ロール: {:?}", c.removed_initiator_roles));
+                            details.push(format!(
+                                "削除された起案ロール: {:?}",
+                                c.removed_initiator_roles
+                            ));
                         }
                         // 承認可能ロール (approver)
                         if !c.added_approver_roles.is_empty() {
-                            details.push(format!("追加された承認ロール: {:?}", c.added_approver_roles));
+                            details.push(format!(
+                                "追加された承認ロール: {:?}",
+                                c.added_approver_roles
+                            ));
                         }
                         if !c.removed_approver_roles.is_empty() {
-                            details.push(format!("削除された承認ロール: {:?}", c.removed_approver_roles));
+                            details.push(format!(
+                                "削除された承認ロール: {:?}",
+                                c.removed_approver_roles
+                            ));
                         }
 
-                        out.push_str(&format!(r#"
+                        out.push_str(&format!(
+                            r#"
                         <tr>
                           <td><code>{}</code></td>
                           <td><span class="badge {}">{}</span></td>
                           <td>{}</td>
                         </tr>
-                        "#, escape_html(&c.command), badge_class, badge_label, escape_html(&details.join(" / "))));
+                        "#,
+                            escape_html(&c.command),
+                            badge_class,
+                            badge_label,
+                            escape_html(&details.join(" / "))
+                        ));
                     }
                     out.push_str("</tbody></table>");
                 }
@@ -317,7 +371,10 @@ fn render_html(report: &BundleDiffReport) -> String {
             if !roles.added_roles.is_empty() || !roles.removed_roles.is_empty() {
                 out.push_str(r#"<div style="margin-bottom: 12px;"><ul class="details-list">"#);
                 for r in &roles.added_roles {
-                    out.push_str(&format!(r#"<li style="color:#86efac;">+ 新規ロール定義: <code>{}</code></li>"#, escape_html(r)));
+                    out.push_str(&format!(
+                        r#"<li style="color:#86efac;">+ 新規ロール定義: <code>{}</code></li>"#,
+                        escape_html(r)
+                    ));
                 }
                 for r in &roles.removed_roles {
                     out.push_str(&format!(r#"<li style="color:#fca5a5;">- 削除されたロール定義: <code>{}</code></li>"#, escape_html(r)));
@@ -329,7 +386,8 @@ fn render_html(report: &BundleDiffReport) -> String {
             if !roles.assignment_changes.is_empty() || roles.default_roles_changed.is_some() {
                 out.push_str(r#"<table class="diff-table"><thead><tr><th>対象</th><th>付与ロール (Granted)</th><th>剥奪ロール (Revoked)</th></tr></thead><tbody>"#);
                 for a in &roles.assignment_changes {
-                    out.push_str(&format!(r#"
+                    out.push_str(&format!(
+                        r#"
                     <tr>
                       <td><b>{}</b></td>
                       <td style="color:#86efac;">{}</td>
@@ -337,17 +395,28 @@ fn render_html(report: &BundleDiffReport) -> String {
                     </tr>
                     "#,
                         escape_html(&a.target),
-                        if a.added.is_empty() { "-".into() } else { escape_html(&a.added.join(", ")) },
-                        if a.removed.is_empty() { "-".into() } else { escape_html(&a.removed.join(", ")) }
+                        if a.added.is_empty() {
+                            "-".into()
+                        } else {
+                            escape_html(&a.added.join(", "))
+                        },
+                        if a.removed.is_empty() {
+                            "-".into()
+                        } else {
+                            escape_html(&a.removed.join(", "))
+                        }
                     ));
                 }
                 if let Some((old_d, new_d)) = &roles.default_roles_changed {
-                    out.push_str(&format!(r#"
+                    out.push_str(&format!(
+                        r#"
                     <tr>
                       <td><b>未知ユーザー (Defaults)</b></td>
                       <td colspan="2">旧: {:?} ➔ 新: {:?}</td>
                     </tr>
-                    "#, old_d, new_d));
+                    "#,
+                        old_d, new_d
+                    ));
                 }
                 out.push_str("</tbody></table>");
             }
@@ -359,10 +428,16 @@ fn render_html(report: &BundleDiffReport) -> String {
         if let Some(ref bundle) = config.bundle_diff {
             out.push_str(r#"<div class="card-block"><h3 style="margin-top:0;">Bundle Policy Files</h3><ul class="details-list">"#);
             for f in &bundle.added_policies {
-                out.push_str(&format!(r#"<li style="color:#86efac;">+ 追加ファイル: {}</li>"#, escape_html(f)));
+                out.push_str(&format!(
+                    r#"<li style="color:#86efac;">+ 追加ファイル: {}</li>"#,
+                    escape_html(f)
+                ));
             }
             for f in &bundle.removed_policies {
-                out.push_str(&format!(r#"<li style="color:#fca5a5;">- 削除ファイル: {}</li>"#, escape_html(f)));
+                out.push_str(&format!(
+                    r#"<li style="color:#fca5a5;">- 削除ファイル: {}</li>"#,
+                    escape_html(f)
+                ));
             }
             out.push_str("</ul></div>");
         }
@@ -373,7 +448,8 @@ fn render_html(report: &BundleDiffReport) -> String {
     if report.global_diffs.is_empty() {
         out.push_str(r#"<p style="color: var(--text-muted); font-size: 13px;">グローバル設定に変更はありません。</p>"#);
     } else {
-        out.push_str(r#"
+        out.push_str(
+            r#"
     <table class="diff-table">
       <thead>
         <tr>
@@ -385,14 +461,16 @@ fn render_html(report: &BundleDiffReport) -> String {
         </tr>
       </thead>
       <tbody>
-"#);
+"#,
+        );
         for g in &report.global_diffs {
             let (badge_class, badge_label) = match g.impact {
                 SecurityImpact::Relaxed => ("badge-relaxed", "🔴 RELAXED (弱化)"),
                 SecurityImpact::Hardened => ("badge-hardened", "🟢 HARDENED (強化)"),
                 SecurityImpact::Neutral => ("badge-neutral", "⚪ NEUTRAL"),
             };
-            out.push_str(&format!(r#"
+            out.push_str(&format!(
+                r#"
         <tr>
           <td><code>{}</code></td>
           <td style="color: #fca5a5;">{}</td>
@@ -418,8 +496,11 @@ fn render_html(report: &BundleDiffReport) -> String {
         out.push_str(r#"<p style="color: var(--text-muted); font-size: 13px;">ルールに変更はありません。</p>"#);
     } else {
         for (file_name, rules) in file_groups {
-            let file_changed_count = rules.iter().filter(|r| !matches!(r, RuleDiffItem::Unchanged { .. })).count();
-            
+            let file_changed_count = rules
+                .iter()
+                .filter(|r| !matches!(r, RuleDiffItem::Unchanged { .. }))
+                .count();
+
             out.push_str(&format!(r#"
     <div class="file-group">
       <div class="file-header" onclick="this.nextElementSibling.classList.toggle('hidden')">
@@ -434,20 +515,37 @@ fn render_html(report: &BundleDiffReport) -> String {
 
             for item in rules {
                 match item {
-                    RuleDiffItem::Modified { id, impact, details, .. } => {
+                    RuleDiffItem::Modified {
+                        id,
+                        impact,
+                        details,
+                        ..
+                    } => {
                         let (card_class, badge_class, badge_label) = match impact {
-                            SecurityImpact::Relaxed => ("relaxed", "badge-relaxed", "🔴 変更 (弱化)"),
-                            SecurityImpact::Hardened => ("hardened", "badge-hardened", "🟢 変更 (強化)"),
-                            SecurityImpact::Neutral => ("neutral", "badge-neutral", "⚪ 変更 (ニュートラル)"),
+                            SecurityImpact::Relaxed => {
+                                ("relaxed", "badge-relaxed", "🔴 変更 (弱化)")
+                            }
+                            SecurityImpact::Hardened => {
+                                ("hardened", "badge-hardened", "🟢 変更 (強化)")
+                            }
+                            SecurityImpact::Neutral => {
+                                ("neutral", "badge-neutral", "⚪ 変更 (ニュートラル)")
+                            }
                         };
-                        out.push_str(&format!(r#"
+                        out.push_str(&format!(
+                            r#"
         <div class="rule-card {}">
           <div class="rule-title">
             <span>rule_id: "{}"</span>
             <span class="badge {}">{}</span>
           </div>
           <ul class="details-list">
-"#, card_class, escape_html(id), badge_class, badge_label));
+"#,
+                            card_class,
+                            escape_html(id),
+                            badge_class,
+                            badge_label
+                        ));
                         for d in details {
                             out.push_str(&format!("<li>{}</li>", escape_html(d)));
                         }
@@ -492,7 +590,8 @@ fn render_html(report: &BundleDiffReport) -> String {
     }
 
     // JavaScript（アコーディオンの制御）
-    out.push_str(r#"
+    out.push_str(
+        r#"
 </div>
 <script>
   document.querySelectorAll('.file-header').forEach(header => {
@@ -506,7 +605,8 @@ fn render_html(report: &BundleDiffReport) -> String {
 </script>
 </body>
 </html>
-"#);
+"#,
+    );
 
     out
 }
@@ -519,4 +619,3 @@ fn escape_html(s: &str) -> String {
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
 }
-

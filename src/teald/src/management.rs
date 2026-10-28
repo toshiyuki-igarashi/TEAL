@@ -4,23 +4,21 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
-use std::sync::{Arc, OnceLock};
-use std::path::Path;
-use arc_swap::ArcSwapOption;
 use anyhow::{Context, Result};
+use arc_swap::ArcSwapOption;
 use serde_json::Value;
+use std::path::Path;
+use std::sync::{Arc, OnceLock};
 
-
-use teal_policy_engine::util::ktime_prefix;
-use teal_policy_engine::load::load_json_file;
-use teal_policy_engine::schema::validate_against_schema;
-use teal_policy_engine::management::{RawManagement, CompiledManagement, compile_management};
 use teal_policy_engine::ir::CompiledRolesCore;
+use teal_policy_engine::load::load_json_file;
+use teal_policy_engine::management::{compile_management, CompiledManagement, RawManagement};
+use teal_policy_engine::schema::validate_against_schema;
+use teal_policy_engine::util::ktime_prefix;
 
 pub const MANAGEMENT_PATH: &str = "/etc/teal.d/management.json";
 
-const MANAGEMENT_SCHEMA_JSON: &str =
-    include_str!("../../schema/management_v1_0.schema.json");
+const MANAGEMENT_SCHEMA_JSON: &str = include_str!("../../schema/management_v1_0.schema.json");
 
 static SCHEMA: OnceLock<Value> = OnceLock::new();
 
@@ -37,10 +35,7 @@ static MANAGEMENT: ArcSwapOption<CompiledManagement> = ArcSwapOption::const_empt
 
 pub fn init_management(management: CompiledManagement) -> Result<(), &'static str> {
     let value = Arc::new(management);
-    let previous = MANAGEMENT.compare_and_swap(
-        &None::<Arc<CompiledManagement>>,
-        Some(value),
-    );
+    let previous = MANAGEMENT.compare_and_swap(&None::<Arc<CompiledManagement>>, Some(value));
     if previous.is_some() {
         return Err("MANAGEMENT already initialized");
     }
@@ -62,8 +57,12 @@ pub fn prepare_management<P: AsRef<Path>>(
         .with_context(|| format!("load management json: {}", path.display()))?;
     validate_against_schema(&v, management_schema_value())
         .with_context(|| format!("management schema validation failed: {}", path.display()))?;
-    let raw: RawManagement = serde_json::from_value(v)
-        .with_context(|| format!("deserialize management raw struct failed: {}", path.display()))?;
+    let raw: RawManagement = serde_json::from_value(v).with_context(|| {
+        format!(
+            "deserialize management raw struct failed: {}",
+            path.display()
+        )
+    })?;
     let (compiled, warnings) = compile_management(raw, roles)
         .with_context(|| format!("compile management failed: {}", path.display()))?;
     for w in &warnings.warnings {
