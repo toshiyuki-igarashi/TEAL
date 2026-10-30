@@ -28,6 +28,12 @@
       "items": { "$ref": "#/$defs/groupAssignment" }
     },
 
+    "login_contexts": {
+      "type": "array",
+      "description": "UIDごとの許可SSH接続元。各UIDの定義は1件に限る（コンパイル時に検証）。",
+      "items": { "$ref": "#/$defs/loginContextAssignment" }
+    },
+
     "defaults": { "$ref": "#/$defs/defaults" }
   },
 
@@ -94,6 +100,35 @@
       "anyOf": [
         { "required": ["gid"] },
         { "required": ["group"] }
+      ]
+    },
+
+    "loginContextAssignment": {
+      "type": "object",
+      "required": ["allowed_ssh_sources"],
+      "additionalProperties": false,
+      "properties": {
+        "uid": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "user": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "allowed_ssh_sources": {
+          "type": "array",
+          "description": "許可するSSH接続元。IPv4/IPv6アドレス、CIDR。空配列はSSH接続を禁止する。",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "oneOf": [
+        { "required": ["uid"] },
+        { "required": ["user"] }
       ]
     },
 

@@ -724,6 +724,9 @@ pub struct CompiledRolesCore {
 
     /// Default behavior
     pub defaults: CompiledDefaults,
+
+    /// uid -> 許可されたCIDRネットワークリスト
+    pub allowed_ssh_networks: HashMap<u32, Vec<ipnetwork::IpNetwork>>,
 }
 
 #[derive(Debug)]
