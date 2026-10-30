@@ -207,30 +207,7 @@ pub struct ControlChange {
 pub fn compare_management(curr: &RawManagement, stage: &RawManagement) -> Option<ManagementDiff> {
     let mut diff = ManagementDiff::default();
 
-    // 1. 管理ロール (roles) の UID 割り当て差分
-    let curr_roles: BTreeMap<_, _> = curr.roles.iter().map(|r| (&r.name, &r.uids)).collect();
-    let stage_roles: BTreeMap<_, _> = stage.roles.iter().map(|r| (&r.name, &r.uids)).collect();
-
-    for (role, stage_uids) in &stage_roles {
-        let empty = Vec::new();
-        let curr_uids = curr_roles.get(role).copied().unwrap_or(&empty);
-
-        let curr_set: BTreeSet<_> = curr_uids.iter().copied().collect();
-        let stage_set: BTreeSet<_> = stage_uids.iter().copied().collect();
-
-        let added: Vec<_> = stage_set.difference(&curr_set).copied().collect();
-        let removed: Vec<_> = curr_set.difference(&stage_set).copied().collect();
-
-        if !added.is_empty() || !removed.is_empty() {
-            diff.role_changes.push(MgmtRoleChange {
-                role_name: (*role).clone(),
-                added_uids: added,
-                removed_uids: removed,
-            });
-        }
-    }
-
-    // 2. コマンド制御 (controls) の比較
+    // コマンド制御 (controls) の比較
     // 非Option型 (start, stop) と Option型 (policy_update, flush) を Option<&RawMgmtControl> に揃える
     let commands: [(&str, Option<&RawMgmtControl>, Option<&RawMgmtControl>); 4] = [
         (
