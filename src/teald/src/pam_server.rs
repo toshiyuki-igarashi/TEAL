@@ -6,7 +6,6 @@
  */
 // teald/src/pam_server.rs
 
-use serde::Deserialize;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use tokio::io::AsyncReadExt;
@@ -14,25 +13,19 @@ use tokio::net::{UnixListener, UnixStream};
 
 use teal_policy_engine::ir::RegisteredSession;
 use teal_policy_engine::util::normalize_tty_name;
+use teal_common::{PamLoginNotification, PAM_SOCKET_PATH, TEAL_SOCKET_ROOT};
 
 use crate::state::app_state; // AppStateへのアクセス用（※プロジェクトの構造に合わせてパスは調整してください）
 
-/// 受信する JSON の構造体（Data Transfer Object）
-#[derive(Debug, Deserialize)]
-struct PamEvent {
-    action: String,
-    user: String,
-    session_tty: String,
-    source_ip: Option<String>,
-    auth_method: Option<String>,
-}
-
 /// PAMからのイベントを待ち受ける UNIX ドメインソケットリスナーを起動する
 pub async fn start_pam_listener() {
-    let socket_path = "/tmp/teal_pam.sock";
+    let socket_path = PAM_SOCKET_PATH;
+
+    // ★ 保険: 親ディレクトリ (/run/teal) が存在しない場合は作成
+    let _ = tokio::fs::create_dir_all(TEAL_SOCKET_ROOT).await;
 
     // 1. ソケットファイルの初期化
-    let _ = fs::remove_file(socket_path);
+    let _ = tokio::fs::remove_file(socket_path).await;
 
     let listener = match UnixListener::bind(socket_path) {
         Ok(l) => l,
@@ -46,7 +39,7 @@ pub async fn start_pam_listener() {
     };
 
     // 2. クライアント（pam_teal.so）が書き込めるように権限を設定
-    if let Err(e) = fs::set_permissions(socket_path, fs::Permissions::from_mode(0o777)) {
+    if let Err(e) = fs::set_permissions(socket_path, fs::Permissions::from_mode(0o666)) {
         eprintln!(
             "[WARN] teald-PAM: Failed to set permissions on PAM socket: {}",
             e
@@ -80,7 +73,7 @@ async fn handle_pam_connection(mut stream: UnixStream) {
     }
 
     // JSONのデシライズ処理
-    match serde_json::from_str::<PamEvent>(&buffer) {
+    match serde_json::from_str::<PamLoginNotification>(&buffer) {
         Ok(event) => {
             // パースに成功したら、実際の状態更新ロジックへ引き渡す
             process_pam_event(event).await;
@@ -95,14 +88,14 @@ async fn handle_pam_connection(mut stream: UnixStream) {
 }
 
 /// パース済みのPAMイベントを評価し、AppStateのアクティブセッション台帳を更新する
-async fn process_pam_event(event: PamEvent) {
+async fn process_pam_event(event: PamLoginNotification) {
     // TTY名の正規化（ロックを取る前にできることは先にやる）
     let normalized_key = normalize_tty_name(&event.session_tty);
 
     match event.action.as_str() {
         "login" => {
             let session = RegisteredSession {
-                user: event.user.clone(),
+                uid: event.uid,
                 source_ip: event.source_ip.clone(),
                 auth_method: event.auth_method.clone(),
             };
@@ -114,8 +107,8 @@ async fn process_pam_event(event: PamEvent) {
             } // ロック解除！
 
             println!(
-                "[teald-PAM] Registered session: user={} at {} (from: {}, auth: {})",
-                event.user,
+                "[teald-PAM] Registered session: uid={} at {} (from: {}, auth: {})",
+                event.uid,
                 event.session_tty,
                 event.source_ip.as_deref().unwrap_or("-"),
                 event.auth_method.as_deref().unwrap_or("-")
@@ -148,42 +141,41 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_pam_login_logout() {
-        // 初期化されていなければ初期化する
         if APP_STATE.get().is_none() {
             init_state().await;
         }
 
-        // 1. テスト用の擬似ログインイベント作成
-        let login_event = PamEvent {
+        let login_event = PamLoginNotification {
             action: "login".to_string(),
-            user: "toshiyuki".to_string(),
+            uid: 1000,
             session_tty: "pts/9".to_string(),
             source_ip: Some("192.168.1.50".to_string()),
             auth_method: Some("publickey".to_string()),
         };
 
-        // 2. 状態更新ロジックを直接叩く
         process_pam_event(login_event).await;
 
-        // 3. アサーション（期待通りのデータがAppStateにあるか）
         {
             let st = app_state().lock().await;
             let session = st.slow.active_tty_sessions.get("pts9").unwrap();
-            assert_eq!(session.user, "toshiyuki");
-            assert_eq!(session.source_ip.as_deref(), Some("192.168.1.50"));
+
+            assert_eq!(session.uid, 1000);
+            assert_eq!(
+                session.source_ip.as_deref(),
+                Some("192.168.1.50")
+            );
         }
 
-        // 4. ログアウトイベントのテスト
-        let logout_event = PamEvent {
+        let logout_event = PamLoginNotification {
             action: "logout".to_string(),
-            user: "toshiyuki".to_string(),
+            uid: 1000,
             session_tty: "pts/9".to_string(),
             source_ip: None,
             auth_method: None,
         };
+
         process_pam_event(logout_event).await;
 
-        // 5. 消えていることを確認
         {
             let st = app_state().lock().await;
             assert!(!st.slow.active_tty_sessions.contains_key("pts9"));

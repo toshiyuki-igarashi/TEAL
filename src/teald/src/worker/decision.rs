@@ -28,7 +28,7 @@ use teal_policy_engine::ir::{CompiledRule, Decision};
 use teal_policy_engine::raw::{TEAL_TICKET_FLG_PARENT_MATCH, TEAL_TICKET_FLG_SILENT_IO};
 use teal_policy_engine::types::Action;
 use teal_policy_engine::types::AuditLevel;
-use teal_policy_engine::util::{ktime_prefix, uid_to_name};
+use teal_policy_engine::util::ktime_prefix;
 
 // =========================================================================
 // ワーカーのメインループ
@@ -109,16 +109,9 @@ pub async fn process_policy_decision(req: &mut Request) -> PolicyResult {
     let compiled = &current.bundle;
     let current_epoch = current.epoch;
 
-    let target_uid = req.uid;
-
-    let request_user = tokio::task::spawn_blocking(move || uid_to_name(target_uid).ok())
-        .await
-        .unwrap_or(None);
-
     let session_info = {
         let state = app_state().lock().await;
-
-        state.check_registered_session(&req.session_tty, req.uid, request_user.as_deref())
+        state.check_registered_session(&req.session_tty, req.uid)
     };
 
     let ctx = request_to_ctx(req, &compiled.roles, session_info);
@@ -126,31 +119,15 @@ pub async fn process_policy_decision(req: &mut Request) -> PolicyResult {
     let decision = evaluate(&compiled.policy, &ctx);
 
     match decision {
-        //
-        // 管理対象外
-        //
-        Decision::Pass => {
-            // prog_sha256 は None のまま
-            build_not_managed_result(req, current_epoch)
-        }
-
-        //
-        // Managedだがルールなし → DENY
-        //
+        Decision::Pass => build_not_managed_result(req, current_epoch),
         Decision::NoMatchManaged => {
             ensure_program_hash(req).await;
-
             build_no_match_result(current_epoch)
         }
-
-        //
-        // ルールにマッチ
-        //
         Decision::Matched(rule) => {
             if !rule.ticket_profile.is_silent_io() {
                 ensure_program_hash(req).await;
             }
-
             apply_matched_rule(rule, req, current_epoch).await
         }
     }

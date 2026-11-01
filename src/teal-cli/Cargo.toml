@@ -32,6 +32,7 @@ glob = "0.3"                # Rust側でのパスパターン解決用
 # TEAL 内部クレート
 teal_policy_engine = { path = "../teal_policy_engine" }
 teald = { path = "../teald" }
+teal_common = { path = "../teal_common" }
 
 # その他
 colored = "3.1.1"

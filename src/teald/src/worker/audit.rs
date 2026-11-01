@@ -26,7 +26,7 @@ use teal_policy_engine::eval::evaluate;
 use teal_policy_engine::ir::{CompiledRule, Decision};
 use teal_policy_engine::raw::{TEAL_TICKET_FLG_INHERIT, TEAL_TICKET_FLG_SILENT_IO};
 use teal_policy_engine::types::{Effect, RuleType};
-use teal_policy_engine::util::{ktime_prefix, uid_to_name};
+use teal_policy_engine::util::ktime_prefix;
 
 // =========================================================================
 // ワーカーのメインループ (AUDITレーン)
@@ -217,46 +217,29 @@ async fn evaluate_audit_request(req: &mut Request) -> AuditEvalResult {
     let compiled = &current.bundle;
     let epoch = current.epoch;
 
-    let target_uid = req.uid;
-
-    let request_user = tokio::task::spawn_blocking(move || uid_to_name(target_uid).ok())
-        .await
-        .unwrap_or(None);
-
     let session_info = {
         let state = app_state().lock().await;
-
-        state.check_registered_session(&req.session_tty, req.uid, request_user.as_deref())
+        state.check_registered_session(&req.session_tty, req.uid)
     };
 
     let ctx = request_to_ctx(req, &compiled.roles, session_info);
 
-    //
-    // evaluate() が返したrule参照をawait越しに保持しないため、
-    // CompiledRuleをcloneしてownedにする
-    //
     let route = match evaluate(&compiled.policy, &ctx) {
         Decision::Pass => AuditRoute::Pass,
-
         Decision::NoMatchManaged => AuditRoute::NoMatchManaged,
-
         Decision::Matched(r) => AuditRoute::Matched(Box::new(r.clone())),
     };
 
     match route {
         AuditRoute::Pass => build_audit_not_managed_result(req, epoch),
-
         AuditRoute::NoMatchManaged => {
             ensure_program_hash(req).await;
-
             build_audit_no_match_result(epoch)
         }
-
         AuditRoute::Matched(rule) => {
             if !rule.ticket_profile.is_silent_io() {
                 ensure_program_hash(req).await;
             }
-
             build_audit_matched_result(req, *rule, epoch)
         }
     }

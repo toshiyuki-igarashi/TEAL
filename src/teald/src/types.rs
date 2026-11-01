@@ -180,7 +180,6 @@ impl AppState {
         &self,
         tty: &str,
         uid: u32,
-        request_user: Option<&str>,
     ) -> Option<RegisteredSession> {
         // TTYが空、またはプレースホルダーの場合は未登録とみなす（バックグラウンドプロセス等）
         if tty.is_empty() || tty == "-" {
@@ -190,27 +189,15 @@ impl AppState {
         // 1. TTY名の正規化（例: "/dev/pts/1" -> "pts1"）
         let normalized_key = normalize_tty_name(tty);
 
-        // 2. ユーザー名が解決できなかった場合は検証不可能なので弾く
-        let request_user_str = match request_user {
-            Some(name) => name,
-            None => {
-                eprintln!(
-                    "[WARN] check_registered_session: Failed to resolve name for UID {}",
-                    uid
-                );
-                return None;
-            }
-        };
-
-        // 3. 登録されたセッション情報を取得して厳密に突き合わせる（ハイジャック防止）
+        // 2. 登録されたセッション情報を取得して UID を厳密に突き合わせる（ハイジャック防止）
         if let Some(session) = self.slow.active_tty_sessions.get(&normalized_key) {
-            if request_user_str == session.user {
+            if uid == session.uid {
                 // 検証成功！セッション情報を丸ごと呼び出し元へ返却
                 return Some(session.clone());
             } else {
                 eprintln!(
-                    "[SECURITY ALERT] TTY Hijack detected! Process (UID={}, User='{}') tried to use TTY {} which belongs to Registered User '{}'",
-                    uid, request_user_str, normalized_key, session.user
+                    "[SECURITY ALERT] TTY Hijack detected! Process (UID={}) tried to use TTY {} which belongs to Registered UID {}",
+                    uid, normalized_key, session.uid
                 );
             }
         }

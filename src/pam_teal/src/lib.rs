@@ -5,30 +5,20 @@
 // Copyright (c) 2026 Toshiyuki Igarashi
 use std::ffi::{CStr, CString};
 use std::io::Write;
+use std::net::IpAddr;
 use std::os::raw::{c_char, c_int, c_void};
 use std::os::unix::net::UnixStream;
+use nix::unistd::User;
 
 // pam_sys から公式の型、Enum、生C関数インポート
 use pam_sys::raw::{pam_get_data, pam_get_item, pam_get_user, pam_set_data};
 use pam_sys::types::{PamHandle, PamItemType, PamReturnCode};
 
-use serde::Serialize;
+use teal_common::{PamLoginNotification, PAM_SOCKET_PATH};
 
 // TEAL内部で認証状態を引き回すための一意のメモリキー名
 const TEAL_AUTH_METHOD_KEY: &[u8] = b"teal_auth_method\0";
-
-#[derive(Serialize)]
-struct PamLoginNotification {
-    action: String,      // "login" または "logout"
-    user: String,        // "toshiyuki"
-    session_tty: String, // "pts4" など
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    source_ip: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    auth_method: Option<String>,
-}
+const TEAL_SESSION_UID_KEY: &[u8] = b"teal_session_uid\0";
 
 // =========================================================================
 // ヘルパー関数 / コールバック
@@ -44,19 +34,31 @@ extern "C" fn cleanup_string(_pamh: *mut PamHandle, data: *mut c_void, _pam_stat
     }
 }
 
+extern "C" fn cleanup_uid(
+    _pamh: *mut PamHandle,
+    data: *mut c_void,
+    _pam_status: c_int,
+) {
+    if !data.is_null() {
+        unsafe {
+            drop(Box::from_raw(data as *mut u32));
+        }
+    }
+}
+
 /// teald に UNIX Domain Socket 経由でイベント（JSON文字列）を送信する
-pub fn notify_teald(
+fn notify_teald(
     action: &str,
-    user: &str,
+    uid: u32,
     tty: &str,
     source_ip: Option<String>,
     auth_method: Option<String>,
 ) {
-    let socket_path = "/tmp/teal_pam.sock";
+    let socket_path = PAM_SOCKET_PATH;
 
     let notification = PamLoginNotification {
         action: action.to_string(),
-        user: user.to_string(),
+        uid,
         session_tty: tty.to_string(),
         source_ip,
         auth_method,
@@ -77,23 +79,15 @@ pub fn notify_teald(
     }
 }
 
-/// PamHandle からユーザー名とTTY、接続元IPを安全に一括取得する
-unsafe fn get_session_info(pamh: *mut PamHandle) -> (String, String, Option<String>) {
-    // 1. ユーザー名の取得 (pam_sys::raw::pam_get_user を使用)
-    let mut user_ptr: *const c_char = std::ptr::null();
-    let user = if pam_get_user(pamh, &mut user_ptr, std::ptr::null())
-        == (PamReturnCode::SUCCESS as c_int)
-        && !user_ptr.is_null()
-    {
-        CStr::from_ptr(user_ptr).to_string_lossy().into_owned()
-    } else {
-        "unknown".to_string()
-    };
-
-    // 2. TTYの取得 (PamItemType::TTY を使用)
+/// PamHandle からTTYを安全に一括取得する
+unsafe fn get_session_tty(pamh: *mut PamHandle) -> String {
     let mut tty_ptr: *const c_void = std::ptr::null();
-    let tty = if pam_get_item(pamh, PamItemType::TTY as c_int, &mut tty_ptr)
-        == (PamReturnCode::SUCCESS as c_int)
+
+    if pam_get_item(
+        pamh,
+        PamItemType::TTY as c_int,
+        &mut tty_ptr,
+    ) == PamReturnCode::SUCCESS as c_int
         && !tty_ptr.is_null()
     {
         CStr::from_ptr(tty_ptr as *const c_char)
@@ -101,7 +95,25 @@ unsafe fn get_session_info(pamh: *mut PamHandle) -> (String, String, Option<Stri
             .into_owned()
     } else {
         "unknown".to_string()
+    }
+}
+
+/// PamHandle からユーザー名とTTY、接続元IPを安全に一括取得する
+unsafe fn get_session_info(pamh: *mut PamHandle) -> (Option<u32>, String, String, Option<String>) {
+    // 1. ユーザー名の取得 (pam_sys::raw::pam_get_user を使用)
+    let mut user_ptr: *const c_char = std::ptr::null();
+    let get_result = pam_get_user(pamh, &mut user_ptr, std::ptr::null());
+    let (uid, user) = if get_result == (PamReturnCode::SUCCESS as c_int) && !user_ptr.is_null()
+    {
+        let user = CStr::from_ptr(user_ptr).to_string_lossy().into_owned();
+        // PAM環境下でUIDを解決
+        (User::from_name(&user).ok().flatten().map(|u| u.uid.as_raw()), user)
+    } else {
+        (None, "unknown".to_string())
     };
+
+    // 2. TTYの取得 (PamItemType::TTY を使用)
+    let tty = get_session_tty(pamh);
 
     // 3. 接続元IP (RHOST) の取得
     let mut rhost_ptr: *const c_void = std::ptr::null();
@@ -122,7 +134,15 @@ unsafe fn get_session_info(pamh: *mut PamHandle) -> (String, String, Option<Stri
         None
     };
 
-    (user, tty, source_ip)
+    let source_ip = source_ip.and_then(|s| match s.parse::<IpAddr>() {
+        Ok(ip) => Some(ip.to_string()),
+        Err(_) => {
+            eprintln!("[TEAL PAM] Invalid source IP from PAM_RHOST: '{}'", s);
+            None
+        }
+    });
+
+    (uid, user, tty, source_ip)
 }
 
 // =========================================================================
@@ -149,12 +169,16 @@ pub unsafe extern "C" fn pam_sm_authenticate(
     let raw_ptr = method.into_raw(); // 所有権を放棄して生ポインタ化
 
     // メモリスタックに "password" ファクトを保存
-    pam_set_data(
+    let result = pam_set_data(
         pamh,
         TEAL_AUTH_METHOD_KEY.as_ptr() as *const c_char,
         raw_ptr as *mut c_void,
         Some(cleanup_string),
     );
+
+    if result != PamReturnCode::SUCCESS as c_int {
+        let _ = CString::from_raw(raw_ptr);
+    }
 
     // 認証自体はsshd側の pam_unix 等に任せるため、IGNOREを返してスタックを邪魔しない
     PamReturnCode::IGNORE as c_int
@@ -175,7 +199,34 @@ pub unsafe extern "C" fn pam_sm_open_session(
     _argv: *const *const c_char,
 ) -> c_int {
     // ユーザー名、TTY、接続元IPを取得
-    let (user, tty, source_ip) = get_session_info(pamh);
+    let (uid_opt, user, tty, source_ip) = get_session_info(pamh);
+
+    let uid = match uid_opt {
+        Some(u) => u,
+        None => {
+            eprintln!("[TEAL PAM] Failed to resolve UID for login session");
+            return PamReturnCode::SESSION_ERR as c_int;
+        }
+    };
+
+    // UIDをヒープに確保
+    let uid_ptr = Box::into_raw(Box::new(uid));
+
+    // PAMハンドルに保存
+    let result = pam_set_data(
+        pamh,
+        TEAL_SESSION_UID_KEY.as_ptr() as *const c_char,
+        uid_ptr as *mut c_void,
+        Some(cleanup_uid),
+    );
+
+    if result != PamReturnCode::SUCCESS as c_int {
+        // 保存に失敗した場合は自分で解放
+        drop(Box::from_raw(uid_ptr));
+
+        eprintln!("[TEAL PAM] Failed to save session UID");
+        return PamReturnCode::SESSION_ERR as c_int;
+    }
 
     let mut auth_method: Option<String> = None;
 
@@ -190,24 +241,17 @@ pub unsafe extern "C" fn pam_sm_open_session(
     if res == (PamReturnCode::SUCCESS as c_int) && !data_ptr.is_null() {
         let c_str = CStr::from_ptr(data_ptr as *const c_char);
         auth_method = Some(c_str.to_string_lossy().into_owned());
-    } else {
-        // ステップB: データがない場合、かつリモートからの接続IPが存在すれば「公開鍵認証」と判定
-        if let Some(ref ip) = source_ip {
-            if !ip.is_empty() {
-                auth_method = Some("publickey".to_string());
-            }
-        }
     }
 
     // ログ表示（表示用には unwrap_or を使用して綺麗に整形）
-    let log_ip = source_ip.as_deref().unwrap_or("127.0.0.1");
+    let log_ip = source_ip.as_deref().unwrap_or("<unknown>");
     let log_auth = auth_method.as_deref().unwrap_or("local/unspecified");
     println!(
-        "[TEAL PAM] User '{}' logged in on TTY '{}' from IP '{}' via '{}'",
-        user, tty, log_ip, log_auth
+        "[TEAL PAM] User '{}' UID '{}' logged in on TTY '{}' from IP '{}' via '{}'",
+        user, uid, tty, log_ip, log_auth
     );
 
-    notify_teald("login", &user, &tty, source_ip, auth_method);
+    notify_teald("login", uid, &tty, source_ip, auth_method);
 
     PamReturnCode::SUCCESS as c_int
 }
@@ -226,12 +270,29 @@ pub unsafe extern "C" fn pam_sm_close_session(
     _argc: c_int,
     _argv: *const *const c_char,
 ) -> c_int {
-    let (user, tty, _source_ip) = get_session_info(pamh);
+    let tty = get_session_tty(pamh);
+
+    let mut data_ptr: *const c_void = std::ptr::null();
+
+    let result = pam_get_data(
+        pamh,
+        TEAL_SESSION_UID_KEY.as_ptr() as *const c_char,
+        &mut data_ptr,
+    );
+
+    let uid = if result == PamReturnCode::SUCCESS as c_int
+        && !data_ptr.is_null()
+    {
+        *(data_ptr as *const u32)
+    } else {
+        eprintln!("[TEAL PAM] Failed to retrieve session UID");
+        return PamReturnCode::SESSION_ERR as c_int;
+    };
 
     // デーモンにログアウトを通知
-    notify_teald("logout", &user, &tty, None, None);
+    notify_teald("logout", uid, &tty, None, None);
 
-    println!("[TEAL PAM] User '{}' logged out from TTY '{}'", user, tty);
+    println!("[TEAL PAM] UID '{}' logged out from TTY '{}'", uid, tty);
 
     PamReturnCode::SUCCESS as c_int
 }

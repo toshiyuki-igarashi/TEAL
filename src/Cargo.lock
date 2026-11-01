@@ -474,6 +474,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
+name = "const_format"
+version = "0.2.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3decb4d6965448659923544a634a0571ba44cede4e11ef15a5a317126840454"
+dependencies = [
+ "const_format_proc_macros",
+ "konst",
+]
+
+[[package]]
+name = "const_format_proc_macros"
+version = "0.2.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "941b570269a642506f08cb5b688c04bfa6cfd41a26f8bcdc49db8fd00c0ab659"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-xid",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1497,6 +1518,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "konst"
+version = "0.2.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "128133ed7824fcd73d6e7b17957c5eb7bacb885649bd8c69708b2331a10bcefb"
+dependencies = [
+ "konst_macro_rules",
+]
+
+[[package]]
+name = "konst_macro_rules"
+version = "0.2.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4933f3f57a8e9d9da04db23fb153356ecaf00cbd14aee46279c33dc80925c37"
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1621,6 +1657,18 @@ dependencies = [
  "bitflags 2.11.1",
  "cfg-if",
  "cfg_aliases 0.1.1",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.11.1",
+ "cfg-if",
+ "cfg_aliases 0.2.2",
  "libc",
 ]
 
@@ -1785,9 +1833,10 @@ dependencies = [
 name = "pam_teal"
 version = "0.1.0"
 dependencies = [
+ "nix 0.31.3",
  "pam-sys",
- "serde",
  "serde_json",
+ "teal_common",
 ]
 
 [[package]]
@@ -2689,6 +2738,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "teal_common",
  "teal_policy_engine",
  "teald",
  "tempfile",
@@ -2717,7 +2767,7 @@ dependencies = [
  "humantime",
  "libc",
  "neli",
- "nix",
+ "nix 0.28.0",
  "once_cell",
  "quick-xml",
  "rand 0.8.5",
@@ -2736,6 +2786,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "teal_common"
+version = "0.5.0"
+dependencies = [
+ "const_format",
+ "serde",
+]
+
+[[package]]
 name = "teal_policy_engine"
 version = "0.5.0"
 dependencies = [
@@ -2746,7 +2804,7 @@ dependencies = [
  "ipnetwork",
  "jsonschema",
  "libc",
- "nix",
+ "nix 0.28.0",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -2775,7 +2833,7 @@ dependencies = [
  "humantime",
  "libc",
  "neli",
- "nix",
+ "nix 0.28.0",
  "once_cell",
  "quick-xml",
  "rand 0.8.5",
@@ -2785,6 +2843,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "teal_common",
  "teal_policy_engine",
  "tempfile",
  "thiserror 2.0.21",

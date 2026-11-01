@@ -29,12 +29,18 @@ use teald::ticket::preload_silent_directory_tickets;
 use teald::types::{set_daemon_mode, DaemonMode, InternalEvent};
 
 use teal_policy_engine::util::ktime_prefix;
+use teal_common::{TEAL_SOCKET_ROOT, TEALD_ADMIN_SOCKET_PATH};
 
 /// 1) state の初期化
 use teald::state::init_state;
 
 /// 2) admin unix socket を初期化して listener を返す
 async fn init_admin_socket(socket_path: &str) -> Result<UnixListener> {
+    // ★ 保険: 親ディレクトリ (/run/teal) が存在しない場合は作成
+    tokio::fs::create_dir_all(TEAL_SOCKET_ROOT)
+        .await
+        .context("create admin socket directory")?;
+
     if std::path::Path::new(socket_path).exists() {
         std::fs::remove_file(socket_path).context("remove existing admin socket")?;
     }
@@ -43,8 +49,8 @@ async fn init_admin_socket(socket_path: &str) -> Result<UnixListener> {
 
     #[cfg(unix)]
     {
-        std::fs::set_permissions(socket_path, PermissionsExt::from_mode(0o777))
-            .with_context(|| format!("chmod 0777 for {}", socket_path))?;
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o666))
+            .with_context(|| format!("chmod 0666 for {}", socket_path))?;
     }
 
     eprintln!(
@@ -167,7 +173,18 @@ async fn main() -> Result<()> {
 
     EvidenceManager::init(1024, ai_runtime);
 
-    let listener = init_admin_socket("/tmp/teald.sock").await?;
+    // ソケット配置ディレクトリの作成と権限設定
+    if let Err(e) = std::fs::create_dir_all(TEAL_SOCKET_ROOT) {
+        eprintln!("{}[WARN] Failed to create {} directory: {}", ktime_prefix(), TEAL_SOCKET_ROOT, e);
+    } else {
+        #[cfg(unix)]
+        let _ = std::fs::set_permissions(
+            TEAL_SOCKET_ROOT,
+            std::fs::Permissions::from_mode(0o755),
+        );
+    }
+
+    let listener = init_admin_socket(TEALD_ADMIN_SOCKET_PATH).await?;
 
     // PAMリスナーをバックグラウンドタスクとして起動
     tokio::spawn(async {
