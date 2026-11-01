@@ -3,12 +3,12 @@
 // TEAL PAM module (pam_teal)
 //
 // Copyright (c) 2026 Toshiyuki Igarashi
+use nix::unistd::User;
 use std::ffi::{CStr, CString};
 use std::io::Write;
 use std::net::IpAddr;
 use std::os::raw::{c_char, c_int, c_void};
 use std::os::unix::net::UnixStream;
-use nix::unistd::User;
 
 // pam_sys から公式の型、Enum、生C関数インポート
 use pam_sys::raw::{pam_get_data, pam_get_item, pam_get_user, pam_set_data};
@@ -34,11 +34,7 @@ extern "C" fn cleanup_string(_pamh: *mut PamHandle, data: *mut c_void, _pam_stat
     }
 }
 
-extern "C" fn cleanup_uid(
-    _pamh: *mut PamHandle,
-    data: *mut c_void,
-    _pam_status: c_int,
-) {
+extern "C" fn cleanup_uid(_pamh: *mut PamHandle, data: *mut c_void, _pam_status: c_int) {
     if !data.is_null() {
         unsafe {
             drop(Box::from_raw(data as *mut u32));
@@ -83,11 +79,8 @@ fn notify_teald(
 unsafe fn get_session_tty(pamh: *mut PamHandle) -> String {
     let mut tty_ptr: *const c_void = std::ptr::null();
 
-    if pam_get_item(
-        pamh,
-        PamItemType::TTY as c_int,
-        &mut tty_ptr,
-    ) == PamReturnCode::SUCCESS as c_int
+    if pam_get_item(pamh, PamItemType::TTY as c_int, &mut tty_ptr)
+        == PamReturnCode::SUCCESS as c_int
         && !tty_ptr.is_null()
     {
         CStr::from_ptr(tty_ptr as *const c_char)
@@ -103,11 +96,16 @@ unsafe fn get_session_info(pamh: *mut PamHandle) -> (Option<u32>, String, String
     // 1. ユーザー名の取得 (pam_sys::raw::pam_get_user を使用)
     let mut user_ptr: *const c_char = std::ptr::null();
     let get_result = pam_get_user(pamh, &mut user_ptr, std::ptr::null());
-    let (uid, user) = if get_result == (PamReturnCode::SUCCESS as c_int) && !user_ptr.is_null()
-    {
+    let (uid, user) = if get_result == (PamReturnCode::SUCCESS as c_int) && !user_ptr.is_null() {
         let user = CStr::from_ptr(user_ptr).to_string_lossy().into_owned();
         // PAM環境下でUIDを解決
-        (User::from_name(&user).ok().flatten().map(|u| u.uid.as_raw()), user)
+        (
+            User::from_name(&user)
+                .ok()
+                .flatten()
+                .map(|u| u.uid.as_raw()),
+            user,
+        )
     } else {
         (None, "unknown".to_string())
     };
@@ -280,9 +278,7 @@ pub unsafe extern "C" fn pam_sm_close_session(
         &mut data_ptr,
     );
 
-    let uid = if result == PamReturnCode::SUCCESS as c_int
-        && !data_ptr.is_null()
-    {
+    let uid = if result == PamReturnCode::SUCCESS as c_int && !data_ptr.is_null() {
         *(data_ptr as *const u32)
     } else {
         eprintln!("[TEAL PAM] Failed to retrieve session UID");

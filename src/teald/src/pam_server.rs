@@ -11,9 +11,9 @@ use std::os::unix::fs::PermissionsExt;
 use tokio::io::AsyncReadExt;
 use tokio::net::{UnixListener, UnixStream};
 
+use teal_common::{PamLoginNotification, PAM_SOCKET_PATH, TEAL_SOCKET_ROOT};
 use teal_policy_engine::ir::RegisteredSession;
 use teal_policy_engine::util::normalize_tty_name;
-use teal_common::{PamLoginNotification, PAM_SOCKET_PATH, TEAL_SOCKET_ROOT};
 
 use crate::state::app_state; // AppStateへのアクセス用（※プロジェクトの構造に合わせてパスは調整してください）
 
@@ -160,10 +160,7 @@ mod tests {
             let session = st.slow.active_tty_sessions.get("pts9").unwrap();
 
             assert_eq!(session.uid, 1000);
-            assert_eq!(
-                session.source_ip.as_deref(),
-                Some("192.168.1.50")
-            );
+            assert_eq!(session.source_ip.as_deref(), Some("192.168.1.50"));
         }
 
         let logout_event = PamLoginNotification {

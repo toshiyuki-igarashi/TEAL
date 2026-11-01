@@ -116,7 +116,7 @@ pub async fn process_policy_decision(req: &mut Request) -> PolicyResult {
 
     let ctx = request_to_ctx(req, &compiled.roles, session_info);
 
-    let decision = evaluate(&compiled.policy, &ctx);
+    let decision = evaluate(&compiled, &ctx);
 
     match decision {
         Decision::Pass => build_not_managed_result(req, current_epoch),

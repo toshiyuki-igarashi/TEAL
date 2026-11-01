@@ -176,11 +176,7 @@ pub struct AppState {
 
 impl AppState {
     /// 指定されたTTYとUIDが、PAMで認証済みの正規セッションか厳密に検証し、成功すればセッション情報を返す
-    pub fn check_registered_session(
-        &self,
-        tty: &str,
-        uid: u32,
-    ) -> Option<RegisteredSession> {
+    pub fn check_registered_session(&self, tty: &str, uid: u32) -> Option<RegisteredSession> {
         // TTYが空、またはプレースホルダーの場合は未登録とみなす（バックグラウンドプロセス等）
         if tty.is_empty() || tty == "-" {
             return None;

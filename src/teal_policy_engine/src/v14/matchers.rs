@@ -4,15 +4,23 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
+use ipnetwork::IpNetwork;
+use std::collections::HashMap;
+use std::net::IpAddr;
 use std::path::Path;
 
 use crate::ir::{
     AccessContext, ActionMatcher, CompiledRule, LoginContextMatcher, ObjectKind, ObjectMatcher,
-    PathMatcher, SubjectMatcher,
+    PathMatcher, RegisteredSession, SubjectMatcher,
 };
 use crate::types::{Action, SystemType};
 
-pub fn rule_matches(rule: &CompiledRule, ctx: &AccessContext, system_type: SystemType) -> bool {
+pub fn rule_matches(
+    rule: &CompiledRule,
+    allowed_ssh_networks: &HashMap<u32, Vec<IpNetwork>>,
+    ctx: &AccessContext,
+    system_type: SystemType,
+) -> bool {
     // .as_deref() を使うことで、Option<PathBuf> を Option<&Path> に変換できます
     if match_object(
         &rule.object,
@@ -21,13 +29,18 @@ pub fn rule_matches(rule: &CompiledRule, ctx: &AccessContext, system_type: Syste
         ctx.object_kind,
     ) && match_action(&rule.action_match, ctx.action)
     {
-        match_subject(&rule.subject, ctx, system_type)
+        match_subject(&rule.subject, allowed_ssh_networks, ctx, system_type)
     } else {
         false
     }
 }
 
-pub fn match_subject(m: &SubjectMatcher, ctx: &AccessContext, system_type: SystemType) -> bool {
+fn match_subject(
+    m: &SubjectMatcher,
+    allowed_ssh_networks: &HashMap<u32, Vec<IpNetwork>>,
+    ctx: &AccessContext,
+    system_type: SystemType,
+) -> bool {
     // 1) uid match
     if let Some(rule_uid) = m.uid {
         if ctx.uid != rule_uid {
@@ -80,7 +93,7 @@ pub fn match_subject(m: &SubjectMatcher, ctx: &AccessContext, system_type: Syste
 
     // 6) ログインコンテキストのチェック (別関数に委譲)
     if let Some(login_ctx) = &m.login_context {
-        if !match_login_context(login_ctx, ctx, system_type) {
+        if !match_login_context(login_ctx, allowed_ssh_networks, ctx, system_type) {
             return false;
         }
     }
@@ -88,9 +101,34 @@ pub fn match_subject(m: &SubjectMatcher, ctx: &AccessContext, system_type: Syste
     true
 }
 
+/// セッションの接続元IPが roles.json の許可範囲内かを検証するヘルパー
+// session.source_ip の有無だけでリモートかローカルかを判別
+fn is_ssh_source_allowed(
+    allowed_ssh_networks: &HashMap<u32, Vec<IpNetwork>>,
+    session: &RegisteredSession,
+) -> bool {
+    let Some(allowed_nets) = allowed_ssh_networks.get(&session.uid) else {
+        return true; // 制限未設定のUIDは無条件パス
+    };
+
+    match session.source_ip.as_deref() {
+        // リモート接続（SSHなど）: 厳格にCIDR判定
+        Some(ip_str) => {
+            if let Ok(ip_addr) = ip_str.parse::<IpAddr>() {
+                allowed_nets.iter().any(|net| net.contains(ip_addr))
+            } else {
+                false // パース不能な不正IPは拒否
+            }
+        }
+        // ローカル接続（物理コンソール、ローカルGUI）: IPチェックを免除して許可
+        None => true,
+    }
+}
+
 /// PAMセッションと実行時TTYに基づく高度な環境コンテキスト評価を行う
 fn match_login_context(
     login_ctx: &LoginContextMatcher,
+    allowed_ssh_networks: &HashMap<u32, Vec<IpNetwork>>,
     ctx: &AccessContext,
     system_type: SystemType,
 ) -> bool {
@@ -129,13 +167,18 @@ fn match_login_context(
                     };
 
                     // IPパースとCIDR包含判定
-                    if let Ok(ip_addr) = ip_str.parse::<std::net::IpAddr>() {
+                    if let Ok(ip_addr) = ip_str.parse::<IpAddr>() {
                         if !network.contains(ip_addr) {
                             return false; // 範囲外
                         }
                     } else {
                         return false; // IPパースエラー
                     }
+                }
+
+                // c) uidに紐付けられた接続元IPのCIDR範囲チェック
+                if !is_ssh_source_allowed(allowed_ssh_networks, session) {
+                    return false;
                 }
             }
 
@@ -173,7 +216,7 @@ fn pathmatcher_matches(pm: &PathMatcher, path: &Path) -> bool {
     }
 }
 
-pub fn match_object(
+fn match_object(
     om: &Option<ObjectMatcher>,
     object_path: &Path,
     object_new_path: Option<&Path>,
@@ -219,7 +262,7 @@ pub fn match_object(
     true
 }
 
-pub fn match_action(m: &ActionMatcher, action: Action) -> bool {
+fn match_action(m: &ActionMatcher, action: Action) -> bool {
     match m {
         ActionMatcher::Any => true,
         ActionMatcher::OneOf(set) => set.contains(&action),

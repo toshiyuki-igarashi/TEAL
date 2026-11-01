@@ -224,7 +224,7 @@ async fn evaluate_audit_request(req: &mut Request) -> AuditEvalResult {
 
     let ctx = request_to_ctx(req, &compiled.roles, session_info);
 
-    let route = match evaluate(&compiled.policy, &ctx) {
+    let route = match evaluate(&compiled, &ctx) {
         Decision::Pass => AuditRoute::Pass,
         Decision::NoMatchManaged => AuditRoute::NoMatchManaged,
         Decision::Matched(r) => AuditRoute::Matched(Box::new(r.clone())),

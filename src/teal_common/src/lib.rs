@@ -5,8 +5,8 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
-use serde::{Deserialize, Serialize};
 use const_format::concatcp;
+use serde::{Deserialize, Serialize};
 
 // =========================================================================
 // システム共通パス定義

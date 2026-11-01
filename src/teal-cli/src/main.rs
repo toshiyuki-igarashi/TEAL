@@ -22,8 +22,8 @@ use teal_policy_engine::load::load_json_file;
 use teal_policy_engine::raw::RawPolicyV14;
 
 // teald クレートから共通型をインポート
-use teald::common::{is_mgmt_id, DecisionKind};
 use teal_common::TEALD_ADMIN_SOCKET_PATH;
+use teald::common::{is_mgmt_id, DecisionKind};
 
 // teal-cli 内部に移した verify モジュール
 mod verify;

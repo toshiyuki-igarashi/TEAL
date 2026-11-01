@@ -4,16 +4,17 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
-use crate::ir::{AccessContext, CompiledPolicy, Decision};
+use crate::ir::{AccessContext, CompiledBundle, Decision};
 use crate::matchers::rule_matches;
 
-pub fn evaluate<'a>(policy: &'a CompiledPolicy, ctx: &AccessContext) -> Decision<'a> {
-    if !policy.scope.is_request_managed(ctx) {
+pub fn evaluate<'a>(bundle: &'a CompiledBundle, ctx: &AccessContext) -> Decision<'a> {
+    if !bundle.policy.scope.is_request_managed(ctx) {
         return Decision::Pass;
     }
 
-    for r in &policy.rules {
-        if rule_matches(r, ctx, policy.system_type) {
+    let allowed_ssh_networks = &bundle.roles.allowed_ssh_networks;
+    for r in &bundle.policy.rules {
+        if rule_matches(r, allowed_ssh_networks, ctx, bundle.policy.system_type) {
             return Decision::Matched(r);
         }
     }

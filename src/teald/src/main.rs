@@ -28,8 +28,8 @@ use teald::pam_server::start_pam_listener;
 use teald::ticket::preload_silent_directory_tickets;
 use teald::types::{set_daemon_mode, DaemonMode, InternalEvent};
 
+use teal_common::{TEALD_ADMIN_SOCKET_PATH, TEAL_SOCKET_ROOT};
 use teal_policy_engine::util::ktime_prefix;
-use teal_common::{TEAL_SOCKET_ROOT, TEALD_ADMIN_SOCKET_PATH};
 
 /// 1) state の初期化
 use teald::state::init_state;
@@ -175,13 +175,15 @@ async fn main() -> Result<()> {
 
     // ソケット配置ディレクトリの作成と権限設定
     if let Err(e) = std::fs::create_dir_all(TEAL_SOCKET_ROOT) {
-        eprintln!("{}[WARN] Failed to create {} directory: {}", ktime_prefix(), TEAL_SOCKET_ROOT, e);
+        eprintln!(
+            "{}[WARN] Failed to create {} directory: {}",
+            ktime_prefix(),
+            TEAL_SOCKET_ROOT,
+            e
+        );
     } else {
         #[cfg(unix)]
-        let _ = std::fs::set_permissions(
-            TEAL_SOCKET_ROOT,
-            std::fs::Permissions::from_mode(0o755),
-        );
+        let _ = std::fs::set_permissions(TEAL_SOCKET_ROOT, std::fs::Permissions::from_mode(0o755));
     }
 
     let listener = init_admin_socket(TEALD_ADMIN_SOCKET_PATH).await?;
