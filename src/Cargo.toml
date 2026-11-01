@@ -6,6 +6,7 @@ members = [
   "teal-cli",
   "teal-logview",
   "teal-bench",
+  "teal_common",
 ]  
 resolver = "2"
 

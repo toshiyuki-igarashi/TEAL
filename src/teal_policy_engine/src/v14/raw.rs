@@ -236,6 +236,9 @@ pub struct RawRolesV1 {
     #[serde(default)]
     pub group_assignments: Vec<RawGroupAssignment>,
 
+    #[serde(default)]
+    pub login_contexts: Vec<RawLoginContextAssignment>,
+
     pub defaults: RawDefaults,
 }
 
@@ -280,6 +283,16 @@ pub struct RawGroupAssignment {
     pub group: Option<String>,
 
     pub roles: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawLoginContextAssignment {
+    #[serde(default)]
+    pub uid: Option<u32>,
+    #[serde(default)]
+    pub user: Option<String>,
+    pub allowed_ssh_sources: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

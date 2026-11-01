@@ -46,4 +46,4 @@ reqwest = { version = "0.13", features = ["json"] }
 
 # TEAL 内部クレート
 teal_policy_engine = { path = "../teal_policy_engine" }
-
+teal_common = { path = "../teal_common" }

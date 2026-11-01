@@ -7,6 +7,7 @@
 use anyhow::{anyhow, Result};
 use chrono::Weekday;
 use globset::Glob;
+use ipnetwork::IpNetwork;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -18,9 +19,9 @@ use crate::ir::{
     RoleCatalog, RoleMeta, SubjectMatcher, SubjectRoleIndex, TicketProfile, TimeConstraintMatcher,
 };
 use crate::raw::{
-    RawAction, RawAssignment, RawDefaults, RawGroupAssignment, RawObject, RawPolicyV14,
-    RawPreApproval, RawPreApprovalDefaults, RawRoleDef, RawRolesV1, RawRule, RawSubject,
-    RawTimeConstraint,
+    RawAction, RawAssignment, RawDefaults, RawGroupAssignment, RawLoginContextAssignment,
+    RawObject, RawPolicyV14, RawPreApproval, RawPreApprovalDefaults, RawRoleDef, RawRolesV1,
+    RawRule, RawSubject, RawTimeConstraint,
 };
 use crate::types::{Action, Effect};
 use crate::util::name_to_uid;
@@ -37,6 +38,7 @@ pub fn compile_roles_v1(
         roles,
         assignments,
         group_assignments,
+        login_contexts,
         defaults,
     } = raw;
 
@@ -67,11 +69,15 @@ pub fn compile_roles_v1(
         &mut warnings,
     )?;
 
+    // 7) Compile login_contexts to allowed_ssh_networks
+    let allowed_ssh_networks = compile_login_contexts(login_contexts)?;
+
     let compiled = CompiledRolesCore {
         roles: role_catalog,
         assignments: compiled_assignments,
         group_assignments: compiled_group_assignments,
         defaults: compiled_defaults,
+        allowed_ssh_networks,
     };
 
     Ok((compiled, warnings))
@@ -312,6 +318,87 @@ fn compile_group_assignments(
             }
         }
     }
+    Ok(index)
+}
+
+pub fn compile_login_contexts(
+    raw_login_contexts: Vec<RawLoginContextAssignment>,
+) -> Result<HashMap<u32, Vec<IpNetwork>>, CompileError> {
+    let mut index = HashMap::with_capacity(raw_login_contexts.len());
+
+    for (i, assignment) in raw_login_contexts.into_iter().enumerate() {
+        let RawLoginContextAssignment {
+            uid,
+            user,
+            allowed_ssh_sources,
+        } = assignment;
+
+        // 1. uid / user の排他チェックと正規化
+        let target = normalize_assignment_target(uid, user.as_deref())?;
+
+        // 2. UIDへ統一
+        let uid = match target {
+            AssignmentTarget::Uid(uid) => uid,
+
+            AssignmentTarget::User(name) => name_to_uid(&name).map_err(|e| {
+                CompileError::InvalidValue(format!(
+                    "login_contexts[{i}]: user '{}' cannot be resolved to UID: {}",
+                    name, e
+                ))
+            })?,
+        };
+
+        // 3. 同一UIDの重複定義を拒否
+        if index.contains_key(&uid) {
+            return Err(CompileError::InvalidValue(format!(
+                "login_contexts[{i}]: duplicate UID {}",
+                uid
+            )));
+        }
+
+        // 4. 許可SSH接続元をIpNetworkに変換
+        let mut networks = Vec::with_capacity(allowed_ssh_sources.len());
+        let mut seen = HashSet::new();
+
+        for (j, raw_source) in allowed_ssh_sources.into_iter().enumerate() {
+            let source = raw_source.trim();
+
+            if source.is_empty() {
+                return Err(CompileError::InvalidValue(format!(
+                    "login_contexts[{i}].allowed_ssh_sources[{j}]: empty source"
+                )));
+            }
+
+            let parsed = source.parse::<IpNetwork>().map_err(|e| {
+                CompileError::InvalidValue(format!(
+                    "login_contexts[{i}].allowed_ssh_sources[{j}]: \
+                     invalid IP address or CIDR '{}': {}",
+                    source, e
+                ))
+            })?;
+
+            let network = IpNetwork::new(parsed.network(), parsed.prefix()).map_err(|e| {
+                CompileError::InvalidValue(format!(
+                    "login_contexts[{i}]: invalid network '{}': {}",
+                    source, e
+                ))
+            })?;
+
+            // 同一ネットワークの重複を拒否
+            if !seen.insert(network) {
+                return Err(CompileError::InvalidValue(format!(
+                    "login_contexts[{i}]: duplicate SSH source '{}'",
+                    source
+                )));
+            }
+
+            networks.push(network);
+        }
+
+        // 5. 空配列もそのまま登録する（SSH接続禁止）
+        index.insert(uid, networks);
+    }
+
     Ok(index)
 }
 

@@ -5,23 +5,14 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::errors::{CompileError, CompileWarnings};
 use crate::ir::CompiledRolesCore;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawManagement {
-    pub roles: Vec<RawMgmtRole>,
     pub controls: RawMgmtControls,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RawMgmtRole {
-    pub name: String,
-    pub uids: Vec<u32>,
-    #[serde(default)]
-    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -73,8 +64,6 @@ pub struct RawMgmtMpa {
 
 #[derive(Debug, Clone)]
 pub struct CompiledManagement {
-    /// role_name -> uids
-    pub roles: HashMap<String, HashSet<u32>>,
     pub controls: CompiledMgmtControls,
 }
 
@@ -123,7 +112,8 @@ pub enum MgmtAction {
 
 type RoleUidResolver<'a> = dyn FnMut(&str, &str) -> Result<HashSet<u32>, CompileError> + 'a;
 
-fn role_to_uids_from_compiled_roles(roles: &CompiledRolesCore, role_name: &str) -> HashSet<u32> {
+// role参照の解決：management.roles を優先、無ければ CompiledRoles にフォールバック
+fn lookup_uids_in_compiled_roles(roles: &CompiledRolesCore, role_name: &str) -> HashSet<u32> {
     let mut uids = HashSet::new();
 
     // uid -> roles(HashSet<String>) を全走査して逆引き
@@ -157,7 +147,7 @@ pub fn compile_management(
             return Err("first char must be ASCII alphabetic".into());
         }
         for &b in bytes.iter() {
-            let ok = (b as char).is_ascii_alphanumeric() || matches!(b, b'_' | b':' | b'-' | b'.');
+            let ok = (b as char).is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.');
             if !ok {
                 return Err(format!("invalid char: 0x{:02x}", b));
             }
@@ -165,67 +155,22 @@ pub fn compile_management(
         Ok(())
     }
 
-    // role参照の解決：management.roles を優先、無ければ CompiledRoles にフォールバック
-    fn lookup_uids_in_compiled_roles(roles: &CompiledRolesCore, role_name: &str) -> HashSet<u32> {
-        role_to_uids_from_compiled_roles(roles, role_name)
-    }
-
-    // ---- 1) management.roles を role_name -> uid set に ----
-    let mut mgmt_roles: HashMap<String, HashSet<u32>> = HashMap::new();
-
-    for r in raw.roles.into_iter() {
-        if let Err(reason) = validate_role_name(&r.name) {
-            return Err(CompileError::InvalidRoleName {
-                name: r.name,
-                reason,
-            });
-        }
-
-        if r.uids.is_empty() {
-            return Err(CompileError::InvalidField(
-                "management.roles[].uids",
-                "uids must be non-empty".into(),
-            ));
-        }
-
-        if mgmt_roles.contains_key(&r.name) {
-            return Err(CompileError::DuplicateRoleName(r.name));
-        }
-
-        let mut set = HashSet::<u32>::new();
-        for uid in r.uids {
-            if !set.insert(uid) {
-                warnings.warn(format!(
-                    "management.roles[name={}]: duplicate uid {} removed",
-                    r.name, uid
-                ));
-            }
-        }
-
-        mgmt_roles.insert(r.name, set);
-    }
-
     let mut resolve_role_uids =
         |role_name: &str, context: &str| -> Result<HashSet<u32>, CompileError> {
-            // 1) management.roles を優先
-            if let Some(s) = mgmt_roles.get(role_name) {
-                return Ok(s.clone());
-            }
-
-            // 2) CompiledRoles から逆引き
+            // CompiledRoles から逆引き
             let uids = lookup_uids_in_compiled_roles(roles, role_name);
             if !uids.is_empty() {
                 return Ok(uids);
             }
 
-            // 3) どこにも存在しない
+            // どこにも存在しない
             Err(CompileError::UnknownRoleReferenced {
                 role: role_name.to_string(),
                 context: context.to_string(),
             })
         };
 
-    // ---- 2) control(start/stop/policy_update/flush) をコンパイル ----
+    // ---- control(start/stop/policy_update/flush) をコンパイル ----
 
     fn compile_control(
         which: &str,
@@ -426,7 +371,6 @@ pub fn compile_management(
     };
 
     let compiled = CompiledManagement {
-        roles: mgmt_roles,
         controls: CompiledMgmtControls {
             start,
             stop,

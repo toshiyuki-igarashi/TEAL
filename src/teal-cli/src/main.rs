@@ -22,6 +22,7 @@ use teal_policy_engine::load::load_json_file;
 use teal_policy_engine::raw::RawPolicyV14;
 
 // teald クレートから共通型をインポート
+use teal_common::TEALD_ADMIN_SOCKET_PATH;
 use teald::common::{is_mgmt_id, DecisionKind};
 
 // teal-cli 内部に移した verify モジュール
@@ -319,7 +320,7 @@ fn run_signed_decision(kind: DecisionKind, id: &str, audit_id: Option<&str>) -> 
 /// teald の管理ソケットにコマンドを送信する共通関数
 /// print_resp が true の場合は画面に出力し、いずれの場合もレスポンス文字列を返す
 pub fn send_command(cmd: &str, print_resp: bool) -> Result<String> {
-    let socket_path = "/tmp/teald.sock";
+    let socket_path = TEALD_ADMIN_SOCKET_PATH;
     let mut stream = UnixStream::connect(socket_path)
         .with_context(|| format!("Failed to connect to teald at {}", socket_path))?;
 

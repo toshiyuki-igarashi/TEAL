@@ -667,7 +667,7 @@ pub struct AccessContext {
 /// tealdのAppState内でユーザーセッションのファクト（事実）を保持する構造体
 #[derive(Debug, Clone)]
 pub struct RegisteredSession {
-    pub user: String,
+    pub uid: u32,
     pub source_ip: Option<String>,
     pub auth_method: Option<String>,
     // 将来的に login_time: chrono::DateTime<Utc> などを生やす拡張も容易です
@@ -724,6 +724,9 @@ pub struct CompiledRolesCore {
 
     /// Default behavior
     pub defaults: CompiledDefaults,
+
+    /// uid -> 許可されたCIDRネットワークリスト
+    pub allowed_ssh_networks: HashMap<u32, Vec<ipnetwork::IpNetwork>>,
 }
 
 #[derive(Debug)]
