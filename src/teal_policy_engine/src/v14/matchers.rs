@@ -4,6 +4,7 @@
  *
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
+use chrono::{Datelike, Local, NaiveDateTime, Timelike};
 use ipnetwork::IpNetwork;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -11,7 +12,7 @@ use std::path::Path;
 
 use crate::ir::{
     AccessContext, ActionMatcher, CompiledRule, LoginContextMatcher, ObjectKind, ObjectMatcher,
-    PathMatcher, RegisteredSession, SubjectMatcher,
+    PathMatcher, RegisteredSession, SubjectMatcher, TimeConstraintMatcher,
 };
 use crate::types::{Action, SystemType};
 
@@ -29,10 +30,65 @@ pub fn rule_matches(
         ctx.object_kind,
     ) && match_action(&rule.action_match, ctx.action)
     {
+        if !match_time_constraints(&rule.time_constraints) {
+            return false;
+        }
+
         match_subject(&rule.subject, allowed_ssh_networks, ctx, system_type)
     } else {
         false
     }
+}
+
+/// 時間制約は OR 条件。空なら時間制約なし。
+/// 曜日・時刻は teald のホストローカル時間で評価する。
+/// 週番号は ISO 8601 (月曜開始、1月4日を含む週が第1週)。
+fn match_time_constraints(constraints: &[TimeConstraintMatcher]) -> bool {
+    if constraints.is_empty() {
+        return true;
+    }
+
+    match_time_constraints_at(constraints, Local::now().naive_local())
+}
+
+/// 指定されたローカル日時での時間制約判定（単体テスト用の純粋関数）。
+fn match_time_constraints_at(constraints: &[TimeConstraintMatcher], now: NaiveDateTime) -> bool {
+    if constraints.is_empty() {
+        return true;
+    }
+
+    let minutes = now.hour() * 60 + now.minute();
+    let date = now.date();
+
+    constraints.iter().any(|c| {
+        let start = c.start_minutes_from_midnight;
+        let end = c.end_minutes_from_midnight;
+
+        // 0は不正。start == endは曖昧なので無効とする。
+        if c.week_interval == 0 || start >= 24 * 60 || end > 24 * 60 || start == end {
+            return false;
+        }
+
+        // 第1週を起点に毎N週を許可する (1, 1+N, 1+2N, ...)。
+        let matches_start_date = |start_date: chrono::NaiveDate| {
+            (c.allowed_days.is_empty() || c.allowed_days.contains(&start_date.weekday()))
+                && (start_date.iso_week().week() - 1) % c.week_interval == 0
+        };
+
+        if start < end {
+            // 同日内: [start, end)
+            start <= minutes && minutes < end && matches_start_date(date)
+        } else if minutes >= start {
+            // 日付跨ぎの開始側（例: 日曜23:00）
+            matches_start_date(date)
+        } else if minutes < end {
+            // 日付跨ぎの終了側（例: 翌月曜01:00）
+            // 周期・曜日は『開始日』で判定する（ISO年境界も同様）。
+            date.pred_opt().is_some_and(matches_start_date)
+        } else {
+            false
+        }
+    })
 }
 
 fn match_subject(
@@ -266,5 +322,86 @@ fn match_action(m: &ActionMatcher, action: Action) -> bool {
     match m {
         ActionMatcher::Any => true,
         ActionMatcher::OneOf(set) => set.contains(&action),
+    }
+}
+
+#[cfg(test)]
+mod time_constraint_tests {
+    use super::*;
+    use chrono::{NaiveDate, Weekday};
+    use std::collections::HashSet;
+
+    fn at(y: i32, m: u32, d: u32, h: u32, min: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(y, m, d)
+            .unwrap()
+            .and_hms_opt(h, min, 0)
+            .unwrap()
+    }
+
+    fn monday_morning(interval: u32) -> TimeConstraintMatcher {
+        TimeConstraintMatcher {
+            allowed_days: HashSet::from([Weekday::Mon]),
+            start_minutes_from_midnight: 9 * 60,
+            end_minutes_from_midnight: 10 * 60,
+            week_interval: interval,
+        }
+    }
+
+    #[test]
+    fn no_constraints() {
+        assert!(match_time_constraints_at(&[], at(2026, 11, 2, 9, 0)));
+    }
+
+    #[test]
+    fn every_two_iso_weeks() {
+        let c = monday_morning(2);
+        assert!(match_time_constraints_at(
+            &[c.clone()],
+            at(2026, 11, 2, 9, 0)
+        )); // 第45週
+        assert!(!match_time_constraints_at(
+            &[c.clone()],
+            at(2026, 11, 9, 9, 0)
+        )); // 第46週
+        assert!(match_time_constraints_at(
+            &[c.clone()],
+            at(2026, 11, 16, 9, 0)
+        )); // 第47週
+        assert!(!match_time_constraints_at(&[c], at(2026, 11, 16, 10, 0))); // 終了時刻は含まない
+    }
+
+    #[test]
+    fn iso_week_resets_at_new_iso_year() {
+        let c = monday_morning(2);
+        assert!(match_time_constraints_at(
+            &[c.clone()],
+            at(2026, 12, 28, 9, 30)
+        )); // 2026-W53
+        assert!(match_time_constraints_at(&[c], at(2027, 1, 4, 9, 30))); // 2027-W01
+    }
+
+    #[test]
+    fn overnight_uses_start_day_week_number() {
+        let c = TimeConstraintMatcher {
+            allowed_days: HashSet::from([Weekday::Sun]),
+            start_minutes_from_midnight: 23 * 60,
+            end_minutes_from_midnight: 2 * 60,
+            week_interval: 2,
+        };
+        assert!(match_time_constraints_at(
+            &[c.clone()],
+            at(2027, 1, 10, 23, 30)
+        )); // 2027-W01
+        assert!(match_time_constraints_at(
+            &[c.clone()],
+            at(2027, 1, 11, 1, 0)
+        )); // 月曜W02でも許可
+        assert!(!match_time_constraints_at(&[c], at(2027, 1, 11, 2, 0)));
+    }
+
+    #[test]
+    fn invalid_interval_fails_closed() {
+        let c = monday_morning(0);
+        assert!(!match_time_constraints_at(&[c], at(2026, 11, 2, 9, 30)));
     }
 }

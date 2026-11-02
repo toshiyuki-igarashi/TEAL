@@ -136,9 +136,15 @@ pub struct RawLoginContext {
     pub bind_registered_session: Option<bool>,
 }
 
+fn default_week_interval() -> u32 {
+    1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawTimeConstraint {
+    #[serde(default = "default_week_interval")]
+    pub week_interval: u32,
     pub days: Vec<String>,
     pub window: RawTimeWindow,
 }
