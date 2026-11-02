@@ -476,6 +476,10 @@ pub struct TimeConstraintMatcher {
     // 例: "09:00" -> 9 * 60 = 540分 のように、深夜0時からの分数に変換しておくと高速
     pub start_minutes_from_midnight: u32,
     pub end_minutes_from_midnight: u32,
+
+    // ISO 8601週番号による周期。1: 毎週、2: 第1/3/5...週、3: 第1/4/7...週
+    // 未指定の場合はコンパイル時に1を設定する。
+    pub week_interval: u32,
 }
 
 #[derive(Debug, Clone, Default)]

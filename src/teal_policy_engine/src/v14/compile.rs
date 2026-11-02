@@ -988,9 +988,14 @@ fn compile_time_constraint(
     raw: &RawTimeConstraint,
     warnings: &mut CompileWarnings,
 ) -> Result<TimeConstraintMatcher> {
+    // 1. ISO 8601 の第1週を起点とする周期指定 (1: 毎週, 2: 第1/3/5...週)
+    if raw.week_interval == 0 {
+        return Err(anyhow!("time_constraints.week_interval must be >= 1"));
+    }
+
     let mut allowed_days = HashSet::new();
 
-    // 1. 曜日の変換
+    // 2. 曜日の変換
     for day_str in &raw.days {
         let weekday = match day_str.as_str() {
             "Mon" => Weekday::Mon,
@@ -1010,19 +1015,24 @@ fn compile_time_constraint(
         allowed_days.insert(weekday);
     }
 
-    // もし空リストなら警告を出す（運用上のミス防止）
+    // Matcher側は曜日の空集合を「全曜日」と解釈する。
     if allowed_days.is_empty() {
-        warnings.warn("time_constraints.days is empty (this rule might never match)".to_string());
+        warnings.warn("time_constraints.days is empty (matches all weekdays)".to_string());
     }
 
-    // 2. 時間 (window) の変換
+    // 3. 時間 (window) の変換。終了時刻だけ 24:00 を許可する。
     let start_minutes_from_midnight = parse_time_to_minutes(&raw.window.start)?;
-    let end_minutes_from_midnight = parse_time_to_minutes(&raw.window.end)?;
+    let end_minutes_from_midnight = if raw.window.end == "24:00" {
+        24 * 60
+    } else {
+        parse_time_to_minutes(&raw.window.end)?
+    };
 
-    if start_minutes_from_midnight >= end_minutes_from_midnight {
-        warnings.warn(format!(
-            "time window start ({}) is >= end ({}). Ensure this is intended (e.g. crossing midnight).",
-            raw.window.start, raw.window.end
+    // start > end は日付跨ぎの時間帯なので有効。start == end は無効。
+    if start_minutes_from_midnight == end_minutes_from_midnight {
+        return Err(anyhow!(
+            "time_constraints.window.start and end must differ: {}",
+            raw.window.start
         ));
     }
 
@@ -1030,6 +1040,7 @@ fn compile_time_constraint(
         allowed_days,
         start_minutes_from_midnight,
         end_minutes_from_midnight,
+        week_interval: raw.week_interval,
     })
 }
 
