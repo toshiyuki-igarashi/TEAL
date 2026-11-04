@@ -7,6 +7,8 @@ members = [
   "teal-logview",
   "teal-bench",
   "teal_common",
+  "teal-notify-protocol",
+  "teal-mailer",
 ]  
 resolver = "2"
 

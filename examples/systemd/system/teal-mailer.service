@@ -1,0 +1,20 @@
+[Unit]
+Description=TEAL Mailer Service
+
+[Service]
+Type=simple
+User=teal-mailer
+Group=teal-mailer
+
+ExecStart=/usr/local/sbin/teal-mailer --config /etc/teal.d/mailer.json
+
+LoadCredentialEncrypted=smtp_user:/etc/credstore.encrypted/teal.smtp_user
+LoadCredentialEncrypted=smtp_password:/etc/credstore.encrypted/teal.smtp_password
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+Restart=on-failure
+

@@ -21,6 +21,10 @@ pub const PAM_SOCKET_PATH: &str = concatcp!(TEAL_SOCKET_ROOT, "/teal_pam.sock");
 /// teal-cli から teald への管理コマンド用 UNIX ドメインソケット
 pub const TEALD_ADMIN_SOCKET_PATH: &str = concatcp!(TEAL_SOCKET_ROOT, "/teald.sock");
 
+
+/// teald から teal-mailer への通知配送用 UNIX ドメインソケット
+pub const TEAL_NOTIFY_SOCKET_PATH: &str = concatcp!(TEAL_SOCKET_ROOT, "/teal-notify.sock");
+
 // =========================================================================
 // PAMセッション通知プロトコル
 // =========================================================================

@@ -202,22 +202,11 @@ Before starting the daemon, the required configuration paths and fixed skeleton 
 sudo mkdir -p /etc/teal.d/policies
 sudo mkdir -p /var/log/teal
 sudo mkdir -p /var/lib/teal/epochs
+sudo mkdir -p /var/lib/teal/notifications
 
 # 1. Deploy Management Policy (Enforces teal-cli start/stop & MPA conditions)
 sudo tee /etc/teal.d/management.json >/dev/null <<'EOF'
 {
-  "roles": [
-    {
-      "name": "admin",
-      "uids": [0],
-      "description": "System Root Administrator"
-    },
-    {
-      "name": "security_officer",
-      "uids": [1000],
-      "description": "Designated Operational Security Approver"
-    }
-  ],
   "controls": {
     "start": {
       "description": "Initiate TEAL core execution engine",
@@ -814,7 +803,108 @@ ollama --version
 
 **Note:** Ollama is used as an optional AI analysis provider in TEAL. AI-generated anomaly assessments are advisory and do not directly authorize or deny Linux system operations.
 
-#### E. Troubleshooting
+#### E. Configuring SMTP Credentials for `teal-mailer`
+
+The optional **`teal-mailer`** service uses systemd Encrypted Credentials to obtain the SMTP login name (`smtp_user`) and password (`smtp_password`). Both credentials are stored separately from TEAL's JSON configuration. **Do not put SMTP credentials in `notifications.json` or `mailer.json`.**
+
+These steps target Ubuntu 24.04 LTS with systemd 255. Run them on the host where `teal-mailer.service` will run. They prepare credentials for the proposed mailer service; the service and notification feature must be installed separately.
+
+**1. Create the encrypted credential directory**
+
+```bash
+sudo -v
+sudo install -d -o root -g root -m 0700 /etc/credstore.encrypted
+```
+
+**2. Register the SMTP user name**
+
+Enter the SMTP login name when prompted. The value is provided on standard input, rather than as a command-line argument.
+
+```bash
+IFS= read -r -p "SMTP User: " smtp_user
+printf '%s' "$smtp_user" | sudo systemd-creds encrypt \
+  --name=smtp_user \
+  - /etc/credstore.encrypted/teal.smtp_user
+unset smtp_user
+```
+
+**3. Register the SMTP password**
+
+The `-s` option suppresses terminal echo; the password itself is not written in the shell command or history.
+
+```bash
+IFS= read -r -s -p "SMTP Password: " smtp_password
+echo
+printf '%s' "$smtp_password" | sudo systemd-creds encrypt \
+  --name=smtp_password \
+  - /etc/credstore.encrypted/teal.smtp_password
+unset smtp_password
+```
+
+The `-` argument to `systemd-creds encrypt` means **read the plaintext from standard input**. `--name=` binds the encrypted data to the credential ID expected by the service; this is needed because the encrypted file names (`teal.smtp_*`) differ from the credential IDs (`smtp_*`). No separate plaintext credential files are created by these commands. The values exist temporarily in the interactive shell's memory until `unset`.
+
+**4. Protect and verify the encrypted files**
+
+```bash
+sudo chown root:root /etc/credstore.encrypted/teal.smtp_user \
+  /etc/credstore.encrypted/teal.smtp_password
+sudo chmod 0600 /etc/credstore.encrypted/teal.smtp_user \
+  /etc/credstore.encrypted/teal.smtp_password
+sudo ls -l /etc/credstore.encrypted/teal.smtp_*
+```
+
+Check that both credentials can be decrypted, **without printing their contents**:
+
+```bash
+sudo systemd-creds decrypt --name=smtp_user \
+  /etc/credstore.encrypted/teal.smtp_user - >/dev/null \
+  && echo "smtp_user: OK"
+
+sudo systemd-creds decrypt --name=smtp_password \
+  /etc/credstore.encrypted/teal.smtp_password - >/dev/null \
+  && echo "smtp_password: OK"
+```
+
+**5. Make the credentials available to `teal-mailer.service`**
+
+Add the following directives to the **`[Service]` section of `teal-mailer.service`** (not `teald.service`):
+
+```ini
+[Service]
+LoadCredentialEncrypted=smtp_user:/etc/credstore.encrypted/teal.smtp_user
+LoadCredentialEncrypted=smtp_password:/etc/credstore.encrypted/teal.smtp_password
+```
+
+For example, after `teal-mailer.service` has been installed, use `sudo systemctl edit teal-mailer.service` to create a drop-in containing these directives. Then apply the unit change and restart **only the mailer**:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart teal-mailer.service
+sudo systemctl status teal-mailer.service --no-pager
+```
+
+The mailer reads the decrypted credentials from:
+
+```text
+$CREDENTIALS_DIRECTORY/smtp_user
+$CREDENTIALS_DIRECTORY/smtp_password
+```
+
+The credential files are provided to the service at startup. Updating an encrypted credential requires restarting `teal-mailer.service` to load the new value. **`teald.service` must not depend on `teal-mailer.service` for startup or access-control decisions.** If credential loading or SMTP authentication fails, the mailer may fail, but TEAL's access control must remain operational.
+
+**6. TPM 2.0 and operational notes**
+
+```bash
+systemd-creds has-tpm2
+```
+
+By default, `systemd-creds encrypt` chooses the available systemd-supported encryption key mechanism (which can involve TPM 2.0 and/or a host-bound key). Encrypted credentials might not be decryptable after changing the machine, TPM, or OS installation; retain the ability to reissue SMTP credentials and re-encrypt them on the replacement host.
+
+For environments without a usable TPM, `--with-key=host` can be specified when creating each credential if host-key-only encryption is desired. This protects the value at rest but **does not guarantee secrecy after root compromise**. The mailer should run under a dedicated, unprivileged service account, with no access to TEAL's authorization controls. Avoid printing either credential in logs, test output, or diagnostic messages.
+
+References: [systemd Credentials](https://systemd.io/CREDENTIALS/), [systemd-creds(1)](https://www.freedesktop.org/software/systemd/man/systemd-creds.html), and [systemd.exec(5)](https://www.freedesktop.org/software/systemd/man/systemd.exec.html).
+
+#### F. Troubleshooting
 
 If TEAL fails to start or the system becomes unstable, follow these steps:
 

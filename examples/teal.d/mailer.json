@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "smtp": {
+    "host": "smtp.example.com",
+    "port": 587,
+    "from": "teal@example.com",
+    "to_address": "security-team@example.com",
+    "tls": "required",
+    "credentials": {
+      "provider": "systemd",
+      "user": "smtp_user",
+      "password": "smtp_password"
+    }
+  },
+  "rate_limit": {
+    "ai_per_minute": 10,
+    "deny_per_minute": 5
+  }
+}
