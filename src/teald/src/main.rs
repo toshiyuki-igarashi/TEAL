@@ -173,6 +173,24 @@ async fn main() -> Result<()> {
 
     EvidenceManager::init(1024, ai_runtime);
 
+    // Phase 2 Step 1: transport only. No automatic DENY/AI submission yet.
+    // Failure of notifications must never stop the authorization daemon.
+    let _notification_runtime =
+        match teald::notification::start(teald::notification::NotificationTransportConfig::default()) {
+            Ok(runtime) => {
+                if teald::notification::install_global(runtime.handle()).is_err() {
+                    eprintln!("{}[WARN] Notification transport already installed", ktime_prefix());
+                } else {
+                    eprintln!("{}[INFO] Notification AI/DENY queues started", ktime_prefix());
+                }
+                Some(runtime)
+            }
+            Err(error) => {
+                eprintln!("{}[WARN] Notification transport disabled: {}", ktime_prefix(), error);
+                None
+            }
+        };
+
     // ソケット配置ディレクトリの作成と権限設定
     if let Err(e) = std::fs::create_dir_all(TEAL_SOCKET_ROOT) {
         eprintln!(

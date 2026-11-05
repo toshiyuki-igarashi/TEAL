@@ -39,15 +39,24 @@ pub struct SmtpOutcome {
 
 impl SmtpOutcome {
     fn accepted() -> Self {
-        Self { status: DeliveryStatus::AcceptedBySmtp, error_code: None }
+        Self {
+            status: DeliveryStatus::AcceptedBySmtp,
+            error_code: None,
+        }
     }
 
     fn retryable(code: &'static str) -> Self {
-        Self { status: DeliveryStatus::RetryableError, error_code: Some(code) }
+        Self {
+            status: DeliveryStatus::RetryableError,
+            error_code: Some(code),
+        }
     }
 
     fn permanent(code: &'static str) -> Self {
-        Self { status: DeliveryStatus::PermanentError, error_code: Some(code) }
+        Self {
+            status: DeliveryStatus::PermanentError,
+            error_code: Some(code),
+        }
     }
 
     /// Convert to the shared IPC reply. The caller supplies the request ID.
@@ -145,17 +154,16 @@ impl SmtpMailer {
             .timeout(Some(SMTP_COMMAND_TIMEOUT))
             .build();
 
-        Ok(Self { from, common_to, transport })
+        Ok(Self {
+            from,
+            common_to,
+            transport,
+        })
     }
 
     /// Perform exactly one attempt for one email message; no internal retry.
     /// A future IPC sender/queue is responsible for deciding about retries.
-    pub async fn send_once(
-        &self,
-        recipients: &[String],
-        subject: &str,
-        body: &str,
-    ) -> SmtpOutcome {
+    pub async fn send_once(&self, recipients: &[String], subject: &str, body: &str) -> SmtpOutcome {
         let message = match build_message(&self.from, &self.common_to, recipients, subject, body) {
             Ok(message) => message,
             Err(_) => return SmtpOutcome::permanent("INVALID_MESSAGE"),
@@ -209,7 +217,9 @@ fn build_message(
         builder = builder.bcc(Mailbox::new(None, address));
     }
 
-    builder.body(body.to_owned()).map_err(|_| MessageError::BuildFailure)
+    builder
+        .body(body.to_owned())
+        .map_err(|_| MessageError::BuildFailure)
 }
 
 fn classify_smtp_error(err: &LettreSmtpError) -> SmtpOutcome {
@@ -249,7 +259,14 @@ mod tests {
 
     #[test]
     fn builds_utf8_plaintext_mail_with_private_recipients() {
-        let mail = build_message(&sender(), &common_to(), &recipients(), "TEAL 通知", "拒否された操作\n日本語").unwrap();
+        let mail = build_message(
+            &sender(),
+            &common_to(),
+            &recipients(),
+            "TEAL 通知",
+            "拒否された操作\n日本語",
+        )
+        .unwrap();
         let formatted = String::from_utf8(mail.formatted()).unwrap();
         assert!(formatted.contains("Content-Type: text/plain"));
         assert!(formatted.contains("To: security-team@example.com"));
@@ -267,13 +284,27 @@ mod tests {
         assert!(formatted.contains("To: security-team@example.com"));
 
         let too_many = vec!["a@example.com".to_owned(); MAX_RECIPIENTS + 1];
-        assert_eq!(build_message(&sender(), &common_to(), &too_many, "Test", "body").unwrap_err(), MessageError::TooManyRecipients);
+        assert_eq!(
+            build_message(&sender(), &common_to(), &too_many, "Test", "body").unwrap_err(),
+            MessageError::TooManyRecipients
+        );
     }
 
     #[test]
     fn rejects_non_mailbox_recipients() {
-        for address in ["", "test@example.com\r\nBcc: other@example.com", "Name <test@example.com>", "test@example.com "] {
-            let result = build_message(&sender(), &common_to(), &[address.to_owned()], "Test", "body");
+        for address in [
+            "",
+            "test@example.com\r\nBcc: other@example.com",
+            "Name <test@example.com>",
+            "test@example.com ",
+        ] {
+            let result = build_message(
+                &sender(),
+                &common_to(),
+                &[address.to_owned()],
+                "Test",
+                "body",
+            );
             assert!(matches!(result, Err(MessageError::InvalidRecipient)));
         }
     }
@@ -281,14 +312,20 @@ mod tests {
     #[test]
     fn rejects_subject_injection_or_empty_subject() {
         for subject in ["", "  ", "Hello\r\nBcc: injected@example.com"] {
-            assert_eq!(build_message(&sender(), &common_to(), &recipients(), subject, "body").unwrap_err(), MessageError::InvalidSubject);
+            assert_eq!(
+                build_message(&sender(), &common_to(), &recipients(), subject, "body").unwrap_err(),
+                MessageError::InvalidSubject
+            );
         }
     }
 
     #[test]
     fn rejects_oversized_body() {
         let oversized = "x".repeat(MAX_FRAME_LENGTH + 1);
-        assert_eq!(build_message(&sender(), &common_to(), &recipients(), "Test", &oversized).unwrap_err(), MessageError::BodyTooLarge);
+        assert_eq!(
+            build_message(&sender(), &common_to(), &recipients(), "Test", &oversized).unwrap_err(),
+            MessageError::BodyTooLarge
+        );
     }
 
     #[test]

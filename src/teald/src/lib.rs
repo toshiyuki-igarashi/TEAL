@@ -24,3 +24,5 @@ pub mod netlink;
 pub mod pam_server;
 // AI interface
 pub mod ai;
+
+pub mod notification;

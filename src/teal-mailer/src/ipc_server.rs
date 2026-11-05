@@ -27,8 +27,7 @@ use std::{
 };
 
 use teal_notify_protocol::{
-    DeliveryResponse, DeliveryStatus, NotificationPayload, NotificationRequest,
-    MAX_FRAME_LENGTH,
+    DeliveryResponse, DeliveryStatus, NotificationPayload, NotificationRequest, MAX_FRAME_LENGTH,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -90,7 +89,9 @@ pub fn take_systemd_listener() -> io::Result<UnixListener> {
     // unintended socket. UnixListener::from_std also requires nonblocking.
     let addr = listener.local_addr()?;
     if addr.as_pathname().is_none() {
-        return Err(invalid_input("systemd listener must be a pathname Unix socket"));
+        return Err(invalid_input(
+            "systemd listener must be a pathname Unix socket",
+        ));
     }
     UnixListener::from_std(listener)
 }
@@ -167,7 +168,10 @@ pub async fn run(listener: UnixListener, smtp: SmtpMailer) -> io::Result<()> {
                 eprintln!("teal-mailer: IPC task failed during shutdown: {err}");
             }
         }
-    }).await.is_err() {
+    })
+    .await
+    .is_err()
+    {
         tasks.abort_all();
         eprintln!("teal-mailer: IPC shutdown drain timed out (delivery may be uncertain)");
     }
@@ -178,24 +182,41 @@ async fn serve_connection(mut stream: UnixStream, smtp: &SmtpMailer) -> io::Resu
     let peer_uid = stream.peer_cred()?.uid();
     if !is_authorized_uid(peer_uid) {
         // No response to an unauthorized client.
-        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "unauthorized IPC peer"));
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "unauthorized IPC peer",
+        ));
     }
 
     let frame = read_frame(&mut stream).await?;
     let request = decode_request(&frame)?;
 
-    let response = if request.validate().is_err() || validate_request_fields(&request).is_err() {
-        // An otherwise parseable request can be correlated by notification_id.
-        DeliveryResponse {
-            notification_id: request.notification_id,
-            status: DeliveryStatus::PermanentError,
-            error_code: Some("INVALID_REQUEST".to_owned()),
+    let validation = request
+        .validate()
+        .map_err(|e| format!("protocol: {e}"))
+        .and_then(|()| validate_request_fields(&request).map_err(|e| format!("fields: {e}")));
+
+    let response = match validation {
+        Ok(()) => {
+            let (subject, body) = format_mail(&request);
+
+            smtp.send_once(&request.recipients, subject, &body)
+                .await
+                .into_response(request.notification_id)
         }
-    } else {
-        let (subject, body) = format_mail(&request);
-        smtp.send_once(&request.recipients, subject, &body)
-            .await
-            .into_response(request.notification_id)
+
+        Err(reason) => {
+            eprintln!(
+                "[TEAL][mailer][WARN] Invalid notification request: {}",
+                reason
+            );
+
+            DeliveryResponse {
+                notification_id: request.notification_id,
+                status: DeliveryStatus::PermanentError,
+                error_code: Some("INVALID_REQUEST".to_owned()),
+            }
+        }
     };
     write_response(&mut stream, &response).await
 }
@@ -221,19 +242,25 @@ fn validate_request_fields(request: &NotificationRequest) -> io::Result<()> {
             !has_text(recipient, MAX_ADDRESS_BYTES) || recipient.chars().any(char::is_control)
         })
     {
-        return Err(invalid_data("invalid notification identifiers or recipients"));
+        return Err(invalid_data(
+            "invalid notification identifiers or recipients",
+        ));
     }
 
     match &request.payload {
         NotificationPayload::Ai(ai) => {
-            if !ai.confidence.is_finite() || !(0.0..=1.0).contains(&ai.confidence)
+            if !ai.confidence.is_finite()
+                || !(0.0..=1.0).contains(&ai.confidence)
                 || !has_text(&ai.hostname, MAX_HOSTNAME_BYTES)
                 || !has_text(&ai.program, MAX_PATH_BYTES)
                 || !has_text(&ai.action, MAX_ACTION_BYTES)
                 || !has_text(&ai.target, MAX_PATH_BYTES)
                 || !has_text(&ai.reason, MAX_REASON_BYTES)
                 || ai.related_event_ids.len() > MAX_RELATED_EVENT_IDS
-                || ai.related_event_ids.iter().any(|s| !has_text(s, MAX_NOTIFICATION_ID_BYTES))
+                || ai
+                    .related_event_ids
+                    .iter()
+                    .any(|s| !has_text(s, MAX_NOTIFICATION_ID_BYTES))
             {
                 return Err(invalid_data("invalid AI notification fields"));
             }
@@ -246,8 +273,14 @@ fn validate_request_fields(request: &NotificationRequest) -> io::Result<()> {
                 || !has_text(&deny.first_seen, MAX_TIMESTAMP_BYTES)
                 || !has_text(&deny.last_seen, MAX_TIMESTAMP_BYTES)
                 || !has_text(&deny.representative_event_id, MAX_NOTIFICATION_ID_BYTES)
-                || deny.rule_id.as_ref().is_some_and(|s| !has_text(s, MAX_RULE_ID_BYTES))
-                || deny.target_samples.iter().any(|s| !has_text(s, MAX_PATH_BYTES))
+                || deny
+                    .rule_id
+                    .as_ref()
+                    .is_some_and(|s| !has_text(s, MAX_RULE_ID_BYTES))
+                || deny
+                    .target_samples
+                    .iter()
+                    .any(|s| !has_text(s, MAX_PATH_BYTES))
                 || deny.count == 0
             {
                 return Err(invalid_data("invalid DENY notification fields"));
@@ -276,8 +309,8 @@ async fn read_frame(stream: &mut UnixStream) -> io::Result<Vec<u8>> {
 }
 
 async fn write_response(stream: &mut UnixStream, response: &DeliveryResponse) -> io::Result<()> {
-    let frame = serde_json::to_vec(response)
-        .map_err(|_| invalid_data("cannot serialize IPC response"))?;
+    let frame =
+        serde_json::to_vec(response).map_err(|_| invalid_data("cannot serialize IPC response"))?;
     if frame.is_empty() || frame.len() > MAX_FRAME_LENGTH {
         return Err(invalid_data("IPC response exceeds maximum frame length"));
     }
@@ -298,23 +331,41 @@ async fn write_response(stream: &mut UnixStream, response: &DeliveryResponse) ->
 /// or terminal control bytes cannot forge a new metadata line.
 fn format_mail(request: &NotificationRequest) -> (&'static str, String) {
     let mut body = String::with_capacity(1024);
-    writeln!(&mut body, "TEAL Notification ID: {:?}", request.notification_id).unwrap();
+    writeln!(
+        &mut body,
+        "TEAL Notification ID: {:?}",
+        request.notification_id
+    )
+    .unwrap();
     match &request.payload {
         NotificationPayload::Ai(ai) => {
             writeln!(&mut body, "Type: AI analysis alert").unwrap();
-            writeln!(&mut body, "Assessment: Suspected attack (not a confirmed incident)").unwrap();
+            writeln!(
+                &mut body,
+                "Assessment: Suspected attack (not a confirmed incident)"
+            )
+            .unwrap();
             writeln!(&mut body, "Hostname: {:?}", ai.hostname).unwrap();
             writeln!(&mut body, "Confidence: {:.4}", ai.confidence).unwrap();
             writeln!(&mut body, "Reason: {:?}", ai.reason).unwrap();
             writeln!(&mut body, "Program: {:?}", ai.program).unwrap();
             writeln!(&mut body, "Action: {:?}", ai.action).unwrap();
             writeln!(&mut body, "Target: {:?}", ai.target).unwrap();
-            writeln!(&mut body, "Related Audit Event IDs: {:?}", ai.related_event_ids).unwrap();
+            writeln!(
+                &mut body,
+                "Related Audit Event IDs: {:?}",
+                ai.related_event_ids
+            )
+            .unwrap();
             ("TEAL: Suspected Attack Detected", body)
         }
         NotificationPayload::Deny(deny) => {
             writeln!(&mut body, "Type: Access denied").unwrap();
-            writeln!(&mut body, "Assessment: The action was denied. Cause is not determined.").unwrap();
+            writeln!(
+                &mut body,
+                "Assessment: The action was denied. Cause is not determined."
+            )
+            .unwrap();
             writeln!(&mut body, "Hostname: {:?}", deny.hostname).unwrap();
             writeln!(&mut body, "UID: {}", deny.uid).unwrap();
             writeln!(&mut body, "PID: {:?}", deny.pid).unwrap();
@@ -327,7 +378,12 @@ fn format_mail(request: &NotificationRequest) -> (&'static str, String) {
             writeln!(&mut body, "Occurrences: {}", deny.count).unwrap();
             writeln!(&mut body, "First seen: {:?}", deny.first_seen).unwrap();
             writeln!(&mut body, "Last seen: {:?}", deny.last_seen).unwrap();
-            writeln!(&mut body, "Representative Audit Event ID: {:?}", deny.representative_event_id).unwrap();
+            writeln!(
+                &mut body,
+                "Representative Audit Event ID: {:?}",
+                deny.representative_event_id
+            )
+            .unwrap();
             writeln!(&mut body, "Early aggregation flush: {}", deny.early_flush).unwrap();
             ("TEAL: Action Denied", body)
         }
@@ -470,7 +526,10 @@ mod tests {
     #[tokio::test]
     async fn rejects_oversized_length_before_allocating_payload() {
         let (mut server, mut client) = UnixStream::pair().unwrap();
-        client.write_all(&((MAX_FRAME_LENGTH + 1) as u32).to_be_bytes()).await.unwrap();
+        client
+            .write_all(&((MAX_FRAME_LENGTH + 1) as u32).to_be_bytes())
+            .await
+            .unwrap();
         let err = read_frame(&mut server).await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }

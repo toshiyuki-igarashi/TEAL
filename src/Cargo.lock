@@ -2914,6 +2914,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "teal-notify-protocol",
  "teal_common",
  "teal_policy_engine",
  "tempfile",

@@ -6,7 +6,14 @@
  */
 
 use crate::config::{is_valid_credential_name, ConfigError, CredentialConfig, MailerConfig};
-use std::{env, error::Error, fmt, fs::File, io::{self, Read}, path::Path};
+use std::{
+    env,
+    error::Error,
+    fmt,
+    fs::File,
+    io::{self, Read},
+    path::Path,
+};
 use zeroize::Zeroizing;
 
 /// Maximum size of an individual SMTP credential, in bytes.
@@ -54,20 +61,35 @@ pub enum CredentialsError {
     MissingDirectory,
     InvalidDirectory,
     InvalidCredentialNames,
-    Read { kind: &'static str, source: io::Error },
-    TooLarge { kind: &'static str },
-    Empty { kind: &'static str },
-    InvalidCharacters { kind: &'static str },
+    Read {
+        kind: &'static str,
+        source: io::Error,
+    },
+    TooLarge {
+        kind: &'static str,
+    },
+    Empty {
+        kind: &'static str,
+    },
+    InvalidCharacters {
+        kind: &'static str,
+    },
 }
 
 impl fmt::Display for CredentialsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidConfiguration(source) => write!(f, "invalid mailer config: {source}"),
-            Self::MissingDirectory => f.write_str("CREDENTIALS_DIRECTORY is not set (start via systemd)"),
-            Self::InvalidDirectory => f.write_str("CREDENTIALS_DIRECTORY must be an absolute directory path"),
+            Self::MissingDirectory => {
+                f.write_str("CREDENTIALS_DIRECTORY is not set (start via systemd)")
+            }
+            Self::InvalidDirectory => {
+                f.write_str("CREDENTIALS_DIRECTORY must be an absolute directory path")
+            }
             Self::InvalidCredentialNames => f.write_str("unsafe SMTP credential identifiers"),
-            Self::Read { kind, source } => write!(f, "failed to read SMTP {kind} credential: {source}"),
+            Self::Read { kind, source } => {
+                write!(f, "failed to read SMTP {kind} credential: {source}")
+            }
             Self::TooLarge { kind } => write!(f, "SMTP {kind} credential exceeds size limit"),
             Self::Empty { kind } => write!(f, "SMTP {kind} credential is empty"),
             Self::InvalidCharacters { kind } => {
@@ -91,9 +113,11 @@ impl SmtpCredentials {
     /// Production entry point. systemd decrypts LoadCredentialEncrypted
     /// before starting this process, and exports CREDENTIALS_DIRECTORY.
     pub fn load(config: &MailerConfig) -> Result<Self, CredentialsError> {
-        config.validate().map_err(CredentialsError::InvalidConfiguration)?;
-        let directory = env::var_os("CREDENTIALS_DIRECTORY")
-            .ok_or(CredentialsError::MissingDirectory)?;
+        config
+            .validate()
+            .map_err(CredentialsError::InvalidConfiguration)?;
+        let directory =
+            env::var_os("CREDENTIALS_DIRECTORY").ok_or(CredentialsError::MissingDirectory)?;
         Self::load_from_directory(&config.smtp.credentials, Path::new(&directory))
     }
 
@@ -154,7 +178,11 @@ fn read_secret(
 mod tests {
     use super::*;
     use crate::config::CredentialProvider;
-    use std::{fs, path::PathBuf, sync::atomic::{AtomicU64, Ordering}};
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+    };
 
     static NEXT_TEST_DIR: AtomicU64 = AtomicU64::new(0);
 
@@ -164,7 +192,8 @@ mod tests {
         fn new() -> Self {
             let n = NEXT_TEST_DIR.fetch_add(1, Ordering::Relaxed);
             let path = env::temp_dir().join(format!(
-                "teal-mailer-credentials-test-{}-{n}", std::process::id()
+                "teal-mailer-credentials-test-{}-{n}",
+                std::process::id()
             ));
             fs::create_dir(&path).unwrap();
             Self(path)
@@ -196,7 +225,10 @@ mod tests {
         dir.write("smtp_password", b"leading and trailing spaces ");
         let credentials = SmtpCredentials::load_from_directory(&ids(), &dir.0).unwrap();
         assert_eq!(credentials.username.expose(), "mailer@example.com");
-        assert_eq!(credentials.password.expose(), "leading and trailing spaces ");
+        assert_eq!(
+            credentials.password.expose(),
+            "leading and trailing spaces "
+        );
     }
 
     #[test]
@@ -216,7 +248,13 @@ mod tests {
         let dir = TestDir::new();
         dir.write("smtp_user", b"mailer@example.com");
         let err = SmtpCredentials::load_from_directory(&ids(), &dir.0).unwrap_err();
-        assert!(matches!(err, CredentialsError::Read { kind: "password", .. }));
+        assert!(matches!(
+            err,
+            CredentialsError::Read {
+                kind: "password",
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -255,7 +293,10 @@ mod tests {
         dir.write("smtp_password", &[0xff]);
         assert!(matches!(
             SmtpCredentials::load_from_directory(&ids(), &dir.0),
-            Err(CredentialsError::Read { kind: "password", .. })
+            Err(CredentialsError::Read {
+                kind: "password",
+                ..
+            })
         ));
     }
 
@@ -272,8 +313,8 @@ mod tests {
 
     #[test]
     fn requires_an_absolute_existing_directory() {
-        let err = SmtpCredentials::load_from_directory(&ids(), Path::new("relative/path"))
-            .unwrap_err();
+        let err =
+            SmtpCredentials::load_from_directory(&ids(), Path::new("relative/path")).unwrap_err();
         assert!(matches!(err, CredentialsError::InvalidDirectory));
     }
 }

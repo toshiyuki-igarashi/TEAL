@@ -6,7 +6,11 @@
  */
 
 use serde::Deserialize;
-use std::{error::Error, fmt, fs, io, path::{Path, PathBuf}};
+use std::{
+    error::Error,
+    fmt, fs, io,
+    path::{Path, PathBuf},
+};
 
 /// Default configuration path. This matches teal-mailer.service.
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/teal.d/mailer.json";
@@ -76,7 +80,11 @@ impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io { path, source } => {
-                write!(f, "failed to read mailer config {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to read mailer config {}: {source}",
+                    path.display()
+                )
             }
             Self::Json(source) => write!(f, "invalid mailer JSON: {source}"),
             Self::Invalid(reason) => write!(f, "invalid mailer config: {reason}"),
@@ -124,32 +132,46 @@ impl MailerConfig {
             || host.contains('/')
             || host.contains('@')
         {
-            return Err(ConfigError::Invalid("smtp.host must be a host name or IP address, not a URL"));
+            return Err(ConfigError::Invalid(
+                "smtp.host must be a host name or IP address, not a URL",
+            ));
         }
         if self.smtp.port == 0 {
-            return Err(ConfigError::Invalid("smtp.port must be in the range 1..=65535"));
+            return Err(ConfigError::Invalid(
+                "smtp.port must be in the range 1..=65535",
+            ));
         }
 
         // v1.0 config uses plain mailbox addresses without display names.
         // The SMTP/MIME layer additionally validates full RFC syntax.
         if !is_plain_mailbox_address(&self.smtp.from_address) {
-            return Err(ConfigError::Invalid("smtp.from must be a plain mailbox address"));
+            return Err(ConfigError::Invalid(
+                "smtp.from must be a plain mailbox address",
+            ));
         }
         if !is_plain_mailbox_address(&self.smtp.to_address) {
-            return Err(ConfigError::Invalid("smtp.to_address must be a plain mailbox address"));
+            return Err(ConfigError::Invalid(
+                "smtp.to_address must be a plain mailbox address",
+            ));
         }
 
         let credentials = &self.smtp.credentials;
         if !is_valid_credential_name(&credentials.user)
             || !is_valid_credential_name(&credentials.password)
         {
-            return Err(ConfigError::Invalid("credential identifiers contain invalid characters"));
+            return Err(ConfigError::Invalid(
+                "credential identifiers contain invalid characters",
+            ));
         }
         if credentials.user == credentials.password {
-            return Err(ConfigError::Invalid("SMTP username and password credential identifiers must differ"));
+            return Err(ConfigError::Invalid(
+                "SMTP username and password credential identifiers must differ",
+            ));
         }
         if self.rate_limit.ai_per_minute == 0 || self.rate_limit.deny_per_minute == 0 {
-            return Err(ConfigError::Invalid("rate limits must be greater than zero"));
+            return Err(ConfigError::Invalid(
+                "rate limits must be greater than zero",
+            ));
         }
         Ok(())
     }
@@ -162,9 +184,9 @@ fn is_plain_mailbox_address(address: &str) -> bool {
     };
     parts_nonempty
         && address.matches('@').count() == 1
-        && !address.chars().any(|c| {
-            c.is_control() || c.is_whitespace() || matches!(c, '<' | '>' | ',' | ';')
-        })
+        && !address
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || matches!(c, '<' | '>' | ',' | ';'))
 }
 
 pub(crate) fn is_valid_credential_name(name: &str) -> bool {
@@ -258,8 +280,13 @@ mod tests {
         value["smtp"].as_object_mut().unwrap().remove("to_address");
         assert!(parse(value).is_err());
 
-        for address in ["", "security-team", "Name <team@example.com>",
-            "team@example.com\r\nBcc: leak@example.com", "team@example.com "] {
+        for address in [
+            "",
+            "security-team",
+            "Name <team@example.com>",
+            "team@example.com\r\nBcc: leak@example.com",
+            "team@example.com ",
+        ] {
             let mut value = valid_json();
             value["smtp"]["to_address"] = json!(address);
             assert!(parse(value).is_err(), "accepted invalid To: {address:?}");
@@ -289,7 +316,10 @@ mod tests {
     #[test]
     fn rejects_missing_required_fields_and_bad_json() {
         let mut value = valid_json();
-        value["rate_limit"].as_object_mut().unwrap().remove("deny_per_minute");
+        value["rate_limit"]
+            .as_object_mut()
+            .unwrap()
+            .remove("deny_per_minute");
         assert!(parse(value).is_err());
         assert!(MailerConfig::from_json("{broken json").is_err());
     }
