@@ -46,13 +46,18 @@ pub async fn send_notification(
     let body = serde_json::to_vec(request)
         .map_err(|_| IpcError::Permanent("cannot serialize notification request"))?;
     if body.is_empty() || body.len() > MAX_FRAME_LENGTH {
-        return Err(IpcError::Permanent("notification request exceeds IPC frame limit"));
+        return Err(IpcError::Permanent(
+            "notification request exceeds IPC frame limit",
+        ));
     }
 
-    let mut stream = timeout(config.connect_timeout, UnixStream::connect(&config.socket_path))
-        .await
-        .map_err(|_| timed_out("teal-mailer connect timeout"))?
-        .map_err(io_error)?;
+    let mut stream = timeout(
+        config.connect_timeout,
+        UnixStream::connect(&config.socket_path),
+    )
+    .await
+    .map_err(|_| timed_out("teal-mailer connect timeout"))?
+    .map_err(io_error)?;
 
     let frame_len = (body.len() as u32).to_be_bytes();
     timeout(config.write_timeout, async {
@@ -69,7 +74,10 @@ pub async fn send_notification(
         stream.read_exact(&mut len_bytes).await?;
         let len = u32::from_be_bytes(len_bytes) as usize;
         if len == 0 || len > MAX_FRAME_LENGTH {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid response frame length"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid response frame length",
+            ));
         }
         let mut response_bytes = vec![0_u8; len];
         stream.read_exact(&mut response_bytes).await?;
@@ -88,7 +96,9 @@ pub async fn send_notification(
     let result: DeliveryResponse = serde_json::from_slice(&response)
         .map_err(|_| IpcError::Permanent("invalid delivery response JSON"))?;
     if result.notification_id != request.notification_id {
-        return Err(IpcError::Permanent("delivery response notification_id mismatch"));
+        return Err(IpcError::Permanent(
+            "delivery response notification_id mismatch",
+        ));
     }
     Ok(result)
 }
@@ -165,9 +175,7 @@ mod tests {
         path::PathBuf,
         sync::atomic::{AtomicU64, Ordering},
     };
-    use teal_notify_protocol::{
-        AiNotification, NotificationPayload, PROTOCOL_VERSION,
-    };
+    use teal_notify_protocol::{AiNotification, NotificationPayload, PROTOCOL_VERSION};
     use tokio::{net::UnixListener, time::Instant};
 
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -177,9 +185,8 @@ mod tests {
     impl TestSocket {
         fn new() -> Self {
             let n = SEQUENCE.fetch_add(1, Ordering::Relaxed);
-            let base = std::env::temp_dir().join(format!(
-                "teal-notify-{}-{n}.sock", std::process::id()
-            ));
+            let base =
+                std::env::temp_dir().join(format!("teal-notify-{}-{n}.sock", std::process::id()));
             let _ = std::fs::remove_file(&base);
             Self(base)
         }
@@ -223,7 +230,10 @@ mod tests {
             error_code: None,
         };
         let bytes = serde_json::to_vec(&reply).unwrap();
-        stream.write_all(&(bytes.len() as u32).to_be_bytes()).await.unwrap();
+        stream
+            .write_all(&(bytes.len() as u32).to_be_bytes())
+            .await
+            .unwrap();
         stream.write_all(&bytes).await.unwrap();
     }
 
@@ -255,7 +265,12 @@ mod tests {
         });
         let (tx, rx) = mpsc::channel(2);
         let counters = Arc::new(NotificationCounters::default());
-        let worker = tokio::spawn(run_sender(NotificationKind::Ai, rx, config, counters.clone()));
+        let worker = tokio::spawn(run_sender(
+            NotificationKind::Ai,
+            rx,
+            config,
+            counters.clone(),
+        ));
         tx.send(sample()).await.unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         while counters.snapshot().ai_accepted == 0 && Instant::now() < deadline {

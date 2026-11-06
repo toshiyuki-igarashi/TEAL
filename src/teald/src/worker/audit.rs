@@ -502,6 +502,16 @@ async fn process_resolved_event(
     ticket_id: Option<String>,
     epoch: u32,
 ) -> Result<(), String> {
+    // Only an actual DENY on the ENFORCE lane warrants mail notification.
+    // Audit-lane policy effect=Deny is not an actual access refusal.
+    let notify_access_denied = crate::notification::deny_event::should_notify(
+        req.is_audit,
+        matches!(
+            &decision,
+            PolicyDecision::Deny | PolicyDecision::NoRuleMatched
+        ),
+    );
+
     let (effect, log_type) = match decision {
         PolicyDecision::Allow => (Effect::Allow, LogType::AccessAllowed),
         PolicyDecision::NotManaged => (Effect::Allow, LogType::AccessAllowed),
@@ -534,6 +544,48 @@ async fn process_resolved_event(
 
     EvidenceManager::log_slow_path_static(log_type, effect, is_cache, &final_ticket_id, &pending)
         .await;
+
+    // Notification is submitted only AFTER the audit path has recorded the
+    // final access decision. No IPC/SMTP await or channel wait is performed.
+    if notify_access_denied {
+        let timestamp = pending.timestamp.to_rfc3339();
+        let event = crate::notification::deny_event::ConfirmedDenyEvent {
+            audit_id: &pending.audit_id,
+            hostname: crate::notification::deny_event::cached_hostname(),
+            uid: pending.subject.uid,
+            pid: Some(pending.subject.pid),
+            program: &pending.subject.program_path,
+            action: &req.raw_action,
+            rule_id: pending.rule_id.as_deref(),
+            policy_epoch: pending.policy_epoch,
+            target: &pending.object.path,
+            timestamp: &timestamp,
+        };
+        // Phase 2 step 2: Bcc resolution via roles.json is not wired yet.
+        // A valid empty Bcc still delivers to mailer.json's mandatory To.
+        if let Err(err) = crate::notification::deny_event::submit(event, &[]) {
+            // QueueFull is already counted by notification::queue. Avoid an
+            // unbounded eprintln() storm during a mass DENY incident.
+            if !matches!(
+                err,
+                crate::notification::deny_event::DenySubmitError::Enqueue(
+                    crate::notification::EnqueueError::QueueFull
+                )
+            ) {
+                // Log the first error and powers of two thereafter. This
+                // bounds diagnostic output even if notification startup fails.
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static ENQUEUE_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
+                let n = ENQUEUE_ERROR_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                if n.is_power_of_two() {
+                    eprintln!(
+                        "[TEAL][notify][Deny][WARN] enqueue error #{} audit_id={}: {:?}",
+                        n, pending.audit_id, err
+                    );
+                }
+            }
+        }
+    }
 
     Ok(())
 }

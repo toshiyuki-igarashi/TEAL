@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! TEAL Phase 2 step 1: non-blocking notification queues and IPC senders.
 //!
-//! Does not inspect DENY events or AI results yet. Event conversion,
-//! recipient-role resolution, aggregation, persistence and shutdown drain
-//! are separate steps.
+//! Confirmed DENY events are aggregated in fixed five-minute windows before
+//! enqueue. Recipient-role resolution and persistence are separate steps.
 
+pub mod aggregation;
 pub mod config;
+pub mod deny_event;
 pub mod ipc_client;
 pub mod queue;
 
@@ -47,6 +48,8 @@ impl NotificationRuntime {
 
 pub fn start(config: NotificationTransportConfig) -> Result<NotificationRuntime, &'static str> {
     config.validate()?;
+    // Cache once outside the audit worker to avoid per-event filesystem I/O.
+    let _ = deny_event::cached_hostname();
     let (ai_tx, ai_rx) = mpsc::channel(config.ai_queue_capacity);
     let (deny_tx, deny_rx) = mpsc::channel(config.deny_queue_capacity);
     let counters = Arc::new(NotificationCounters::default());

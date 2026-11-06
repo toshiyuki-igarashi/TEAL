@@ -44,7 +44,11 @@ impl NotificationTransportConfig {
         if self.ai_queue_capacity == 0 || self.deny_queue_capacity == 0 {
             return Err("notification queue capacity must be positive");
         }
-        if self.ai_queue_capacity.checked_add(self.deny_queue_capacity).is_none() {
+        if self
+            .ai_queue_capacity
+            .checked_add(self.deny_queue_capacity)
+            .is_none()
+        {
             return Err("notification queue capacity overflow");
         }
         if self.connect_timeout.is_zero()

@@ -114,7 +114,11 @@ impl NotificationHandle {
         deny_tx: mpsc::Sender<NotificationRequest>,
         counters: Arc<NotificationCounters>,
     ) -> Self {
-        Self { ai_tx, deny_tx, counters }
+        Self {
+            ai_tx,
+            deny_tx,
+            counters,
+        }
     }
 
     /// Safe for use in the decision/AI event processing path: never awaits IPC.
@@ -137,8 +141,16 @@ impl NotificationHandle {
         }
         request.validate().map_err(EnqueueError::InvalidRequest)?;
         let (tx, enqueued, full) = match kind {
-            NotificationKind::Ai => (&self.ai_tx, &self.counters.ai_enqueued, &self.counters.ai_queue_full),
-            NotificationKind::Deny => (&self.deny_tx, &self.counters.deny_enqueued, &self.counters.deny_queue_full),
+            NotificationKind::Ai => (
+                &self.ai_tx,
+                &self.counters.ai_enqueued,
+                &self.counters.ai_queue_full,
+            ),
+            NotificationKind::Deny => (
+                &self.deny_tx,
+                &self.counters.deny_enqueued,
+                &self.counters.deny_queue_full,
+            ),
         };
         match tx.try_send(request) {
             Ok(()) => {
@@ -208,9 +220,13 @@ mod tests {
     fn full_queue_fails_without_waiting_and_is_counted() {
         let (ai_tx, _ai_rx) = mpsc::channel(1);
         let (deny_tx, _deny_rx) = mpsc::channel(1);
-        let handle = NotificationHandle::new(ai_tx, deny_tx, Arc::new(NotificationCounters::default()));
+        let handle =
+            NotificationHandle::new(ai_tx, deny_tx, Arc::new(NotificationCounters::default()));
         handle.try_enqueue_ai(ai_request()).unwrap();
-        assert_eq!(handle.try_enqueue_ai(ai_request()), Err(EnqueueError::QueueFull));
+        assert_eq!(
+            handle.try_enqueue_ai(ai_request()),
+            Err(EnqueueError::QueueFull)
+        );
         handle.try_enqueue_deny(deny_request()).unwrap();
         assert_eq!(handle.stats().ai_queue_full, 1);
         assert_eq!(handle.stats().ai_enqueued, 1);
@@ -221,8 +237,12 @@ mod tests {
     fn mismatched_payload_is_rejected() {
         let (ai_tx, _ai_rx) = mpsc::channel(1);
         let (deny_tx, _deny_rx) = mpsc::channel(1);
-        let handle = NotificationHandle::new(ai_tx, deny_tx, Arc::new(NotificationCounters::default()));
-        assert_eq!(handle.try_enqueue_deny(ai_request()), Err(EnqueueError::WrongKind));
+        let handle =
+            NotificationHandle::new(ai_tx, deny_tx, Arc::new(NotificationCounters::default()));
+        assert_eq!(
+            handle.try_enqueue_deny(ai_request()),
+            Err(EnqueueError::WrongKind)
+        );
         assert_eq!(handle.stats().deny_enqueued, 0);
     }
 }

@@ -37,7 +37,7 @@ use tokio::{
     time::timeout,
 };
 
-use crate::smtp::SmtpMailer;
+use crate::{config::RateLimitConfig, rate_limit::RateLimiter, smtp::SmtpMailer};
 
 const SYSTEMD_FIRST_FD: i32 = 3;
 const TEALD_UID: u32 = 0;
@@ -112,8 +112,16 @@ fn validate_activation_env(
 
 /// Run until SIGTERM or SIGINT. The listener itself remains owned by systemd;
 /// in-flight sends are given limited time to complete on graceful shutdown.
-pub async fn run(listener: UnixListener, smtp: SmtpMailer) -> io::Result<()> {
+pub async fn run(
+    listener: UnixListener,
+    smtp: SmtpMailer,
+    limits: &RateLimitConfig,
+) -> io::Result<()> {
     let smtp = Arc::new(smtp);
+    let limiter = Arc::new(RateLimiter::new(
+        limits.ai_per_minute,
+        limits.deny_per_minute,
+    ));
     let permits = Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
     let mut tasks = JoinSet::new();
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -147,9 +155,10 @@ pub async fn run(listener: UnixListener, smtp: SmtpMailer) -> io::Result<()> {
         match accepted {
             Ok((stream, _)) => {
                 let smtp = Arc::clone(&smtp);
+                let limiter = Arc::clone(&limiter);
                 tasks.spawn(async move {
                     let _permit = permit;
-                    if let Err(err) = serve_connection(stream, &smtp).await {
+                    if let Err(err) = serve_connection(stream, &smtp, &limiter).await {
                         // Do not log message contents or SMTP credentials.
                         eprintln!("teal-mailer: IPC request failed: {err}");
                     }
@@ -178,7 +187,11 @@ pub async fn run(listener: UnixListener, smtp: SmtpMailer) -> io::Result<()> {
     Ok(())
 }
 
-async fn serve_connection(mut stream: UnixStream, smtp: &SmtpMailer) -> io::Result<()> {
+async fn serve_connection(
+    mut stream: UnixStream,
+    smtp: &SmtpMailer,
+    limiter: &RateLimiter,
+) -> io::Result<()> {
     let peer_uid = stream.peer_cred()?.uid();
     if !is_authorized_uid(peer_uid) {
         // No response to an unauthorized client.
@@ -198,11 +211,20 @@ async fn serve_connection(mut stream: UnixStream, smtp: &SmtpMailer) -> io::Resu
 
     let response = match validation {
         Ok(()) => {
-            let (subject, body) = format_mail(&request);
-
-            smtp.send_once(&request.recipients, subject, &body)
-                .await
-                .into_response(request.notification_id)
+            if !limiter.allow(&request.payload) {
+                // No SMTP attempt: teald keeps this request and retries with
+                // the same ID. No duplicate, unbounded mailer-side queue.
+                DeliveryResponse {
+                    notification_id: request.notification_id,
+                    status: DeliveryStatus::RetryableError,
+                    error_code: Some("RATE_LIMIT".to_owned()),
+                }
+            } else {
+                let (subject, body) = format_mail(&request);
+                smtp.send_once(&request.recipients, subject, &body)
+                    .await
+                    .into_response(request.notification_id)
+            }
         }
 
         Err(reason) => {

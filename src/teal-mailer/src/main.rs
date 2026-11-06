@@ -8,6 +8,7 @@
 mod config;
 mod credentials;
 mod ipc_server;
+mod rate_limit;
 mod smtp;
 
 use std::error::Error;
@@ -80,6 +81,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // The socket is created by systemd; do not bind /run/teal here.
     let listener = ipc_server::take_systemd_listener()?;
     println!("teal-mailer: IPC listener inherited from systemd");
-    ipc_server::run(listener, sender).await?;
+    ipc_server::run(listener, sender, &cfg.rate_limit).await?;
     Ok(())
 }
