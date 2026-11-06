@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
+
 //! teald -> teal-mailer: one length-prefixed JSON request per Unix connection.
 //! Retries belong exclusively to teald, never to teal-mailer.
 

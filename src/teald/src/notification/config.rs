@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
+
 //! Initial, in-process configuration for the teald notification transport.
 //! JSON configuration and role resolution are integrated in a later step.
 

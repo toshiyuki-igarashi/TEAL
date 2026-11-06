@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
+
 //! TEAL Phase 2 step 1: non-blocking notification queues and IPC senders.
 //!
 //! Confirmed DENY events are aggregated in fixed five-minute windows before

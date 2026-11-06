@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
+
 //! Bounded, non-blocking AI and DENY submission to independent IPC workers.
 
 use std::sync::{

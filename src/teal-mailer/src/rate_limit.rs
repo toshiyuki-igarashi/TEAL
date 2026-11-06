@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT
+/*
+ * TEAL mailer for Notification (teal-mailer)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
+
 //! Independent strict sliding 60-second SMTP attempt budgets for AI and DENY.
 //!
 //! The mailer never buffers or retries an over-limit request. It returns

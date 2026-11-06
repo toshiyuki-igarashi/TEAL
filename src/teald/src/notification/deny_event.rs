@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
+
 //! Convert a confirmed ENFORCE ACCESS_DENIED audit event into a mail notification.
 //!
 //! Only call this after the audit event has been recorded and after a kernel

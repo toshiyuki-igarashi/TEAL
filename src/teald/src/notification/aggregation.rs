@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MIT
+/*
+ * TEAL Daemon (teald)
+ *
+ * Copyright (c) 2026 Toshiyuki Igarashi
+ */
+
 //! Fixed-window aggregation of actual ENFORCE DENY notifications.
 //!
 //! Aggregation is independent of SMTP, IPC, and the audit log. Time windows
