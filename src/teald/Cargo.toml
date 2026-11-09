@@ -48,3 +48,11 @@ reqwest = { version = "0.13", features = ["json"] }
 teal_policy_engine = { path = "../teal_policy_engine" }
 teal_common = { path = "../teal_common" }
 teal-notify-protocol = { path = "../teal-notify-protocol" }
+
+[features]
+ai-worker-smoke = []
+ai-notify-smoke = []
+[[bin]]
+name = "teal-ai-worker-smoke"
+path = "src/bin/teal-ai-worker-smoke.rs"
+required-features = ["ai-worker-smoke"]

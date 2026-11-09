@@ -171,10 +171,10 @@ async fn main() -> Result<()> {
 
     let ai_runtime = ai::init_ai().map_err(|e| anyhow::anyhow!(e))?;
 
-    EvidenceManager::init(1024, ai_runtime);
-
-    // Phase 2 Step 1: transport only. No automatic DENY/AI submission yet.
-    // Failure of notifications must never stop the authorization daemon.
+    // Phase 4: AI/DENY notification transport.
+    // Real DENY events are submitted by the audit worker.
+    // AI smoke injection is enabled only by the Cargo feature
+    // and TEAL_AI_SMOKE_TEST=1.
     let _notification_runtime = match teald::notification::start(
         teald::notification::NotificationTransportConfig::default(),
     ) {
@@ -189,6 +189,37 @@ async fn main() -> Result<()> {
                     "{}[INFO] Notification AI/DENY queues started",
                     ktime_prefix()
                 );
+
+                #[cfg(feature = "ai-notify-smoke")]
+                if std::env::var("TEAL_AI_SMOKE_TEST").ok().as_deref() == Some("1") {
+                    use teald::notification::ai_event::{submit, AiAttackEvent};
+
+                    let related_ids = ["TEST-AUDIT-001", "TEST-AUDIT-002"];
+
+                    let analysis_id = format!("PHASE4-SMOKE-{}", uuid::Uuid::new_v4());
+
+                    let event = AiAttackEvent {
+                        analysis_id: &analysis_id,
+                        hostname: "",
+                        confidence: 0.98,
+                        reason: "Phase 4 smoke test: simulated high-confidence AI detection",
+                        related_event_ids: &related_ids,
+                        program: "/usr/bin/cat",
+                        action: "READ",
+                        target: "/var/tmp/teal-deny-integration-test.txt",
+                    };
+
+                    match submit(event, &[]) {
+                        Ok(()) => {
+                            eprintln!("{}[INFO] Phase 4 AI smoke event enqueued", ktime_prefix())
+                        }
+                        Err(e) => eprintln!(
+                            "{}[ERROR] Phase 4 AI smoke enqueue failed: {:?}",
+                            ktime_prefix(),
+                            e
+                        ),
+                    }
+                }
             }
             Some(runtime)
         }
@@ -201,6 +232,9 @@ async fn main() -> Result<()> {
             None
         }
     };
+
+    // Install the global notification transport before AI workers can run.
+    EvidenceManager::init(1024, ai_runtime);
 
     // ソケット配置ディレクトリの作成と権限設定
     if let Err(e) = std::fs::create_dir_all(TEAL_SOCKET_ROOT) {

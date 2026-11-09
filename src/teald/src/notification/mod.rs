@@ -11,6 +11,7 @@
 //! enqueue. Recipient-role resolution and persistence are separate steps.
 
 pub mod aggregation;
+pub mod ai_event;
 pub mod config;
 pub mod deny_event;
 pub mod ipc_client;
@@ -19,6 +20,7 @@ pub mod queue;
 use std::sync::{Arc, OnceLock};
 use tokio::{sync::mpsc, task::JoinHandle};
 
+pub use ai_event::{AiAttackEvent, AiSubmitError};
 pub use config::NotificationTransportConfig;
 pub use queue::{EnqueueError, NotificationHandle, NotificationKind, NotificationStats};
 

@@ -193,6 +193,7 @@ pub async fn run_ai_analysis_worker(
     while let Some(request) = rx.recv().await {
         match engine.analyze_with_provenance(&request).await {
             Ok(outcome) => {
+                crate::ai::notify_bridge::emit_notifications(&request, &outcome);
                 let record =
                     AiStoredAnalysis::from_outcome(&request, engine.provider_name(), outcome);
                 let id = record.result.analysis_id.clone();

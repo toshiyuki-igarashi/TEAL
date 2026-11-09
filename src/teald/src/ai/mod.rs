@@ -10,6 +10,7 @@ pub mod aggregator;
 pub mod collector;
 pub mod engine;
 pub mod error;
+mod notify_bridge;
 pub mod provider;
 pub mod results;
 pub mod types;
