@@ -19,7 +19,8 @@
         "start": { "$ref": "#/$defs/control" },
         "stop":  { "$ref": "#/$defs/control" },
         "policy_update": { "$ref": "#/$defs/control" },
-        "flush": { "$ref": "#/$defs/control" }
+        "flush": { "$ref": "#/$defs/control" },
+        "notify": { "$ref": "#/$defs/control" }
       }
     },
 

@@ -169,7 +169,10 @@ mod tests {
         assert_eq!(wire["version"], json!(PROTOCOL_VERSION));
         assert_eq!(wire["notification_id"], "N-AI-001");
         assert_eq!(wire["payload"]["kind"], "ai");
-        assert_eq!(wire["payload"]["data"]["related_event_ids"], json!(["EVT-101", "EVT-102"]));
+        assert_eq!(
+            wire["payload"]["data"]["related_event_ids"],
+            json!(["EVT-101", "EVT-102"])
+        );
 
         let restored: NotificationRequest = serde_json::from_str(&encoded).unwrap();
         assert_eq!(restored.recipients, vec!["sec@example.com"]);
@@ -230,8 +233,16 @@ mod tests {
     fn delivery_response_json_round_trip_for_all_statuses() {
         let examples = [
             (DeliveryStatus::AcceptedBySmtp, "AcceptedBySmtp", None),
-            (DeliveryStatus::RetryableError, "RetryableError", Some("SMTP_TEMP")),
-            (DeliveryStatus::PermanentError, "PermanentError", Some("SMTP_AUTH")),
+            (
+                DeliveryStatus::RetryableError,
+                "RetryableError",
+                Some("SMTP_TEMP"),
+            ),
+            (
+                DeliveryStatus::PermanentError,
+                "PermanentError",
+                Some("SMTP_AUTH"),
+            ),
         ];
         for (status, status_on_wire, error_code) in examples {
             let original = DeliveryResponse {

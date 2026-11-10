@@ -26,6 +26,10 @@ pub struct RawMgmtControls {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flush: Option<RawMgmtControl>,
+
+    /// 未配送通知管理。省略時は管理操作を許可しない (fail-closed)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notify: Option<RawMgmtControl>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -73,6 +77,8 @@ pub struct CompiledMgmtControls {
     pub stop: CompiledMgmtControl,
     pub policy_update: Option<CompiledMgmtControl>,
     pub flush: Option<CompiledMgmtControl>,
+    /// None は notify 管理操作を許可しないことを表す。
+    pub notify: Option<CompiledMgmtControl>,
 }
 
 #[derive(Debug, Clone)]
@@ -170,7 +176,7 @@ pub fn compile_management(
             })
         };
 
-    // ---- control(start/stop/policy_update/flush) をコンパイル ----
+    // ---- control(start/stop/policy_update/flush/notify) をコンパイル ----
 
     fn compile_control(
         which: &str,
@@ -370,14 +376,158 @@ pub fn compile_management(
         None => None,
     };
 
+    // 4. 任意項目 (notify)。従来の管理操作と同じロール解決・MPA 検証を適用。
+    let notify = match raw.controls.notify {
+        Some(c) => Some(compile_control(
+            "notify",
+            c,
+            &mut warnings,
+            &mut resolve_role_uids,
+        )?),
+        None => None,
+    };
+
     let compiled = CompiledManagement {
         controls: CompiledMgmtControls {
             start,
             stop,
             policy_update,
             flush,
+            notify,
         },
     };
 
     Ok((compiled, warnings))
+}
+
+#[cfg(test)]
+mod notify_tests {
+    use super::*;
+    use crate::ir::{CompiledDefaults, GroupRoleIndex, RoleCatalog, SubjectRoleIndex};
+    use serde_json::{json, Value};
+    use std::collections::HashMap;
+
+    fn roles() -> CompiledRolesCore {
+        let mut assignments = SubjectRoleIndex::default();
+        assignments
+            .uid_roles
+            .insert(1001, HashSet::from(["ops".into()]));
+        assignments
+            .uid_roles
+            .insert(1002, HashSet::from(["security".into()]));
+        CompiledRolesCore {
+            roles: RoleCatalog {
+                known_roles: HashSet::from(["ops".into(), "security".into()]),
+                meta: HashMap::new(),
+            },
+            assignments,
+            group_assignments: GroupRoleIndex::default(),
+            defaults: CompiledDefaults {
+                roles_for_unknown_user: HashSet::new(),
+                deny_if_role_unknown: true,
+            },
+            allowed_ssh_networks: HashMap::new(),
+        }
+    }
+
+    fn management_json(notify: Option<Value>) -> Value {
+        let mut data = json!({
+            "controls": {
+                "start": {"initiator_roles": ["ops"], "mpa": {"enabled": false}},
+                "stop":  {"initiator_roles": ["ops"], "mpa": {"enabled": false}}
+            }
+        });
+        if let Some(notify) = notify {
+            data["controls"]["notify"] = notify;
+        }
+        data
+    }
+
+    #[test]
+    fn old_management_without_notify_remains_valid_and_denies_notify() {
+        let raw: RawManagement = serde_json::from_value(management_json(None)).unwrap();
+        assert!(raw.controls.notify.is_none());
+        let encoded = serde_json::to_value(&raw).unwrap();
+        assert!(encoded["controls"].get("notify").is_none());
+
+        let (compiled, _) = compile_management(raw, &roles()).unwrap();
+        assert!(compiled.controls.notify.is_none());
+    }
+
+    #[test]
+    fn notify_resolves_its_own_initiator_roles_not_start_roles() {
+        let raw: RawManagement = serde_json::from_value(management_json(Some(json!({
+            "description": "Manage undelivered notifications",
+            "initiator_roles": ["security"],
+            "mpa": {"enabled": false}
+        }))))
+        .unwrap();
+        let (compiled, _) = compile_management(raw, &roles()).unwrap();
+        let notify = compiled.controls.notify.unwrap();
+        assert_eq!(notify.initiator_uids, HashSet::from([1002]));
+        assert!(!notify.initiator_uids.contains(&1001));
+        assert!(matches!(notify.mpa, CompiledMgmtMpa::Disabled));
+    }
+
+    #[test]
+    fn notify_mpa_enabled_compiles_with_existing_control_validation() {
+        let raw: RawManagement = serde_json::from_value(management_json(Some(json!({
+            "initiator_roles": ["ops"],
+            "mpa": {
+                "enabled": true,
+                "threshold": 1,
+                "approver_roles": ["security"],
+                "timeout_minutes": 30
+            }
+        }))))
+        .unwrap();
+        let (compiled, _) = compile_management(raw, &roles()).unwrap();
+        let notify = compiled.controls.notify.unwrap();
+        match notify.mpa {
+            CompiledMgmtMpa::Enabled(mpa) => {
+                assert_eq!(mpa.threshold, 1);
+                assert_eq!(mpa.timeout_minutes, 30);
+                assert_eq!(mpa.approver_roles, HashSet::from(["security".into()]));
+            }
+            CompiledMgmtMpa::Disabled => panic!("notify MPA was unexpectedly disabled"),
+        }
+    }
+
+    #[test]
+    fn unknown_notify_initiator_role_fails_compilation() {
+        let raw: RawManagement = serde_json::from_value(management_json(Some(json!({
+            "initiator_roles": ["nonexistent_role"],
+            "mpa": {"enabled": false}
+        }))))
+        .unwrap();
+        assert!(matches!(
+            compile_management(raw, &roles()),
+            Err(CompileError::UnknownRoleReferenced { .. })
+        ));
+    }
+
+    #[test]
+    fn notify_mpa_threshold_exceeding_available_approvers_is_rejected() {
+        let raw: RawManagement = serde_json::from_value(management_json(Some(json!({
+            "initiator_roles": ["ops"],
+            "mpa": {
+                "enabled": true,
+                "threshold": 2,
+                "approver_roles": ["security"],
+                "timeout_minutes": 30
+            }
+        }))))
+        .unwrap();
+        assert!(compile_management(raw, &roles()).is_err());
+    }
+
+    #[test]
+    fn unknown_management_control_remains_rejected() {
+        let mut value = management_json(None);
+        value["controls"]["unexpected_action"] = json!({
+            "initiator_roles": ["ops"],
+            "mpa": {"enabled": false}
+        });
+        assert!(serde_json::from_value::<RawManagement>(value).is_err());
+    }
 }
