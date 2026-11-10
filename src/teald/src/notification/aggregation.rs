@@ -215,6 +215,14 @@ impl DenyAggregator {
         outgoing
     }
 
+    /// Consolidate incomplete DENY windows into a recoverable summary at shutdown.
+    pub fn drain_pending_for_shutdown(&mut self) -> Vec<NotificationRequest> {
+        self.groups
+            .drain()
+            .filter_map(|(_, mut group)| group.pending.take())
+            .collect()
+    }
+
     /// Preserve a failed enqueue within its existing aggregation group, so
     /// transient queue pressure does not immediately lose the event count.
     /// Returns false if the group was already evicted or expired.
@@ -345,6 +353,13 @@ impl AggregationDispatcher {
             self.unrecoverable_events
                 .fetch_add(deny.count, Ordering::Relaxed);
         }
+    }
+
+    pub fn drain_pending_for_shutdown(&self) -> Vec<NotificationRequest> {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain_pending_for_shutdown()
     }
 
     pub fn overflow_stats(&self) -> (u64, u64) {

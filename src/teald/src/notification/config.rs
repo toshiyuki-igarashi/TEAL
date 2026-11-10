@@ -25,6 +25,16 @@ pub struct NotificationTransportConfig {
     pub response_timeout: Duration,
     pub retry_initial_delay: Duration,
     pub retry_max_delay: Duration,
+    pub retry_max_attempts: u32,
+    pub retry_max_elapsed: Duration,
+    pub rate_limit_wait: Duration,
+    pub recovery_path: PathBuf,
+    pub recovery_max_total_bytes: u64,
+    pub recovery_max_undelivered_records: usize,
+    pub ai_emergency_spool_capacity: usize,
+    pub shutdown_grace: Duration,
+    pub shutdown_save_max_attempts: u32,
+    pub shutdown_save_retry_delay: Duration,
 }
 
 impl Default for NotificationTransportConfig {
@@ -36,8 +46,18 @@ impl Default for NotificationTransportConfig {
             connect_timeout: Duration::from_secs(5),
             write_timeout: Duration::from_secs(10),
             response_timeout: Duration::from_secs(90),
-            retry_initial_delay: Duration::from_secs(2),
-            retry_max_delay: Duration::from_secs(60),
+            retry_initial_delay: Duration::from_secs(10),
+            retry_max_delay: Duration::from_secs(120),
+            retry_max_attempts: 5,
+            retry_max_elapsed: Duration::from_secs(600),
+            rate_limit_wait: Duration::from_secs(60),
+            recovery_path: PathBuf::from("/var/lib/teal/notifications"),
+            recovery_max_total_bytes: 256 * 1024 * 1024,
+            recovery_max_undelivered_records: 4096,
+            ai_emergency_spool_capacity: 64,
+            shutdown_grace: Duration::from_secs(15),
+            shutdown_save_max_attempts: 3,
+            shutdown_save_retry_delay: Duration::from_millis(100),
         }
     }
 }
@@ -68,6 +88,25 @@ impl NotificationTransportConfig {
             || self.retry_initial_delay > self.retry_max_delay
         {
             return Err("notification retry interval is invalid");
+        }
+        if self.retry_max_attempts == 0
+            || self.retry_max_elapsed.is_zero()
+            || self.rate_limit_wait.is_zero()
+        {
+            return Err("notification retry maximums must be positive");
+        }
+        if !self.recovery_path.is_absolute()
+            || self.recovery_max_total_bytes == 0
+            || self.recovery_max_undelivered_records == 0
+            || self.ai_emergency_spool_capacity == 0
+        {
+            return Err("notification recovery limits/path invalid");
+        }
+        if self.shutdown_grace.is_zero()
+            || self.shutdown_save_max_attempts == 0
+            || self.shutdown_save_retry_delay.is_zero()
+        {
+            return Err("notification graceful shutdown limits invalid");
         }
         Ok(())
     }

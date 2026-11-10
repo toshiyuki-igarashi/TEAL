@@ -91,8 +91,10 @@ pub async fn run_workers(
         teald::worker::admin::admin_socket_loop(listener, admin_tx, nl_tx_admin).await;
     });
 
+    let mut terminate = signal::unix::signal(signal::unix::SignalKind::terminate())?;
     tokio::select! {
-        _ = signal::ctrl_c() => {}
+        _ = signal::ctrl_c() => {},
+        _ = terminate.recv() => {},
         res = async { tokio::try_join!(audit_handle, decision_handle, admin_handle) } => {
             if let Err(e) = res {
                 eprintln!("{}[ERROR] A worker panicked: {}", ktime_prefix(), e);
@@ -175,7 +177,7 @@ async fn main() -> Result<()> {
     // Real DENY events are submitted by the audit worker.
     // AI smoke injection is enabled only by the Cargo feature
     // and TEAL_AI_SMOKE_TEST=1.
-    let _notification_runtime = match teald::notification::start(
+    let notification_runtime = match teald::notification::start(
         teald::notification::NotificationTransportConfig::default(),
     ) {
         Ok(runtime) => {
@@ -317,5 +319,11 @@ async fn main() -> Result<()> {
     });
 
     // メインワーカー起動へ
-    run_workers(nl_tx, rx_decision, rx_audit, listener).await
+    let worker_result = run_workers(nl_tx, rx_decision, rx_audit, listener).await;
+    if let Some(runtime) = notification_runtime {
+        if let Err(e) = runtime.shutdown().await {
+            eprintln!("[TEAL][notify][ERROR] graceful notification save failed: {e}");
+        }
+    }
+    worker_result
 }

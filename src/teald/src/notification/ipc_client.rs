@@ -9,6 +9,7 @@
 //! Retries belong exclusively to teald, never to teal-mailer.
 
 use std::io;
+use std::time::Duration;
 
 use teal_notify_protocol::{
     DeliveryResponse, DeliveryStatus, NotificationRequest, MAX_FRAME_LENGTH,
@@ -109,67 +110,229 @@ pub async fn send_notification(
     Ok(result)
 }
 
-/// Independent per-kind sender, at most ONE in-flight notification per kind.
-/// A temporary failure retains the job and retries forever with bounded backoff.
-/// This trades FIFO throughput for preservation while the mailer is unavailable.
+/// Legacy test entry point: no storage and no lifecycle signal. Production uses
+/// `run_sender_managed` with the same bounded retry policy and durable storage.
+#[cfg(test)]
 pub(crate) async fn run_sender(
+    kind: NotificationKind,
+    rx: mpsc::Receiver<NotificationRequest>,
+    config: NotificationTransportConfig,
+    counters: Arc<NotificationCounters>,
+) {
+    let _ = run_sender_managed(kind, rx, config, counters, None, None, Vec::new()).await;
+}
+
+async fn stopping(signal: &mut Option<tokio::sync::watch::Receiver<bool>>) {
+    match signal {
+        Some(rx) => {
+            if !*rx.borrow() {
+                let _ = rx.changed().await;
+            }
+        }
+        None => std::future::pending::<()>().await,
+    }
+}
+
+/// A managed sender returns ALL in-memory work that still requires delivery when
+/// normal shutdown is requested. It does not perform filesystem I/O in teald's
+/// audit/decision workers. A deadline or exhausted budget becomes UNDELIVERED.
+pub async fn run_sender_managed(
     kind: NotificationKind,
     mut rx: mpsc::Receiver<NotificationRequest>,
     config: NotificationTransportConfig,
     counters: Arc<NotificationCounters>,
-) {
-    while let Some(request) = rx.recv().await {
+    storage: Option<Arc<super::recovery::RecoveryStore>>,
+    mut shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+    restored: Vec<super::recovery::PendingNotification>,
+) -> Vec<super::recovery::PendingNotification> {
+    use super::recovery::{now_ms, PendingNotification};
+    use std::collections::VecDeque;
+    let mut initial: VecDeque<_> = restored.into();
+    let mut leftover = Vec::new();
+    let mut stopped = false;
+
+    loop {
+        if shutdown.as_ref().is_some_and(|r| *r.borrow()) {
+            stopped = true;
+        }
+        if stopped {
+            break;
+        }
+        let mut job = if let Some(saved) = initial.pop_front() {
+            saved
+        } else {
+            tokio::select! {
+                _ = stopping(&mut shutdown) => { break; }
+                msg = rx.recv() => match msg {
+                    Some(request) => PendingNotification::fresh(request),
+                    None => break,
+                }
+            }
+        };
         let mut delay = config.retry_initial_delay;
         loop {
+            if shutdown.as_ref().is_some_and(|r| *r.borrow()) {
+                stopped = true;
+                leftover.push(job);
+                break;
+            }
+            if job.expired(&config) {
+                let reason = if job.attempts >= config.retry_max_attempts {
+                    "RETRY_EXHAUSTED"
+                } else {
+                    "RETRY_DEADLINE"
+                };
+                fail_to_undelivered(kind, &job, reason, &storage, &counters, &config).await;
+                break;
+            }
+            let start_ms = *job.first_attempt_ms.get_or_insert_with(now_ms);
+            let elapsed_ms = now_ms().saturating_sub(start_ms);
+            let remaining_ms =
+                (config.retry_max_elapsed.as_millis() as u64).saturating_sub(elapsed_ms);
+            if remaining_ms == 0 {
+                fail_to_undelivered(kind, &job, "RETRY_DEADLINE", &storage, &counters, &config)
+                    .await;
+                break;
+            }
             enum Outcome {
                 Accepted,
-                Retry(String),
+                RateLimit,
+                Retry(String, bool),
                 Failed(String),
             }
-
-            let outcome = match send_notification(&config, &request).await {
-                Ok(reply) => match reply.status {
+            let result = tokio::select! {
+                _ = stopping(&mut shutdown) => None,
+                value = tokio::time::timeout(Duration::from_millis(remaining_ms), send_notification(&config, &job.request)) => Some(value),
+            };
+            // The send future is dropped before we move `job` into the snapshot.
+            let Some(result) = result else {
+                stopped = true;
+                leftover.push(job);
+                break;
+            };
+            let outcome = match result {
+                Ok(Ok(reply)) => match reply.status {
                     DeliveryStatus::AcceptedBySmtp => Outcome::Accepted,
-                    DeliveryStatus::RetryableError => {
-                        Outcome::Retry(reply.error_code.unwrap_or_else(|| "SMTP_TEMP".into()))
+                    DeliveryStatus::RetryableError
+                        if reply.error_code.as_deref() == Some("RATE_LIMIT") =>
+                    {
+                        Outcome::RateLimit
                     }
+                    DeliveryStatus::RetryableError => Outcome::Retry(
+                        reply.error_code.unwrap_or_else(|| "SMTP_TEMP".into()),
+                        false,
+                    ),
                     DeliveryStatus::PermanentError => {
                         Outcome::Failed(reply.error_code.unwrap_or_else(|| "SMTP_PERMANENT".into()))
                     }
                 },
-                Err(IpcError::Retryable(err)) => Outcome::Retry(err.to_string()),
-                Err(IpcError::Permanent(reason)) => Outcome::Failed(reason.into()),
+                Ok(Err(IpcError::Retryable(e))) => Outcome::Retry(e.to_string(), true),
+                Ok(Err(IpcError::Permanent(reason))) => Outcome::Failed(reason.into()),
+                Err(_) => Outcome::Retry("RETRY_DEADLINE".into(), true),
             };
-
             match outcome {
                 Outcome::Accepted => {
                     counters.increment_accepted(kind);
                     eprintln!(
                         "[TEAL][notify][{:?}] accepted by SMTP: id={:?}",
-                        kind, request.notification_id
+                        kind, job.request.notification_id
                     );
                     break;
                 }
-                Outcome::Failed(code) => {
+                Outcome::Failed(reason) => {
+                    job.attempts = job.attempts.saturating_add(1);
+                    job.last_attempt_ms = Some(now_ms());
+                    job.last_error = Some(reason.clone());
                     counters.increment_permanent_failure(kind);
-                    eprintln!(
-                        "[TEAL][notify][{:?}][ERROR] permanent failure: id={:?} error={:?}",
-                        kind, request.notification_id, code
-                    );
-                    // Phase 2 step 1: accounting+diagnostics only; durable dead-letter later.
+                    fail_to_undelivered(kind, &job, &reason, &storage, &counters, &config).await;
                     break;
                 }
-                Outcome::Retry(reason) => {
+                Outcome::Retry(reason, uncertain) => {
+                    job.attempts = job.attempts.saturating_add(1);
+                    job.last_attempt_ms = Some(now_ms());
+                    job.last_error = Some(reason.clone());
+                    job.delivery_uncertain |= uncertain;
+                    if job.expired(&config) {
+                        let reason = if job.attempts >= config.retry_max_attempts {
+                            "RETRY_EXHAUSTED"
+                        } else {
+                            "RETRY_DEADLINE"
+                        };
+                        fail_to_undelivered(kind, &job, reason, &storage, &counters, &config).await;
+                        break;
+                    }
                     counters.increment_retry(kind);
                     eprintln!(
                         "[TEAL][notify][{:?}][WARN] retry in {:?}: id={:?} reason={:?}",
-                        kind, delay, request.notification_id, reason
+                        kind, delay, job.request.notification_id, reason
                     );
-                    sleep(delay).await;
-                    delay = delay.saturating_mul(2).min(config.retry_max_delay);
+                }
+                Outcome::RateLimit => {
+                    job.last_error = Some("RATE_LIMIT".into());
+                    // Production: avoid re-polling a rolling 60-second limiter.
+                    // Legacy test entry point uses the configured test delay.
+                    if storage.is_some() {
+                        delay = delay.max(config.rate_limit_wait);
+                    }
                 }
             }
+            let remaining = config
+                .retry_max_elapsed
+                .saturating_sub(Duration::from_millis(now_ms().saturating_sub(start_ms)));
+            if remaining.is_zero() {
+                fail_to_undelivered(kind, &job, "RETRY_DEADLINE", &storage, &counters, &config)
+                    .await;
+                break;
+            }
+            tokio::select! {
+                _ = stopping(&mut shutdown) => { stopped = true; leftover.push(job); break; }
+                _ = sleep(delay.min(remaining)) => {}
+            }
+            delay = delay.saturating_mul(2).min(config.retry_max_delay);
         }
+        if stopped {
+            break;
+        }
+    }
+    leftover.extend(initial);
+    while let Ok(msg) = rx.try_recv() {
+        leftover.push(super::recovery::PendingNotification::fresh(msg));
+    }
+    leftover
+}
+
+async fn fail_to_undelivered(
+    kind: NotificationKind,
+    job: &super::recovery::PendingNotification,
+    reason: &str,
+    storage: &Option<Arc<super::recovery::RecoveryStore>>,
+    counters: &Arc<NotificationCounters>,
+    config: &NotificationTransportConfig,
+) {
+    if let Some(store) = storage {
+        let saved = tokio::time::timeout(
+            config.shutdown_grace,
+            store.store_undelivered_async(job.clone(), reason.to_owned()),
+        )
+        .await;
+        match saved {
+            Ok(Ok(())) => eprintln!(
+                "[TEAL][notify][{:?}] undelivered saved: id={:?} attempts={}",
+                kind, job.request.notification_id, job.attempts
+            ),
+            other => {
+                counters.increment_save_failed(kind);
+                eprintln!(
+                    "[TEAL][notify][{:?}][ERROR] SAVE_FAILED: id={:?} result={:?}",
+                    kind, job.request.notification_id, other
+                );
+            }
+        }
+    } else {
+        eprintln!(
+            "[TEAL][notify][{:?}][WARN] no recovery store: id={:?} reason={reason}",
+            kind, job.request.notification_id
+        );
     }
 }
 

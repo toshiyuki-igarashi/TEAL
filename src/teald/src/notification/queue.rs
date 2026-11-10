@@ -8,7 +8,7 @@
 //! Bounded, non-blocking AI and DENY submission to independent IPC workers.
 
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
 use teal_notify_protocol::{NotificationPayload, NotificationRequest};
@@ -49,6 +49,10 @@ pub struct NotificationCounters {
     pub deny_permanent_failure: AtomicU64,
     pub ai_retries: AtomicU64,
     pub deny_retries: AtomicU64,
+    pub ai_emergency_queued: AtomicU64,
+    pub ai_spool_failed: AtomicU64,
+    pub ai_save_failed: AtomicU64,
+    pub deny_save_failed: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -63,6 +67,10 @@ pub struct NotificationStats {
     pub deny_permanent_failure: u64,
     pub ai_retries: u64,
     pub deny_retries: u64,
+    pub ai_emergency_queued: u64,
+    pub ai_spool_failed: u64,
+    pub ai_save_failed: u64,
+    pub deny_save_failed: u64,
 }
 
 impl NotificationCounters {
@@ -79,6 +87,10 @@ impl NotificationCounters {
             deny_permanent_failure: load(&self.deny_permanent_failure),
             ai_retries: load(&self.ai_retries),
             deny_retries: load(&self.deny_retries),
+            ai_emergency_queued: load(&self.ai_emergency_queued),
+            ai_spool_failed: load(&self.ai_spool_failed),
+            ai_save_failed: load(&self.ai_save_failed),
+            deny_save_failed: load(&self.deny_save_failed),
         }
     }
 
@@ -98,6 +110,13 @@ impl NotificationCounters {
         .fetch_add(1, Ordering::Relaxed);
     }
 
+    pub(crate) fn increment_save_failed(&self, kind: NotificationKind) {
+        match kind {
+            NotificationKind::Ai => &self.ai_save_failed,
+            NotificationKind::Deny => &self.deny_save_failed,
+        }
+        .fetch_add(1, Ordering::Relaxed);
+    }
     pub(crate) fn increment_permanent_failure(&self, kind: NotificationKind) {
         match kind {
             NotificationKind::Ai => &self.ai_permanent_failure,
@@ -112,6 +131,8 @@ pub struct NotificationHandle {
     ai_tx: mpsc::Sender<NotificationRequest>,
     deny_tx: mpsc::Sender<NotificationRequest>,
     pub(crate) counters: Arc<NotificationCounters>,
+    emergency_tx: Option<mpsc::Sender<NotificationRequest>>,
+    accepting: Arc<AtomicBool>,
 }
 
 impl NotificationHandle {
@@ -124,7 +145,20 @@ impl NotificationHandle {
             ai_tx,
             deny_tx,
             counters,
+            emergency_tx: None,
+            accepting: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    pub(crate) fn with_emergency(
+        mut self,
+        emergency_tx: mpsc::Sender<NotificationRequest>,
+    ) -> Self {
+        self.emergency_tx = Some(emergency_tx);
+        self
+    }
+    pub(crate) fn stop_accepting(&self) {
+        self.accepting.store(false, Ordering::Release);
     }
 
     /// Safe for use in the decision/AI event processing path: never awaits IPC.
@@ -142,6 +176,9 @@ impl NotificationHandle {
         kind: NotificationKind,
         request: NotificationRequest,
     ) -> Result<(), EnqueueError> {
+        if !self.accepting.load(Ordering::Acquire) {
+            return Err(EnqueueError::QueueClosed);
+        }
         if NotificationKind::from_request(&request) != kind {
             return Err(EnqueueError::WrongKind);
         }
@@ -163,8 +200,21 @@ impl NotificationHandle {
                 enqueued.fetch_add(1, Ordering::Relaxed);
                 Ok(())
             }
-            Err(mpsc::error::TrySendError::Full(_)) => {
+            Err(mpsc::error::TrySendError::Full(request)) => {
                 full.fetch_add(1, Ordering::Relaxed);
+                if kind == NotificationKind::Ai {
+                    if let Some(emergency) = &self.emergency_tx {
+                        if emergency.try_send(request).is_ok() {
+                            self.counters
+                                .ai_emergency_queued
+                                .fetch_add(1, Ordering::Relaxed);
+                            return Ok(());
+                        }
+                        self.counters
+                            .ai_spool_failed
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+                }
                 Err(EnqueueError::QueueFull)
             }
             Err(mpsc::error::TrySendError::Closed(_)) => Err(EnqueueError::QueueClosed),

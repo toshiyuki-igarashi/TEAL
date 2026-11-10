@@ -36,6 +36,14 @@ const MAX_EMAIL_BYTES: usize = 320;
 
 static GLOBAL_AGGREGATOR: OnceLock<Arc<AggregationDispatcher>> = OnceLock::new();
 
+/// Save partial DENY aggregate counts on graceful shutdown.
+pub fn drain_aggregation_on_shutdown() -> Vec<NotificationRequest> {
+    GLOBAL_AGGREGATOR
+        .get()
+        .map(|dispatcher| dispatcher.drain_pending_for_shutdown())
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ConfirmedDenyEvent<'a> {
     /// This is the audit log ID (not the kernel transport ID).

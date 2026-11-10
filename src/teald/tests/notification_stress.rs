@@ -68,6 +68,8 @@ fn deny(id: &str) -> NotificationRequest {
 fn config(path: &Path) -> NotificationTransportConfig {
     let mut cfg = NotificationTransportConfig::default();
     cfg.socket_path = path.to_path_buf();
+    cfg.recovery_path = path.parent().unwrap().join("phase4-stress-recovery");
+    cfg.rate_limit_wait = Duration::from_millis(30);
     cfg.ai_queue_capacity = 16;
     cfg.deny_queue_capacity = 16;
     cfg.connect_timeout = Duration::from_millis(100);
@@ -224,7 +226,7 @@ async fn ai_rate_limit_response_retries_same_id_without_delaying_deny() {
     handle.try_enqueue_ai(ai("AI-RETRY")).unwrap();
     handle.try_enqueue_deny(deny("DENY-ALLOWED")).unwrap();
     let s = wait_stats(&handle, |s| s.ai_accepted == 1 && s.deny_accepted == 1).await;
-    assert_eq!((s.ai_retries, s.deny_retries), (1, 0));
+    assert_eq!((s.ai_retries, s.deny_retries), (0, 0));
     server.await.unwrap();
     let seen = seen.lock().unwrap();
     assert_eq!(seen.get("AI-RETRY"), Some(&2));
