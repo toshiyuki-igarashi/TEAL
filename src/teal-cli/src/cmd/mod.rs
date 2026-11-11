@@ -7,6 +7,7 @@
 
 pub mod diff;
 pub mod keygen;
+pub mod notify;
 pub mod stage_init;
 pub mod status;
 pub mod update;

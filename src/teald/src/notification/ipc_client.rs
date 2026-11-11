@@ -232,6 +232,35 @@ pub async fn run_sender_managed(
             };
             match outcome {
                 Outcome::Accepted => {
+                    if let Some(uid) = job.manual_initiator_uid {
+                        if let Some(store) = &storage {
+                            let mut succeeded = job.clone();
+                            succeeded.attempts = succeeded.attempts.saturating_add(1);
+                            succeeded.last_attempt_ms = Some(now_ms());
+                            succeeded.last_error = None;
+                            let saved = tokio::time::timeout(
+                                config.shutdown_grace,
+                                store.finish_manual_retry_accepted_async(
+                                    succeeded.request.notification_id.clone(),
+                                    uid,
+                                    succeeded,
+                                ),
+                            )
+                            .await;
+                            match saved {
+                                Ok(Ok(())) => {}
+                                other => {
+                                    counters.increment_save_failed(kind);
+                                    eprintln!(
+                                        "[TEAL][notify][{:?}][ERROR] manual retry accepted by SMTP but archive SAVE_FAILED: id={:?} result={:?}",
+                                        kind, job.request.notification_id, other,
+                                    );
+                                    // The original claim remains on disk; do not undo it
+                                    // and risk a duplicate delivery without operator review.
+                                }
+                            }
+                        }
+                    }
                     counters.increment_accepted(kind);
                     eprintln!(
                         "[TEAL][notify][{:?}] accepted by SMTP: id={:?}",

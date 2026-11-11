@@ -30,7 +30,9 @@ use crate::types::{
 
 use teal_policy_engine::ir::CompiledBundle;
 use teal_policy_engine::ir::CompiledRule;
-use teal_policy_engine::management::{CompiledManagement, CompiledMgmtMpa, CompiledMgmtMpaEnabled};
+use teal_policy_engine::management::{
+    CompiledManagement, CompiledMgmtControl, CompiledMgmtMpa, CompiledMgmtMpaEnabled,
+};
 use teal_policy_engine::util::{ktime_prefix, uid_to_name};
 
 // --- ループとルーティング ---
@@ -115,12 +117,437 @@ async fn handle_admin_connection(
             .await
         }
         "FLUSH" => check_initiator_and_handle(MgmtCtlKind::Flush, &mgmt, uid, "", nl_tx).await,
+        // Read-only undelivered notification management. Mutating actions
+        // (RETRY/RESOLVE) have a separate implementation/approval phase.
+        "NOTIFY" => match cmd.split_whitespace().nth(1) {
+            Some("RETRY" | "RESOLVE") => {
+                handle_notify_write(&cmd, uid, mgmt.controls.notify.as_ref()).await
+            }
+            _ => handle_notify_read(&cmd, uid, mgmt.controls.notify.as_ref()).await,
+        },
 
         _ => ("ERR unknown cmd\n".to_string(), None),
     };
 
     let _ = stream.write_all(response.as_bytes()).await;
     event
+}
+
+// --- Read-only notification administration ---
+
+const NOTIFY_LIST_DEFAULT_LIMIT: usize = 50;
+const NOTIFY_LIST_MAX_LIMIT: usize = 100;
+
+#[derive(Debug, PartialEq, Eq)]
+enum NotifyReadCommand {
+    List { offset: usize, limit: usize },
+    Show { id: String },
+}
+
+fn parse_notify_read(cmd: &str) -> Result<NotifyReadCommand, &'static str> {
+    let mut args = cmd.split_whitespace();
+    if args.next() != Some("NOTIFY") {
+        return Err("expected NOTIFY");
+    }
+    match args.next() {
+        Some("LIST") => {
+            let offset = match args.next() {
+                Some(v) => v.parse::<usize>().map_err(|_| "invalid offset")?,
+                None => 0,
+            };
+            let limit = match args.next() {
+                Some(v) => v.parse::<usize>().map_err(|_| "invalid limit")?,
+                None => NOTIFY_LIST_DEFAULT_LIMIT,
+            };
+            if args.next().is_some() || limit == 0 || limit > NOTIFY_LIST_MAX_LIMIT {
+                return Err("usage: NOTIFY LIST [offset] [limit] (limit 1..=100)");
+            }
+            Ok(NotifyReadCommand::List { offset, limit })
+        }
+        Some("SHOW") => {
+            let id = args.next().ok_or("usage: NOTIFY SHOW <notification-id>")?;
+            if args.next().is_some()
+                || id.len() > 512
+                || id.is_empty()
+                || id.chars().any(char::is_control)
+            {
+                return Err("usage: NOTIFY SHOW <notification-id>");
+            }
+            Ok(NotifyReadCommand::Show { id: id.to_owned() })
+        }
+        _ => Err("usage: NOTIFY LIST [offset] [limit] | NOTIFY SHOW <notification-id>"),
+    }
+}
+
+/// No implicit root bypass: the roles compiler already expanded the configured
+/// initiator_roles into UIDs. Until the NOTIFY MPA execution path is added,
+/// enabled MPA must fail closed for every NOTIFY subcommand.
+fn authorize_notify_read(
+    control: Option<&CompiledMgmtControl>,
+    uid: u32,
+) -> Result<(), &'static str> {
+    let control = control.ok_or("NOTIFY control is not configured")?;
+    if !control.initiator_uids.contains(&uid) {
+        return Err("NOTIFY not permitted for this UID");
+    }
+    if !matches!(&control.mpa, CompiledMgmtMpa::Disabled) {
+        return Err("NOTIFY MPA is enabled but this command has no approval flow");
+    }
+    Ok(())
+}
+
+async fn handle_notify_read(
+    cmd: &str,
+    uid: u32,
+    control: Option<&CompiledMgmtControl>,
+) -> (String, Option<InternalEvent>) {
+    if let Err(reason) = authorize_notify_read(control, uid) {
+        eprintln!(
+            "{}[AUDIT] NOTIFY denied uid={} reason={reason}",
+            ktime_prefix(),
+            uid
+        );
+        return (format!("ERR {reason}\n"), None);
+    }
+    let request = match parse_notify_read(cmd) {
+        Ok(request) => request,
+        Err(reason) => return (format!("ERR {reason}\n"), None),
+    };
+    let Some(store) = crate::notification::admin_recovery_store() else {
+        return (
+            "ERR notification recovery store is unavailable\n".into(),
+            None,
+        );
+    };
+    let operation = match &request {
+        NotifyReadCommand::List { .. } => "LIST",
+        NotifyReadCommand::Show { .. } => "SHOW",
+    };
+    let response =
+        match tokio::task::spawn_blocking(move || render_notify_read(&store, request)).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(error)) => format!("ERR notification storage: {error}\n"),
+            Err(error) => format!("ERR notification read worker: {error}\n"),
+        };
+    eprintln!(
+        "{}[AUDIT] NOTIFY {} uid={} success={}",
+        ktime_prefix(),
+        operation,
+        uid,
+        !response.starts_with("ERR "),
+    );
+    (response, None)
+}
+
+/// Runs on Tokio's blocking pool, never in the kernel decision/audit path.
+fn render_notify_read(
+    store: &crate::notification::recovery::RecoveryStore,
+    request: NotifyReadCommand,
+) -> std::io::Result<String> {
+    use teal_notify_protocol::NotificationPayload;
+
+    match request {
+        NotifyReadCommand::List { offset, limit } => {
+            let mut records = store.list_undelivered()?;
+            records.sort_unstable_by(|a, b| {
+                b.stored_at_ms.cmp(&a.stored_at_ms).then_with(|| {
+                    a.job
+                        .request
+                        .notification_id
+                        .cmp(&b.job.request.notification_id)
+                })
+            });
+            let total = records.len();
+            let page: Vec<_> = records
+                .iter()
+                .skip(offset)
+                .take(limit)
+                .map(|record| {
+                    serde_json::json!({
+                        "notification_id": record.job.request.notification_id,
+                        "kind": match &record.job.request.payload {
+                            NotificationPayload::Ai(_) => "ai",
+                            NotificationPayload::Deny(_) => "deny",
+                        },
+                        "attempts": record.job.attempts,
+                        "first_attempt_ms": record.job.first_attempt_ms,
+                        "last_attempt_ms": record.job.last_attempt_ms,
+                        "delivery_uncertain": record.job.delivery_uncertain,
+                        "reason": record.reason,
+                        "stored_at_ms": record.stored_at_ms,
+                    })
+                })
+                .collect();
+            let output = serde_json::json!({
+                "status": "ok",
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset.saturating_add(page.len()) < total,
+                "records": page,
+            });
+            Ok(format!("{output}\n"))
+        }
+        NotifyReadCommand::Show { id } => {
+            let record = store.get_undelivered(&id)?.ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "notification ID not found")
+            })?;
+            let output = serde_json::json!({ "status": "ok", "record": record });
+            Ok(format!("{output}\n"))
+        }
+    }
+}
+
+/// Writing commands use the same UID authorization as LIST/SHOW. No implicit
+/// root exception; if the policy enables MPA, the mutation is denied until a
+/// signed approval path is explicitly implemented (never silently bypass MPA).
+#[derive(Debug, PartialEq, Eq)]
+enum NotifyWriteCommand {
+    Retry(String),
+    Resolve(String),
+}
+
+fn parse_notify_write(cmd: &str) -> Result<NotifyWriteCommand, &'static str> {
+    let mut parts = cmd.split_whitespace();
+    if parts.next() != Some("NOTIFY") {
+        return Err("expected NOTIFY");
+    }
+    let op = parts
+        .next()
+        .ok_or("usage: NOTIFY RETRY|RESOLVE <notification-id>")?;
+    let id = parts.next().ok_or("missing notification ID")?;
+    if parts.next().is_some()
+        || id.is_empty()
+        || id.len() > 512
+        || id.chars().any(char::is_whitespace)
+        || id.chars().any(char::is_control)
+    {
+        return Err("invalid notification ID or extra arguments");
+    }
+    match op {
+        "RETRY" => Ok(NotifyWriteCommand::Retry(id.to_owned())),
+        "RESOLVE" => Ok(NotifyWriteCommand::Resolve(id.to_owned())),
+        _ => Err("usage: NOTIFY RETRY|RESOLVE <notification-id>"),
+    }
+}
+
+async fn handle_notify_write(
+    cmd: &str,
+    uid: u32,
+    control: Option<&CompiledMgmtControl>,
+) -> (String, Option<InternalEvent>) {
+    if let Err(reason) = authorize_notify_read(control, uid) {
+        eprintln!(
+            "{}[AUDIT] NOTIFY mutation denied uid={uid} reason={reason}",
+            ktime_prefix()
+        );
+        return (format!("ERR {reason}\n"), None);
+    }
+    let operation = match parse_notify_write(cmd) {
+        Ok(op) => op,
+        Err(reason) => return (format!("ERR {reason}\n"), None),
+    };
+    let Some(store) = crate::notification::admin_recovery_store() else {
+        return (
+            "ERR notification recovery store is unavailable\n".into(),
+            None,
+        );
+    };
+    let request_epoch = policy_snapshot().epoch;
+    // Recheck against the latest published management policy before mutation.
+    let current_mgmt = management();
+    if policy_snapshot().epoch != request_epoch
+        || authorize_notify_read(current_mgmt.controls.notify.as_ref(), uid).is_err()
+    {
+        return (
+            "ERR NOTIFY management policy changed during authorization\n".into(),
+            None,
+        );
+    }
+    let response = match operation {
+        NotifyWriteCommand::Resolve(id) => {
+            let id_to_commit = id.clone();
+            match tokio::task::spawn_blocking(move || store.mark_resolved(&id_to_commit, uid)).await
+            {
+                Ok(Ok(())) => {
+                    eprintln!(
+                        "{}[AUDIT] NOTIFY RESOLVE uid={} id={:?} success=true",
+                        ktime_prefix(),
+                        uid,
+                        id
+                    );
+                    serde_json::json!({"status":"ok","operation":"resolve","notification_id":id})
+                        .to_string()
+                        + "\n"
+                }
+                Ok(Err(error)) => {
+                    eprintln!(
+                        "{}[AUDIT] NOTIFY RESOLVE uid={} id={:?} success=false error={error}",
+                        ktime_prefix(),
+                        uid,
+                        id
+                    );
+                    format!("ERR NOTIFY resolve: {error}\n")
+                }
+                Err(error) => format!("ERR NOTIFY resolve worker: {error}\n"),
+            }
+        }
+        NotifyWriteCommand::Retry(id) => {
+            let Some(config) = crate::notification::admin_retry_config() else {
+                return (
+                    "ERR notification retry configuration is unavailable\n".into(),
+                    None,
+                );
+            };
+            if policy_snapshot().epoch != request_epoch {
+                return (
+                    "ERR NOTIFY management policy changed before retry\n".into(),
+                    None,
+                );
+            }
+            match crate::notification::admin_mutation::retry(store, config, id.clone(), uid).await {
+                Ok(outcome) => {
+                    eprintln!(
+                        "{}[AUDIT] NOTIFY RETRY uid={} id={:?} accepted={} attempts={} uncertain={} reason={:?}",
+                        ktime_prefix(), uid, id, outcome.accepted, outcome.attempts,
+                        outcome.delivery_uncertain, outcome.reason,
+                    );
+                    serde_json::json!({
+                        "status": if outcome.accepted { "ok" } else { "undelivered" },
+                        "operation":"retry", "notification_id":id,
+                        "accepted_by_smtp":outcome.accepted,
+                        "attempts":outcome.attempts,
+                        "delivery_uncertain":outcome.delivery_uncertain,
+                        "reason":outcome.reason,
+                    })
+                    .to_string()
+                        + "\n"
+                }
+                Err(error) => {
+                    eprintln!(
+                        "{}[AUDIT] NOTIFY RETRY uid={} id={:?} success=false error={error}",
+                        ktime_prefix(),
+                        uid,
+                        id
+                    );
+                    format!("ERR NOTIFY retry: {error}\n")
+                }
+            }
+        }
+    };
+    (response, None)
+}
+
+#[cfg(test)]
+mod notify_read_tests {
+    use super::*;
+    use crate::notification::{
+        config::NotificationTransportConfig,
+        recovery::{PendingNotification, RecoveryStore},
+    };
+    use teal_notify_protocol::{
+        AiNotification, NotificationPayload, NotificationRequest, PROTOCOL_VERSION,
+    };
+
+    #[test]
+    fn notify_command_parser_limits_list_and_rejects_writes() {
+        assert_eq!(
+            parse_notify_read("NOTIFY LIST").unwrap(),
+            NotifyReadCommand::List {
+                offset: 0,
+                limit: 50
+            }
+        );
+        assert_eq!(
+            parse_notify_read("NOTIFY LIST 20 100").unwrap(),
+            NotifyReadCommand::List {
+                offset: 20,
+                limit: 100
+            }
+        );
+        assert!(parse_notify_read("NOTIFY LIST 0 101").is_err());
+        assert!(parse_notify_read("NOTIFY LIST 0 0").is_err());
+        assert!(parse_notify_read("NOTIFY LIST 0 1 extra").is_err());
+        assert!(parse_notify_read("NOTIFY SHOW X Y").is_err());
+        assert!(parse_notify_read("NOTIFY RETRY X").is_err());
+        assert_eq!(
+            parse_notify_read("NOTIFY SHOW X-001").unwrap(),
+            NotifyReadCommand::Show { id: "X-001".into() }
+        );
+    }
+
+    #[test]
+    fn notify_role_and_mpa_checks_fail_closed() {
+        assert!(authorize_notify_read(None, 0).is_err());
+        let mut control = CompiledMgmtControl {
+            description: None,
+            initiator_uids: HashSet::from([1001]),
+            mpa: CompiledMgmtMpa::Disabled,
+        };
+        assert!(authorize_notify_read(Some(&control), 0).is_err());
+        assert!(authorize_notify_read(Some(&control), 1001).is_ok());
+        control.mpa = CompiledMgmtMpa::Enabled(CompiledMgmtMpaEnabled {
+            threshold: 1,
+            approver_roles: HashSet::from(["security".into()]),
+            timeout_minutes: 30,
+        });
+        assert!(authorize_notify_read(Some(&control), 1001).is_err());
+    }
+
+    fn job(id: &str) -> PendingNotification {
+        PendingNotification::fresh(NotificationRequest {
+            version: PROTOCOL_VERSION,
+            notification_id: id.to_owned(),
+            recipients: vec![],
+            payload: NotificationPayload::Ai(AiNotification {
+                hostname: "test".into(),
+                confidence: 0.97,
+                reason: "test".into(),
+                related_event_ids: vec![],
+                program: "/bin/true".into(),
+                action: "EXEC".into(),
+                target: "/bin/true".into(),
+            }),
+        })
+    }
+
+    #[test]
+    fn list_is_paginated_and_show_is_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = NotificationTransportConfig::default();
+        config.recovery_path = dir.path().join("recovery");
+        let store = RecoveryStore::open(&config).unwrap();
+        store
+            .store_undelivered(job("N-1"), "SMTP_PERMANENT".into())
+            .unwrap();
+        store
+            .store_undelivered(job("N-2"), "RETRY_EXHAUSTED".into())
+            .unwrap();
+        let list = render_notify_read(
+            &store,
+            NotifyReadCommand::List {
+                offset: 0,
+                limit: 1,
+            },
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&list).unwrap();
+        assert_eq!(parsed["total"], 2);
+        assert_eq!(parsed["records"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["has_more"], true);
+        let show =
+            render_notify_read(&store, NotifyReadCommand::Show { id: "N-1".into() }).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&show).unwrap();
+        assert_eq!(parsed["record"]["job"]["request"]["notification_id"], "N-1");
+        assert_eq!(store.list_undelivered().unwrap().len(), 2);
+        assert!(render_notify_read(
+            &store,
+            NotifyReadCommand::Show {
+                id: "MISSING".into()
+            }
+        )
+        .is_err());
+    }
 }
 
 // --- 各コマンドの入り口 ---
@@ -1555,4 +1982,39 @@ async fn resolve_account(uid: u32) -> String {
 
     ACCOUNT_CACHE.insert(uid, account.clone());
     account
+}
+
+#[cfg(test)]
+mod notify_write_tests {
+    use super::*;
+    #[test]
+    fn parses_only_explicit_single_id_mutations() {
+        assert_eq!(
+            parse_notify_write("NOTIFY RETRY N-AI-001").unwrap(),
+            NotifyWriteCommand::Retry("N-AI-001".into())
+        );
+        assert_eq!(
+            parse_notify_write("NOTIFY RESOLVE N-DENY-001").unwrap(),
+            NotifyWriteCommand::Resolve("N-DENY-001".into())
+        );
+        assert!(parse_notify_write("NOTIFY RETRY N-1 garbage").is_err());
+        assert!(parse_notify_write("NOTIFY RESOLVE N-1\nNOTIFY RETRY N-2").is_err());
+        assert!(parse_notify_write("NOTIFY RETRY").is_err());
+        assert!(parse_notify_write("NOTIFY DELETE N-1").is_err());
+    }
+    #[test]
+    fn unauthorized_and_mpa_enabled_mutations_fail_closed() {
+        assert!(authorize_notify_read(None, 0).is_err());
+        let control = CompiledMgmtControl {
+            description: None,
+            initiator_uids: HashSet::from([0]),
+            mpa: CompiledMgmtMpa::Enabled(CompiledMgmtMpaEnabled {
+                threshold: 1,
+                approver_roles: HashSet::from(["security_officer".into()]),
+                timeout_minutes: 30,
+            }),
+        };
+        assert!(authorize_notify_read(Some(&control), 0).is_err());
+        assert!(authorize_notify_read(Some(&control), 1000).is_err());
+    }
 }

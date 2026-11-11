@@ -51,6 +51,11 @@ enum Commands {
     Register,
     /// Show pending requests
     List,
+    /// Manage undelivered AI and DENY notifications
+    Notify {
+        #[command(subcommand)]
+        command: NotifyCommands,
+    },
     /// Approve with digital signature
     Approve {
         /// Request ID to approve
@@ -129,6 +134,53 @@ enum Commands {
     },
 }
 
+/// Undelivered notification management.
+#[derive(Subcommand, Debug)]
+enum NotifyCommands {
+    /// List undelivered notifications (newest first)
+    List {
+        /// Number of records to skip (default: 0)
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+
+        /// Number of records per page (1..=100, default: 50)
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+
+        /// Output the complete server response as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one undelivered notification by its original notification ID
+    Show {
+        notification_id: String,
+
+        /// Output the complete server response as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Explicitly retry an undelivered notification (may duplicate an earlier delivery)
+    Retry {
+        notification_id: String,
+        /// Acknowledge the possibility of duplicate SMTP delivery
+        #[arg(long)]
+        yes: bool,
+        /// Print the full JSON response
+        #[arg(long)]
+        json: bool,
+    },
+    /// Archive an undelivered notification as administratively resolved
+    Resolve {
+        notification_id: String,
+        /// Confirm this state-changing administrative action
+        #[arg(long)]
+        yes: bool,
+        /// Print the full JSON response
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 // ==========================================
 // 2. メインロジック
 // ==========================================
@@ -159,6 +211,27 @@ fn main() -> Result<()> {
         Commands::List => {
             send_command("LIST", true)?;
         }
+        Commands::Notify { command } => match command {
+            NotifyCommands::List {
+                offset,
+                limit,
+                json,
+            } => cmd::notify::list(*offset, *limit, *json)?,
+            NotifyCommands::Show {
+                notification_id,
+                json,
+            } => cmd::notify::show(notification_id, *json)?,
+            NotifyCommands::Retry {
+                notification_id,
+                yes,
+                json,
+            } => cmd::notify::retry(notification_id, *yes, *json)?,
+            NotifyCommands::Resolve {
+                notification_id,
+                yes,
+                json,
+            } => cmd::notify::resolve(notification_id, *yes, *json)?,
+        },
         Commands::Approve { id, audit_id } => {
             run_signed_decision(DecisionKind::Approve, id, audit_id.as_deref())?;
         }
@@ -339,4 +412,91 @@ pub fn send_command(cmd: &str, print_resp: bool) -> Result<String> {
     }
 
     Ok(response)
+}
+
+#[cfg(test)]
+mod notify_cli_tests {
+    use super::*;
+
+    #[test]
+    fn list_defaults_and_subcommand_are_distinct() {
+        let cli = Cli::try_parse_from(["teal-cli", "notify", "list"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Notify {
+                command: NotifyCommands::List {
+                    offset: 0,
+                    limit: 50,
+                    json: false
+                }
+            }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["teal-cli", "list"]).unwrap().command,
+            Commands::List
+        ));
+    }
+
+    #[test]
+    fn list_options_and_show_id_are_parsed() {
+        let cli = Cli::try_parse_from([
+            "teal-cli", "notify", "list", "--offset", "50", "--limit", "25", "--json",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Notify {
+                command: NotifyCommands::List {
+                    offset: 50,
+                    limit: 25,
+                    json: true
+                }
+            }
+        ));
+        let cli = Cli::try_parse_from(["teal-cli", "notify", "show", "N-AI-001"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Notify {
+                command: NotifyCommands::Show { notification_id, json: false }
+            } if notification_id == "N-AI-001"
+        ));
+    }
+
+    #[test]
+    fn notify_mutation_commands_are_parsed() {
+        // --yes is checked by cmd::notify at execution time, not by clap.
+        let cli = Cli::try_parse_from(["teal-cli", "notify", "retry", "N-1"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Notify {
+                command: NotifyCommands::Retry {
+                    notification_id,
+                    yes: false,
+                    json: false,
+                }
+            } if notification_id == "N-1"
+        ));
+
+        let cli = Cli::try_parse_from(["teal-cli", "notify", "resolve", "N-1", "--yes", "--json"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Notify {
+                command: NotifyCommands::Resolve {
+                    notification_id,
+                    yes: true,
+                    json: true,
+                }
+            } if notification_id == "N-1"
+        ));
+    }
+
+    #[test]
+    fn unknown_notify_commands_are_rejected() {
+        assert!(Cli::try_parse_from(["teal-cli", "notify", "remove", "N-1"]).is_err());
+        assert!(Cli::try_parse_from(["teal-cli", "notify", "retry"]).is_err());
+        assert!(Cli::try_parse_from(["teal-cli", "notify", "resolve"]).is_err());
+        assert!(Cli::try_parse_from(["teal-cli", "notify", "show"]).is_err());
+        assert!(Cli::try_parse_from(["teal-cli", "notify", "retry", "N-1", "extra"]).is_err());
+    }
 }

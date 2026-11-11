@@ -10,6 +10,7 @@
 //! Confirmed DENY events are aggregated in fixed five-minute windows before
 //! enqueue. Recipient-role resolution and persistence are separate steps.
 
+pub mod admin_mutation;
 pub mod aggregation;
 pub mod ai_event;
 pub mod config;
@@ -19,7 +20,7 @@ pub mod queue;
 pub mod recovery;
 mod shutdown_save;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 pub use ai_event::{AiAttackEvent, AiSubmitError};
@@ -31,6 +32,36 @@ use queue::NotificationCounters;
 /// Global read-only entry point for future event handlers.
 /// Registration is once per teald process, after policy initialization.
 static GLOBAL_NOTIFIER: OnceLock<NotificationHandle> = OnceLock::new();
+
+// Admin requests must use the *same* store as the active runtime, including
+// deployments with a nondefault recovery_path. A Weak reference avoids keeping
+// a stale store alive after the runtime is dropped. Never open a second store
+// from an admin connection.
+static ADMIN_RECOVERY_STORE: OnceLock<Mutex<Weak<recovery::RecoveryStore>>> = OnceLock::new();
+static ADMIN_RETRY_CONFIG: OnceLock<Mutex<Option<NotificationTransportConfig>>> = OnceLock::new();
+
+pub(crate) fn admin_retry_config() -> Option<NotificationTransportConfig> {
+    admin_recovery_store()?;
+    ADMIN_RETRY_CONFIG.get()?.lock().ok()?.clone()
+}
+
+pub(crate) fn admin_recovery_store() -> Option<Arc<recovery::RecoveryStore>> {
+    let guard = ADMIN_RECOVERY_STORE.get()?.lock().ok()?;
+    guard.upgrade()
+}
+
+fn publish_admin_recovery_store(
+    store: &Arc<recovery::RecoveryStore>,
+    config: &NotificationTransportConfig,
+) {
+    let lock = ADMIN_RECOVERY_STORE.get_or_init(|| Mutex::new(Weak::new()));
+    let mut guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = Arc::downgrade(store);
+    let config_lock = ADMIN_RETRY_CONFIG.get_or_init(|| Mutex::new(None));
+    *config_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(config.clone());
+}
 
 pub fn global_handle() -> Option<&'static NotificationHandle> {
     GLOBAL_NOTIFIER.get()
@@ -236,6 +267,7 @@ pub fn start(config: NotificationTransportConfig) -> Result<NotificationRuntime,
         counters,
         emergency_stop_rx,
     ));
+    publish_admin_recovery_store(&storage, &config);
     Ok(NotificationRuntime {
         handle,
         ai_worker,
