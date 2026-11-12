@@ -380,12 +380,30 @@ async fn process_audit_log(
     let mut pending = PendingEntry::from_audit(req, rule, effect, epoch);
 
     // エンリッチメント処理 (CPUバウンド/同期I/Oの可能性があるため spawn_blocking を使用)
-    let pending = tokio::task::spawn_blocking(move || {
+    let pending = match tokio::task::spawn_blocking(move || {
         enrich_pending_entry(&mut pending);
         pending
     })
     .await
-    .expect("Audit enrichment task panicked");
+    {
+        Ok(pending) => pending,
+
+        Err(err) if err.is_cancelled() => {
+            eprintln!(
+                "[WARN] Audit enrichment task cancelled: {}",
+                err
+            );
+            return;
+        }
+
+        Err(err) => {
+            eprintln!(
+                "[ERROR] Audit enrichment task failed: {}",
+                err
+            );
+            return;
+        }
+    };
 
     // ログの保存
     EvidenceManager::log_slow_path_static(
