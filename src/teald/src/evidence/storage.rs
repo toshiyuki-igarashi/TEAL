@@ -42,17 +42,21 @@ fn get_writer_mut() -> io::Result<RwLockWriteGuard<'static, BufWriter<File>>> {
         .map_err(|_| io::Error::other("Audit log lock poisoned after init"))
 }
 
-/// ログ書き込み (通常はメモリバッファに入るだけなので高速)
+/// ログ書き込み
+/// JSON全体をメモリ上で構築してからファイルに書き込む
 pub fn write_log(entry: &AuditLogEntry) -> io::Result<()> {
-    // 1. 書き込みロックを取得
-    let mut guard = get_writer_mut()?;
-
-    // 2. JSONシリアライズ、&mut *guard で内部の BufWriter<File> への可変参照を渡す
-    serde_json::to_writer(&mut *guard, entry)
+    // 1. 完全なJSONレコードをメモリ上で生成
+    let mut record = serde_json::to_vec(entry)
         .map_err(|e| io::Error::other(format!("JSON serialisation error: {}", e)))?;
 
-    // 3. 改行を付与
-    writeln!(&mut *guard)?;
+    // 2. JSONL形式の改行を追加
+    record.push(b'\n');
+
+    // 3. 書き込みロックを取得
+    let mut guard = get_writer_mut()?;
+
+    // 4. 完成済みレコードを書き込む
+    guard.write_all(&record)?;
 
     Ok(())
 }

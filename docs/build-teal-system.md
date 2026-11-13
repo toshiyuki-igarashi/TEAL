@@ -491,6 +491,12 @@ Create a file at `/etc/logrotate.d/teal`:
     missingok
     notifempty
     create 0640 root root
+    sharedscripts
+    postrotate
+        if /usr/bin/systemctl is-active --quiet teald.service; then
+            /usr/bin/pkill -HUP teald > /dev/null 2>&1 || true
+        fi
+    endscript
 }
 ```
 

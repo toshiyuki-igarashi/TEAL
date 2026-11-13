@@ -389,18 +389,12 @@ async fn process_audit_log(
         Ok(pending) => pending,
 
         Err(err) if err.is_cancelled() => {
-            eprintln!(
-                "[WARN] Audit enrichment task cancelled: {}",
-                err
-            );
+            eprintln!("[WARN] Audit enrichment task cancelled: {}", err);
             return;
         }
 
         Err(err) => {
-            eprintln!(
-                "[ERROR] Audit enrichment task failed: {}",
-                err
-            );
+            eprintln!("[ERROR] Audit enrichment task failed: {}", err);
             return;
         }
     };

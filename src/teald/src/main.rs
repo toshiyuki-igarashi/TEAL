@@ -320,10 +320,18 @@ async fn main() -> Result<()> {
 
     // メインワーカー起動へ
     let worker_result = run_workers(nl_tx, rx_decision, rx_audit, listener).await;
+
+    // 通知システムの終了処理
     if let Some(runtime) = notification_runtime {
         if let Err(e) = runtime.shutdown().await {
             eprintln!("[TEAL][notify][ERROR] graceful notification save failed: {e}");
         }
     }
+
+    // 監査ログの終了処理
+    if let Err(e) = EvidenceManager::shutdown_global().await {
+        eprintln!("[TEAL][audit][ERROR] graceful shutdown failed: {e}");
+    }
+
     worker_result
 }

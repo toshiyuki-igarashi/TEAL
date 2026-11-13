@@ -16,15 +16,15 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 
-use std::sync::OnceLock;
-
 use chrono::Utc;
 use tokio::sync::mpsc;
 use tokio::task;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use teal_policy_engine::types::Effect;
@@ -54,7 +54,8 @@ static AI_EVENTS_DROPPED: AtomicU64 = AtomicU64::new(0);
 pub struct EvidenceManager {
     /// ログエントリをバックグラウンドタスクへ送るための送信端
     /// バッファがいっぱいの場合は、送信側で待機(backpressure)が発生する
-    tx: mpsc::Sender<AuditLogEntry>,
+    tx: Mutex<Option<mpsc::Sender<AuditLogEntry>>>,
+    writer_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl EvidenceManager {
@@ -76,7 +77,7 @@ impl EvidenceManager {
         });
 
         // 1. ログ書き込みタスク
-        task::spawn(async move {
+        let writer_handle = task::spawn(async move {
             while let Some(entry) = rx.recv().await {
                 if let Err(e) = storage::write_log(&entry) {
                     eprintln!("{}[ERROR] Log Write Error: {}", ktime_prefix(), e);
@@ -135,12 +136,17 @@ impl EvidenceManager {
         });
 
         // GLOBAL_MANAGER にセット (2回呼ぶとパニックまたはエラーになる)
-        if GLOBAL_MANAGER.set(EvidenceManager { tx }).is_err() {
-            eprintln!(
-                "{}[ERROR]EvidenceManager is already initialized!",
-                ktime_prefix()
-            );
-        }
+        GLOBAL_MANAGER
+            .set(EvidenceManager {
+                tx: Mutex::new(Some(tx)),
+                writer_handle: Mutex::new(Some(writer_handle)),
+            })
+            .unwrap_or_else(|_| {
+                eprintln!(
+                    "{}[ERROR]EvidenceManager is already initialized!",
+                    ktime_prefix()
+                );
+            });
     }
 
     // ==========================================
@@ -520,13 +526,58 @@ impl EvidenceManager {
 
     /// 共通の送信ロジック
     async fn send_entry(&self, entry: AuditLogEntry) {
-        if let Err(e) = self.tx.send(entry).await {
+        let tx = match self.tx.lock() {
+            Ok(guard) => guard.clone(),
+            Err(_) => {
+                eprintln!("{}[ERROR] EvidenceManager lock poisoned", ktime_prefix());
+                return;
+            }
+        };
+
+        if let Some(tx) = tx {
+            if let Err(e) = tx.send(entry).await {
+                eprintln!(
+                    "{}[ERROR] Evidence: Failed to send log: {}",
+                    ktime_prefix(),
+                    e
+                );
+            }
+        } else {
             eprintln!(
-                "{}[ERROR]Evidence: Failed to send log to channel: {}",
-                ktime_prefix(),
-                e
+                "{}[ERROR] Audit event produced after logger shutdown",
+                ktime_prefix()
             );
         }
+    }
+
+    pub async fn shutdown_global() -> std::io::Result<()> {
+        let manager = Self::instance();
+
+        // 送信側を破棄し、チャネルを閉じる
+        manager
+            .tx
+            .lock()
+            .map_err(|_| std::io::Error::other("Evidence tx lock poisoned"))?
+            .take();
+
+        // 書き込みワーカーの JoinHandle を取得
+        let handle = manager
+            .writer_handle
+            .lock()
+            .map_err(|_| std::io::Error::other("Evidence writer lock poisoned"))?
+            .take();
+
+        // キュー内のログがすべて書き込まれるまで待つ
+        if let Some(handle) = handle {
+            handle
+                .await
+                .map_err(|e| std::io::Error::other(format!("Evidence writer task failed: {e}")))?;
+        }
+
+        // 最後にバッファとファイルを同期する
+        storage::force_flush()?;
+
+        Ok(())
     }
 }
 
