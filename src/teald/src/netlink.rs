@@ -114,6 +114,8 @@ pub enum TealAttr {
     // --- ログインコンテキスト（TTY）用 ---
     SessionTty = 32,
     Lane = 33,
+    AuditSessionId = 34,
+    LoginUid = 35,
 }
 impl NlAttrType for TealAttr {}
 
@@ -158,6 +160,8 @@ pub struct TealReq {
     // ログインコンテキスト（TTY情報）
     // カーネルから送られてこない（非対話型プロセス）場合はデフォルトで空文字列 "" になる
     pub session_tty: String,
+    pub audit_session_id: Option<u32>,
+    pub loginuid: Option<u32>,
 }
 
 #[derive(Debug, Default)]
@@ -615,10 +619,18 @@ fn parse_req_msg(genl_msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<TealReq> {
                     .trim_end_matches('\0')
                     .to_string()
             }
+            TealAttr::AuditSessionId => {
+                req.audit_session_id =
+                    Some(u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?));
+            }
+            TealAttr::LoginUid => {
+                req.loginuid = Some(u32::from_ne_bytes(attr.nla_payload.as_ref().try_into()?));
+            }
 
             _ => {}
         }
     }
+
     Ok(req)
 }
 

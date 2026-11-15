@@ -111,7 +111,8 @@ pub async fn process_policy_decision(req: &mut Request) -> PolicyResult {
 
     let session_info = {
         let state = app_state().lock().await;
-        state.check_registered_session(&req.session_tty, req.uid)
+
+        state.check_registered_session(req.audit_session_id, req.loginuid)
     };
 
     let ctx = request_to_ctx(req, &compiled.roles, session_info);

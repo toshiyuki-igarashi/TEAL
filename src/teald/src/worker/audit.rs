@@ -219,7 +219,8 @@ async fn evaluate_audit_request(req: &mut Request) -> AuditEvalResult {
 
     let session_info = {
         let state = app_state().lock().await;
-        state.check_registered_session(&req.session_tty, req.uid)
+
+        state.check_registered_session(req.audit_session_id, req.loginuid)
     };
 
     let ctx = request_to_ctx(req, &compiled.roles, session_info);

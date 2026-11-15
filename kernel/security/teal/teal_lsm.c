@@ -47,6 +47,7 @@
 #include <linux/mount.h>
 #include <linux/fs_struct.h>
 #include <linux/tty.h>
+#include <linux/audit.h>
 
 #include <net/genetlink.h>
 #include <net/net_namespace.h>
@@ -127,6 +128,9 @@ enum teal_nl_attrs {
     TEAL_ATTR_SESSION_TTY,    // 32
     TEAL_ATTR_LANE,           // 33: u32 (RX=1, TX=2)
 
+    TEAL_ATTR_AUDIT_SESSIONID,  // 34: u32
+    TEAL_ATTR_LOGINUID,         // 35: u32
+
     __TEAL_ATTR_MAX,
 };
 #define TEAL_ATTR_MAX (__TEAL_ATTR_MAX - 1)
@@ -158,14 +162,20 @@ static const struct nla_policy teal_nl_policy[TEAL_ATTR_MAX + 1] = {
     [TEAL_ATTR_NEW_TARGET_INO]  = { .type = NLA_U64 },
     [TEAL_ATTR_NEW_TARGET]      = { .type = NLA_NUL_STRING, .len = 256 }, 
     [TEAL_ATTR_LANE]            = { .type = NLA_U32 },
+    [TEAL_ATTR_AUDIT_SESSIONID] = { .type = NLA_U32 },
+    [TEAL_ATTR_LOGINUID]        = { .type = NLA_U32 },
 };
 
 struct teal_request {
     u64 id;
     pid_t pid;
     pid_t ppid;
-    pid_t sessionid;
-    uid_t uid;
+    pid_t sessionid;       // POSIX Session ID
+
+    u32 audit_sessionid;   // Linux Audit Session ID
+    u32 loginuid;          // Audit Login UID
+
+    uid_t uid;             // 現在のEUID
     gid_t gid;
 
     dev_t prog_dev;
@@ -819,6 +829,7 @@ static struct teal_request *teal_req_build(const char *action,
 {
     struct teal_request *req;
     const struct cred *cred;
+    kuid_t auid;
     uid_t host_uid;
     struct teal_task_meta *m;
     bool need_prog_recovery = false;
@@ -834,10 +845,19 @@ static struct teal_request *teal_req_build(const char *action,
     cred = current_cred();
     host_uid = from_kuid_munged(&init_user_ns, cred->euid);
     req->pid = current->tgid;
+
     rcu_read_lock();
     req->ppid = task_tgid_vnr(rcu_dereference(current->real_parent));
     rcu_read_unlock();
+
+    auid = audit_get_loginuid(current);
     req->sessionid = task_session_vnr(current);
+    req->audit_sessionid = audit_get_sessionid(current);
+
+    req->loginuid = uid_valid(auid)
+        ? from_kuid_munged(&init_user_ns, auid)
+        : U32_MAX;
+
     req->uid = host_uid;
     req->gid = from_kgid_munged(&init_user_ns, cred->egid);
 
@@ -1652,6 +1672,8 @@ static int teal_genl_send_req(struct teal_request *req, u8 teal_mode)
     nla_put_u32(skb, TEAL_ATTR_PID, req->pid);
     nla_put_u32(skb, TEAL_ATTR_PPID, req->ppid);
     nla_put_u32(skb, TEAL_ATTR_SESSIONID, req->sessionid);
+    nla_put_u32(skb, TEAL_ATTR_AUDIT_SESSIONID, req->audit_sessionid);
+    nla_put_u32(skb, TEAL_ATTR_LOGINUID, req->loginuid);
     nla_put_u32(skb, TEAL_ATTR_UID, req->uid);
     nla_put_u32(skb, TEAL_ATTR_GID, req->gid);
     

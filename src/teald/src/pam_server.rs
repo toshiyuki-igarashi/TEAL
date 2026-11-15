@@ -13,7 +13,6 @@ use tokio::net::{UnixListener, UnixStream};
 
 use teal_common::{PamLoginNotification, PAM_SOCKET_PATH, TEAL_SOCKET_ROOT};
 use teal_policy_engine::ir::RegisteredSession;
-use teal_policy_engine::util::normalize_tty_name;
 
 use crate::state::app_state; // AppStateへのアクセス用（※プロジェクトの構造に合わせてパスは調整してください）
 
@@ -39,11 +38,11 @@ pub async fn start_pam_listener() {
     };
 
     // 2. クライアント（pam_teal.so）が書き込めるように権限を設定
-    if let Err(e) = fs::set_permissions(socket_path, fs::Permissions::from_mode(0o666)) {
-        eprintln!(
-            "[WARN] teald-PAM: Failed to set permissions on PAM socket: {}",
-            e
-        );
+    if let Err(e) = fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600)) {
+        eprintln!("[ERROR] teald-PAM: Failed to secure PAM socket: {}", e);
+        drop(listener);
+        let _ = fs::remove_file(socket_path);
+        return;
     }
 
     println!("[INFO] teald: Listening for PAM events on {}", socket_path);
@@ -89,47 +88,79 @@ async fn handle_pam_connection(mut stream: UnixStream) {
 
 /// パース済みのPAMイベントを評価し、AppStateのアクティブセッション台帳を更新する
 async fn process_pam_event(event: PamLoginNotification) {
-    // TTY名の正規化（ロックを取る前にできることは先にやる）
-    let normalized_key = normalize_tty_name(&event.session_tty);
+    // Audit情報が無効な場合、セッション台帳を変更しない
+    let Some(sid) = event.audit_session_id.filter(|&v| v != u32::MAX) else {
+        eprintln!(
+            "[WARN] teald-PAM: Invalid Audit Session ID: \
+             action={} uid={} loginuid={:?} audit_sid={:?} tty={}",
+            event.action, event.uid, event.loginuid, event.audit_session_id, event.session_tty,
+        );
+        return;
+    };
+
+    let Some(loginuid) = event.loginuid.filter(|&v| v != u32::MAX) else {
+        eprintln!("[WARN] teald-PAM: Invalid Login UID, sid={}", sid);
+        return;
+    };
+
+    if loginuid != event.uid {
+        eprintln!(
+            "[SECURITY ALERT] PAM UID mismatch: \
+             uid={} loginuid={} sid={}",
+            event.uid, loginuid, sid
+        );
+        return;
+    }
 
     match event.action.as_str() {
         "login" => {
             let session = RegisteredSession {
-                uid: event.uid,
+                uid: loginuid,
                 source_ip: event.source_ip.clone(),
                 auth_method: event.auth_method.clone(),
             };
 
-            {
-                // ロックを取得し、HashMapを更新したら即座にスコープを抜けてロックを解放する
-                let mut st = app_state().lock().await;
-                st.slow.active_tty_sessions.insert(normalized_key, session);
-            } // ロック解除！
+            let mut st = app_state().lock().await;
+
+            st.slow.active_login_sessions.insert(sid, session);
 
             println!(
-                "[teald-PAM] Registered session: uid={} at {} (from: {}, auth: {})",
-                event.uid,
+                "[teald-PAM] Registered: sid={} loginuid={} \
+                 tty={} source={}",
+                sid,
+                loginuid,
                 event.session_tty,
-                event.source_ip.as_deref().unwrap_or("-"),
-                event.auth_method.as_deref().unwrap_or("-")
+                event.source_ip.as_deref().unwrap_or("-")
             );
         }
-        "logout" => {
-            {
-                let mut st = app_state().lock().await;
-                st.slow.active_tty_sessions.remove(&normalized_key);
-            } // ここでロック解除！
 
-            println!(
-                "[teald-PAM] Removed session for TTY {} (normalized)",
-                event.session_tty
-            );
+        "logout" => {
+            let mut st = app_state().lock().await;
+
+            let valid = st
+                .slow
+                .active_login_sessions
+                .get(&sid)
+                .is_some_and(|session| session.uid == loginuid);
+
+            if valid {
+                st.slow.active_login_sessions.remove(&sid);
+
+                println!(
+                    "[teald-PAM] Removed session: sid={} loginuid={}",
+                    sid, loginuid
+                );
+            } else {
+                eprintln!(
+                    "[WARN] teald-PAM: Logout ignored: \
+                     sid={} loginuid={}",
+                    sid, loginuid
+                );
+            }
         }
+
         _ => {
-            eprintln!(
-                "[WARN] teald-PAM: Unknown action '{}' in parsed event",
-                event.action
-            );
+            eprintln!("[WARN] teald-PAM: Unknown action '{}'", event.action);
         }
     }
 }
@@ -148,7 +179,9 @@ mod tests {
         let login_event = PamLoginNotification {
             action: "login".to_string(),
             uid: 1000,
-            session_tty: "pts/9".to_string(),
+            session_tty: "ssh".to_string(),
+            audit_session_id: Some(45),
+            loginuid: Some(1000),
             source_ip: Some("192.168.1.50".to_string()),
             auth_method: Some("publickey".to_string()),
         };
@@ -157,7 +190,7 @@ mod tests {
 
         {
             let st = app_state().lock().await;
-            let session = st.slow.active_tty_sessions.get("pts9").unwrap();
+            let session = st.slow.active_login_sessions.get(&45).unwrap();
 
             assert_eq!(session.uid, 1000);
             assert_eq!(session.source_ip.as_deref(), Some("192.168.1.50"));
@@ -167,6 +200,8 @@ mod tests {
             action: "logout".to_string(),
             uid: 1000,
             session_tty: "pts/9".to_string(),
+            audit_session_id: Some(45),
+            loginuid: Some(1000),
             source_ip: None,
             auth_method: None,
         };
@@ -175,7 +210,7 @@ mod tests {
 
         {
             let st = app_state().lock().await;
-            assert!(!st.slow.active_tty_sessions.contains_key("pts9"));
+            assert!(!st.slow.active_login_sessions.contains_key(&45));
         }
     }
 }

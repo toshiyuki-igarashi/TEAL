@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use teal_policy_engine::ir::{CompiledRule, RegisteredSession};
 use teal_policy_engine::types::{Effect, RuleType};
-use teal_policy_engine::util::{normalize_opt_field, normalize_tty_name};
+use teal_policy_engine::util::normalize_opt_field;
 
 use crate::bundle::policy_snapshot;
 use crate::common::find_rule;
@@ -88,9 +88,13 @@ pub fn is_drain() -> bool {
 pub struct Request {
     pub id: u64,
     pub pid: u32,
-    pub ppid: u32,       // 親プロセスID
-    pub session_id: u32, // セッションID
-    pub uid: u32,
+    pub ppid: u32, // 親プロセスID
+
+    pub session_id: u32,               // POSIX Session ID
+    pub audit_session_id: Option<u32>, // Linux Audit Session ID
+    pub loginuid: Option<u32>,         // Audit Login UID
+
+    pub uid: u32, // 現在のEUID
     pub gid: u32, // グループID
 
     pub prog_dev: u64, // 実行バイナリのデバイス番号
@@ -130,6 +134,8 @@ impl Request {
             pid: nl_req.pid,
             ppid: nl_req.ppid,
             session_id: nl_req.session_id,
+            audit_session_id: nl_req.audit_session_id,
+            loginuid: nl_req.loginuid,
             uid: nl_req.uid,
             gid: nl_req.gid,
             prog_dev: nl_req.prog_dev as u64,
@@ -176,28 +182,29 @@ pub struct AppState {
 
 impl AppState {
     /// 指定されたTTYとUIDが、PAMで認証済みの正規セッションか厳密に検証し、成功すればセッション情報を返す
-    pub fn check_registered_session(&self, tty: &str, uid: u32) -> Option<RegisteredSession> {
-        // TTYが空、またはプレースホルダーの場合は未登録とみなす（バックグラウンドプロセス等）
-        if tty.is_empty() || tty == "-" {
+    pub fn check_registered_session(
+        &self,
+        audit_session_id: Option<u32>,
+        loginuid: Option<u32>,
+    ) -> Option<RegisteredSession> {
+        // 未設定のAudit情報は認証済みセッションとして扱わない
+        let sid = audit_session_id.filter(|&v| v != u32::MAX)?;
+        let auid = loginuid.filter(|&v| v != u32::MAX)?;
+
+        // Audit Session IDで検索
+        let session = self.slow.active_login_sessions.get(&sid)?;
+
+        // 現在のEUIDではなく、元のLogin UIDを照合する
+        if session.uid != auid {
+            eprintln!(
+                "[SECURITY ALERT] Audit session mismatch: \
+                 sid={} loginuid={} registered_uid={}",
+                sid, auid, session.uid
+            );
             return None;
         }
 
-        // 1. TTY名の正規化（例: "/dev/pts/1" -> "pts1"）
-        let normalized_key = normalize_tty_name(tty);
-
-        // 2. 登録されたセッション情報を取得して UID を厳密に突き合わせる（ハイジャック防止）
-        if let Some(session) = self.slow.active_tty_sessions.get(&normalized_key) {
-            if uid == session.uid {
-                // 検証成功！セッション情報を丸ごと呼び出し元へ返却
-                return Some(session.clone());
-            } else {
-                eprintln!(
-                    "[SECURITY ALERT] TTY Hijack detected! Process (UID={}) tried to use TTY {} which belongs to Registered UID {}",
-                    uid, normalized_key, session.uid
-                );
-            }
-        }
-        None
+        Some(session.clone())
     }
 }
 
@@ -257,7 +264,7 @@ pub struct SlowState {
     pub pending_ctl: Option<MgmtPendingCtl>,
 
     // PAMから通知されたアクティブなログインセッション
-    pub active_tty_sessions: HashMap<String, RegisteredSession>,
+    pub active_login_sessions: HashMap<u32, RegisteredSession>,
 }
 
 #[derive(Debug)]

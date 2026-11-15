@@ -18,7 +18,14 @@ use teal_common::{PamLoginNotification, PAM_SOCKET_PATH};
 
 // TEAL内部で認証状態を引き回すための一意のメモリキー名
 const TEAL_AUTH_METHOD_KEY: &[u8] = b"teal_auth_method\0";
-const TEAL_SESSION_UID_KEY: &[u8] = b"teal_session_uid\0";
+const TEAL_SESSION_IDENTITY_KEY: &[u8] = b"teal_session_identity\0";
+
+#[derive(Debug, Clone, Copy)]
+struct SessionIdentity {
+    uid: u32,
+    audit_session_id: Option<u32>,
+    loginuid: Option<u32>,
+}
 
 // =========================================================================
 // ヘルパー関数 / コールバック
@@ -34,28 +41,36 @@ extern "C" fn cleanup_string(_pamh: *mut PamHandle, data: *mut c_void, _pam_stat
     }
 }
 
-extern "C" fn cleanup_uid(_pamh: *mut PamHandle, data: *mut c_void, _pam_status: c_int) {
+extern "C" fn cleanup_identity(_pamh: *mut PamHandle, data: *mut c_void, _pam_status: c_int) {
     if !data.is_null() {
         unsafe {
-            drop(Box::from_raw(data as *mut u32));
+            drop(Box::from_raw(data as *mut SessionIdentity));
         }
     }
+}
+
+fn read_audit_id(path: &str) -> Option<u32> {
+    std::fs::read_to_string(path)
+        .ok()?
+        .trim()
+        .parse::<u32>()
+        .ok()
 }
 
 /// teald に UNIX Domain Socket 経由でイベント（JSON文字列）を送信する
 fn notify_teald(
     action: &str,
-    uid: u32,
+    identity: SessionIdentity,
     tty: &str,
     source_ip: Option<String>,
     auth_method: Option<String>,
 ) {
-    let socket_path = PAM_SOCKET_PATH;
-
     let notification = PamLoginNotification {
         action: action.to_string(),
-        uid,
+        uid: identity.uid,
         session_tty: tty.to_string(),
+        audit_session_id: identity.audit_session_id,
+        loginuid: identity.loginuid,
         source_ip,
         auth_method,
     };
@@ -68,10 +83,15 @@ fn notify_teald(
         }
     };
 
-    if let Ok(mut stream) = UnixStream::connect(socket_path) {
+    if let Ok(mut stream) = UnixStream::connect(PAM_SOCKET_PATH) {
         let mut payload = msg.into_bytes();
-        payload.push(b'\n'); // デーモン側が1行バッファで読めるように改行を付与
-        let _ = stream.write_all(&payload);
+        payload.push(b'\n');
+
+        if let Err(e) = stream.write_all(&payload) {
+            eprintln!("[TEAL PAM] Failed to send notification: {}", e);
+        }
+    } else {
+        eprintln!("[TEAL PAM] Failed to connect to teald PAM socket");
     }
 }
 
@@ -207,22 +227,26 @@ pub unsafe extern "C" fn pam_sm_open_session(
         }
     };
 
-    // UIDをヒープに確保
-    let uid_ptr = Box::into_raw(Box::new(uid));
+    let identity = SessionIdentity {
+        uid,
+        audit_session_id: read_audit_id("/proc/self/sessionid"),
+        loginuid: read_audit_id("/proc/self/loginuid"),
+    };
+
+    let identity_ptr = Box::into_raw(Box::new(identity));
 
     // PAMハンドルに保存
     let result = pam_set_data(
         pamh,
-        TEAL_SESSION_UID_KEY.as_ptr() as *const c_char,
-        uid_ptr as *mut c_void,
-        Some(cleanup_uid),
+        TEAL_SESSION_IDENTITY_KEY.as_ptr() as *const c_char,
+        identity_ptr as *mut c_void,
+        Some(cleanup_identity),
     );
 
     if result != PamReturnCode::SUCCESS as c_int {
-        // 保存に失敗した場合は自分で解放
-        drop(Box::from_raw(uid_ptr));
+        drop(Box::from_raw(identity_ptr));
 
-        eprintln!("[TEAL PAM] Failed to save session UID");
+        eprintln!("[TEAL PAM] Failed to save session identity");
         return PamReturnCode::SESSION_ERR as c_int;
     }
 
@@ -249,7 +273,7 @@ pub unsafe extern "C" fn pam_sm_open_session(
         user, uid, tty, log_ip, log_auth
     );
 
-    notify_teald("login", uid, &tty, source_ip, auth_method);
+    notify_teald("login", identity, &tty, source_ip, auth_method);
 
     PamReturnCode::SUCCESS as c_int
 }
@@ -274,21 +298,19 @@ pub unsafe extern "C" fn pam_sm_close_session(
 
     let result = pam_get_data(
         pamh,
-        TEAL_SESSION_UID_KEY.as_ptr() as *const c_char,
+        TEAL_SESSION_IDENTITY_KEY.as_ptr() as *const c_char,
         &mut data_ptr,
     );
 
-    let uid = if result == PamReturnCode::SUCCESS as c_int && !data_ptr.is_null() {
-        *(data_ptr as *const u32)
+    let identity = if result == PamReturnCode::SUCCESS as c_int && !data_ptr.is_null() {
+        *(data_ptr as *const SessionIdentity)
     } else {
-        eprintln!("[TEAL PAM] Failed to retrieve session UID");
+        eprintln!("[TEAL PAM] Failed to retrieve session identity");
         return PamReturnCode::SESSION_ERR as c_int;
     };
 
-    // デーモンにログアウトを通知
-    notify_teald("logout", uid, &tty, None, None);
-
-    println!("[TEAL PAM] UID '{}' logged out from TTY '{}'", uid, tty);
+    // ログイン時に保存した識別情報でログアウトを通知
+    notify_teald("logout", identity, &tty, None, None);
 
     PamReturnCode::SUCCESS as c_int
 }

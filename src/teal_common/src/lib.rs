@@ -31,13 +31,19 @@ pub const TEAL_NOTIFY_SOCKET_PATH: &str = concatcp!(TEAL_SOCKET_ROOT, "/teal-not
 /// pam_teal から teald へ送信されるログイン/ログアウトイベント通知
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PamLoginNotification {
-    pub action: String,      // "login" または "logout"
-    pub uid: u32,            // user id
-    pub session_tty: String, // "pts4", "tty1" など
+    pub action: String,
+    pub uid: u32,
+    pub session_tty: String,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit_session_id: Option<u32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loginuid: Option<u32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_ip: Option<String>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_method: Option<String>,
 }
