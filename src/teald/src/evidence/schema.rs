@@ -5,7 +5,8 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde::de::Error as _;
 
 use crate::types::MpaState;
 use teal_policy_engine::types::Effect;
@@ -141,18 +142,59 @@ pub struct EnvironmentContext {
 }
 
 // Slow Path と Fast Path で分岐する部分
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)] // JSONの構造に合わせてフラット化
+// JSON出力形式は従来どおりフラットな untagged 形式とする。
+#[derive(Serialize, Debug)]
+#[serde(untagged)]
 pub enum AuthInfo {
-    // Slow Path: 署名を含む
     SlowPath {
         policy_eval: PolicyEvalResult,
         mpa_proof: MpaState,
     },
-    // Fast Path: チケット参照のみ
     FastPath {
         ticket_context: TicketRef,
     },
+}
+
+// untagged の自動導出は内部フィールドのデシリアライズエラーを
+// 「どのバリアントにも一致しない」にまとめてしまう。
+// 入力側は明示的にフィールドで判別し、原因となったエラーを伝える。
+impl<'de> Deserialize<'de> for AuthInfo {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        if value.get("policy_eval").is_some() || value.get("mpa_proof").is_some() {
+            #[derive(Deserialize)]
+            struct SlowPathFields {
+                policy_eval: PolicyEvalResult,
+                mpa_proof: MpaState,
+            }
+
+            let fields: SlowPathFields =
+                serde_json::from_value(value).map_err(D::Error::custom)?;
+            Ok(Self::SlowPath {
+                policy_eval: fields.policy_eval,
+                mpa_proof: fields.mpa_proof,
+            })
+        } else if value.get("ticket_context").is_some() {
+            #[derive(Deserialize)]
+            struct FastPathFields {
+                ticket_context: TicketRef,
+            }
+
+            let fields: FastPathFields =
+                serde_json::from_value(value).map_err(D::Error::custom)?;
+            Ok(Self::FastPath {
+                ticket_context: fields.ticket_context,
+            })
+        } else {
+            Err(D::Error::custom(
+                "AuthInfo: expected policy_eval+mpa_proof or ticket_context",
+            ))
+        }
+    }
 }
 
 /// ポリシー評価結果 (Policy Evaluation Result)
@@ -212,4 +254,106 @@ pub struct TicketRef {
     /// 適用されているポリシー名 (または "cached")
     /// ※ チケット発行時に決定されたルール名
     pub policy_rule: String,
+}
+
+// 過去の実ログと同一構造を使い、JSONLの互換性を確認する回帰テスト。
+#[cfg(test)]
+mod auth_info_compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_slow_path_log_with_unlimited_ticket() {
+        let log = serde_json::json!({
+            "ver":"1.5",
+            "id":"be0e2a78-62c7-417f-99c3-685e6438d444",
+            "type":"ACCESS_ALLOWED",
+            "ts":"2026-11-16T08:16:51.720112813Z",
+            "host":"cfsz5",
+            "epoch":1,
+            "syscall_context":{
+                "uid":0,
+                "user":"root",
+                "pid":285,
+                "action":"READ",
+                "subject":{
+                    "path":"/usr/lib/systemd/systemd-journald",
+                    "hash":"HASH_NOT_CALCULATED",
+                    "applet":"systemd-journal",
+                    "script_path":"-",
+                    "args":"/usr/lib/systemd/systemd-journald"
+                },
+                "object":{
+                    "kind":"unknown",
+                    "path":"/proc/507/cgroup",
+                    "inode":3394,
+                    "device_id":21,
+                    "new_path":"-"
+                }
+            },
+            "environment_context":{
+                "tty":"/dev/null",
+                "ssh_client":null,
+                "login_method":"unknown"
+            },
+            "policy_eval":{
+                "rule_id":"",
+                "matched_file":"unknown",
+                "mpa_level_required":0,
+                "decision":"allow",
+                "issued_ticket":{
+                    "ticket_id":"T-000000000",
+                    "ttl_sec":u64::MAX
+                }
+            },
+            "mpa_proof":{
+                "threshold":0,
+                "required_roles":[],
+                "approvals":{},
+                "aggregated_signature":null
+            }
+        });
+
+        let entry: AuditLogEntry =
+            serde_json::from_value(log).expect("SlowPath log must deserialize");
+        match entry.auth_info {
+            AuthInfo::SlowPath { policy_eval, mpa_proof } => {
+                assert_eq!(policy_eval.issued_ticket.unwrap().ttl_sec, u64::MAX);
+                assert_eq!(mpa_proof.threshold, 0);
+            }
+            AuthInfo::FastPath { .. } => panic!("expected SlowPath"),
+        }
+    }
+
+    #[test]
+    fn deserialize_fast_path_log() {
+        let log = serde_json::json!({
+            "ver":"1.5",
+            "id":"fast-path-test",
+            "type":"TICKET_CONSUMED",
+            "ts":"2026-11-16T08:47:31Z",
+            "host":"cfsz5",
+            "epoch":2,
+            "syscall_context":{
+                "uid":1000,
+                "user":"toshiyuki",
+                "pid":100,
+                "action":"READ",
+                "subject":{"path":"/usr/bin/cat","hash":"HASH_NOT_CALCULATED"},
+                "object":{"kind":"file","path":"/etc/hostname","inode":1,"device_id":1}
+            },
+            "ticket_context":{
+                "ticket_id":"T-000000001",
+                "uses_left":4,
+                "policy_rule":"test-ssh-ip-allow"
+            }
+        });
+        let entry: AuditLogEntry =
+            serde_json::from_value(log).expect("FastPath log must deserialize");
+        match entry.auth_info {
+            AuthInfo::FastPath { ticket_context } => {
+                assert_eq!(ticket_context.ticket_id, "T-000000001");
+            }
+            AuthInfo::SlowPath { .. } => panic!("expected FastPath"),
+        }
+    }
 }
