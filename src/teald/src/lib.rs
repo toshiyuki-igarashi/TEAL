@@ -18,6 +18,8 @@ pub mod policy;
 pub mod roles;
 pub mod ticket;
 
+pub mod ticket_session_binding;
+
 // Netlink通信用モジュール
 pub mod netlink;
 // pam_server

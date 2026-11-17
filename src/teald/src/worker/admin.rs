@@ -1182,12 +1182,62 @@ async fn finalize_entry_approval(args: &SignedCmdArgs, nl_tx: &NlWriter) -> Opti
         None => (false, None),
     };
 
+    let mut cache_queued = false;
     if is_enforce() {
-        let _ = nl_tx.send_approve(id_num).await;
-        if cacheable {
+        // Preserve current APPROVE -> TICKET_ADD ordering for this revision.
+        // A future change may add a kernel ACK to confirm cache registration.
+        if let Err(e) = nl_tx.send_approve(id_num).await {
+            eprintln!("{}[ERROR] MPA APPROVE not queued: {}", ktime_prefix(), e);
+        } else if cacheable {
             if let Some(ticket) = ticket_payload {
-                let _ = nl_tx.send_ticket_add(ticket).await;
+                // Use the original REQUESTER's verified Login UID, not the
+                // approver's login or the old session's current status.
+                let (audit_session_id, loginuid) = match &event {
+                    Some(InternalEvent::EntryApproved { entry, .. }) => {
+                        (entry.subject.audit_session_id, entry.subject.loginuid)
+                    }
+                    _ => (None, None),
+                };
+                match crate::worker::decision::queue_ticket_for_mpa_entry(
+                    nl_tx,
+                    ticket,
+                    audit_session_id,
+                    loginuid,
+                    match &event {
+                        Some(InternalEvent::EntryApproved { entry, .. }) => {
+                            entry.subject.verified_loginuid_at_request
+                        }
+                        _ => None,
+                    },
+                )
+                .await
+                {
+                    Ok(true) => cache_queued = true,
+                    Ok(false) => eprintln!(
+                        "{}[WARN] MPA TICKET_ADD skipped: requester login context was not attested (sid={:?}, loginuid={:?})",
+                        ktime_prefix(), audit_session_id, loginuid,
+                    ),
+                    Err(e) => eprintln!(
+                        "{}[WARN] MPA TICKET_ADD not queued: {}",
+                        ktime_prefix(), e,
+                    ),
+                }
             }
+        }
+    }
+
+    // is_cacheable() currently creates ACTIVE_TICKETS before sending.
+    // On skip/error/disabled ENFORCE mode, clear that speculative record.
+    if let Some(InternalEvent::EntryApproved {
+        cacheable: logged_cacheable,
+        ticket_id,
+        ..
+    }) = event.as_mut()
+    {
+        *logged_cacheable = cache_queued;
+        if cacheable && !cache_queued {
+            ACTIVE_TICKETS.remove(ticket_id);
+            *ticket_id = "0".to_string();
         }
     }
 

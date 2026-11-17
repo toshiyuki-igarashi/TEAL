@@ -26,6 +26,9 @@ use teal_policy_engine::eval::evaluate;
 use teal_policy_engine::ir::PathMatcher;
 use teal_policy_engine::ir::{CompiledRule, Decision};
 use teal_policy_engine::raw::{TEAL_TICKET_FLG_PARENT_MATCH, TEAL_TICKET_FLG_SILENT_IO};
+
+// NAMELESS_IPC and SILENT_IO are intentionally session-independent.
+const TEAL_TICKET_FLG_NAMELESS_IPC: u32 = 1 << 2;
 use teal_policy_engine::types::Action;
 use teal_policy_engine::types::AuditLevel;
 use teal_policy_engine::util::ktime_prefix;
@@ -67,19 +70,28 @@ pub async fn decision_worker_loop(
         let mut policy_result = process_policy_decision(&mut req).await;
 
         // reply_to_kernel で take() されて消失する前に、チケットIDを退避しておく
-        let issued_ticket_id = policy_result.ticket.as_ref().map(|t| t.ticket_id.clone());
+        let proposed_ticket_id = policy_result.ticket.as_ref().map(|t| t.ticket_id.clone());
 
-        // 4. カーネルへの即時応答（Netlink経由で TICKET_ADD または APPROVE/DENY を送信）
-        // (内部で policy_result.ticket.take() されて ticket は None になる)
-        if let Err(e) = reply_to_kernel(&nl_tx, &req, &mut policy_result).await {
-            eprintln!(
-                "{}[ERROR] Failed to reply to kernel for REQ {}: {}",
-                ktime_prefix(),
-                req.id,
-                e
-            );
-            let _ = nl_tx.send_deny(req.id).await;
-        }
+        // 4. Respond to the request and optionally enqueue TICKET_ADD.
+        // Cache-disabled operations must not be logged as issuing a ticket.
+        let ticket_queued = match reply_to_kernel(&nl_tx, &req, &mut policy_result).await {
+            Ok(queued) => queued,
+            Err(e) => {
+                eprintln!(
+                    "{}[ERROR] Failed to reply to kernel for REQ {}: {}",
+                    ktime_prefix(),
+                    req.id,
+                    e
+                );
+                let _ = nl_tx.send_deny(req.id).await;
+                false
+            }
+        };
+        let issued_ticket_id = if ticket_queued {
+            proposed_ticket_id
+        } else {
+            None
+        };
 
         // 5. ログ記録を Audit Worker へ委譲
         let event = InternalEvent::Resolved {
@@ -290,11 +302,22 @@ async fn process_need_approval(
 ) -> PolicyResult {
     // 【フェーズ1: 準備】
     // Uuid生成やメモリ確保を伴う重い処理は、ロックを取る「前」に済ませておく
-    let pending_entry = PendingEntry::from_rule(r, req, current_epoch);
+    let mut pending_entry = PendingEntry::from_rule(r, req, current_epoch);
 
     // 【フェーズ2: 状態変更 (一瞬だけロック)】
     let approved_ticket_opt = {
         let mut state = app_state().lock().await;
+        // The MPA request may be approved AFTER logout. Attest the original
+        // request's PAM login here. This is issuance-time proof only:
+        // future Fast Path use never consults PAM or Audit Session ID.
+        pending_entry.subject.verified_loginuid_at_request = if state
+            .check_registered_session(req.audit_session_id, req.loginuid)
+            .is_some()
+        {
+            req.loginuid.filter(|&id| id != u32::MAX)
+        } else {
+            None
+        };
 
         // 1. HashMapから該当ルールのチケットを探す
         let target_ticket_id = state
@@ -359,88 +382,308 @@ async fn process_need_approval(
     }
 }
 
+// ============================================================================
+// Issuance-time PAM gate. Cached tickets are session-independent.
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TicketCacheChoice {
+    // Special tickets for processes without a Linux Audit login session.
+    Unbound,
+    // PAM verified when the ticket is ISSUED. No binding is sent to kernel.
+    VerifiedLogin,
+    // A request with incomplete or unverified login context may be allowed
+    // by Slow Path policy, but must not create a reusable unbound ticket.
+    NoCache,
+}
+
+fn classify_session_cache(
+    sid: Option<u32>,
+    loginuid: Option<u32>,
+    registered: bool,
+) -> TicketCacheChoice {
+    match (sid, loginuid) {
+        (Some(u32::MAX), Some(u32::MAX)) => TicketCacheChoice::Unbound,
+        (Some(sid), Some(loginuid)) if sid != u32::MAX && loginuid != u32::MAX => {
+            if registered {
+                TicketCacheChoice::VerifiedLogin
+            } else {
+                TicketCacheChoice::NoCache
+            }
+        }
+        // Missing/partial attributes do not silently downgrade to Unbound.
+        // The current kernel always sends both fields (u32::MAX when unset).
+        _ => TicketCacheChoice::NoCache,
+    }
+}
+
+// For immediate Decision/Audit tickets, check PAM registration before issuing
+// a cache ticket. Delayed MPA entries retain proof from the original request.
+async fn choose_ticket_cache_for_ids(
+    audit_session_id: Option<u32>,
+    loginuid: Option<u32>,
+    flags: u32,
+) -> TicketCacheChoice {
+    // Log-storm suppression privileges remain intentionally session-independent.
+    if flags & (TEAL_TICKET_FLG_SILENT_IO | TEAL_TICKET_FLG_NAMELESS_IPC) != 0 {
+        return TicketCacheChoice::Unbound;
+    }
+
+    let registered = match (audit_session_id, loginuid) {
+        (Some(sid), Some(loginuid)) if sid != u32::MAX && loginuid != u32::MAX => {
+            let st = app_state().lock().await;
+            st.check_registered_session(Some(sid), Some(loginuid))
+                .is_some()
+        }
+        _ => false,
+    };
+
+    classify_session_cache(audit_session_id, loginuid, registered)
+}
+
+async fn choose_ticket_cache(req: &Request, flags: u32) -> TicketCacheChoice {
+    choose_ticket_cache_for_ids(req.audit_session_id, req.loginuid, flags).await
+}
+
+async fn queue_ticket(
+    nl_tx: &NlWriter,
+    ticket: TicketPayload,
+    choice: TicketCacheChoice,
+) -> Result<bool> {
+    match choice {
+        TicketCacheChoice::Unbound => {
+            nl_tx.send_ticket_add(ticket).await?;
+            Ok(true)
+        }
+        TicketCacheChoice::VerifiedLogin => {
+            // PAM was verified before issuance, but the cached ticket has
+            // no session flags and is usable without later PAM checks.
+            nl_tx.send_ticket_add(ticket).await?;
+            Ok(true)
+        }
+        TicketCacheChoice::NoCache => Ok(false),
+    }
+}
+
+/// Queue a cache ticket from an Audit or MPA/PendingEntry context.
+/// `Ok(true)` means queued, not acknowledged by the kernel.
+/// `Ok(false)` means login context was incomplete or not PAM-registered.
+/// No Audit SID, Login UID or PAM status is encoded in issued tickets.
+pub(crate) async fn queue_ticket_for_login_context(
+    nl_tx: &NlWriter,
+    ticket: TicketPayload,
+    audit_session_id: Option<u32>,
+    loginuid: Option<u32>,
+) -> Result<bool> {
+    let choice = choose_ticket_cache_for_ids(audit_session_id, loginuid, ticket.flags).await;
+    queue_ticket(nl_tx, ticket, choice).await
+}
+
+/// MPA PendingEntry: the original request was PAM-attested when queued.
+/// On later approval, do NOT depend on the original SID still being active.
+/// No live PAM session is required when the cached ticket is USED.
+fn classify_mpa_ticket_cache(
+    sid: Option<u32>,
+    loginuid: Option<u32>,
+    verified_loginuid_at_request: Option<u32>,
+) -> TicketCacheChoice {
+    match (sid, loginuid, verified_loginuid_at_request) {
+        (Some(u32::MAX), Some(u32::MAX), None) => TicketCacheChoice::Unbound,
+        (Some(sid), Some(auid), Some(verified))
+            if sid != u32::MAX && auid != u32::MAX && auid == verified =>
+        {
+            TicketCacheChoice::VerifiedLogin
+        }
+        _ => TicketCacheChoice::NoCache,
+    }
+}
+
+pub(crate) async fn queue_ticket_for_mpa_entry(
+    nl_tx: &NlWriter,
+    ticket: TicketPayload,
+    sid: Option<u32>,
+    loginuid: Option<u32>,
+    verified_loginuid_at_request: Option<u32>,
+) -> Result<bool> {
+    if ticket.flags & (TEAL_TICKET_FLG_SILENT_IO | TEAL_TICKET_FLG_NAMELESS_IPC) != 0 {
+        return queue_ticket(nl_tx, ticket, TicketCacheChoice::Unbound).await;
+    }
+    let choice = classify_mpa_ticket_cache(sid, loginuid, verified_loginuid_at_request);
+    queue_ticket(nl_tx, ticket, choice).await
+}
+
 // --- カーネルへの応答 ---
+/// Return true only when TICKET_ADD was successfully queued for sending.
+/// This is not a kernel ACK; the existing Netlink writer is asynchronous.
 async fn reply_to_kernel(
     nl_tx: &NlWriter,
     req: &Request,
     policy_result: &mut PolicyResult,
-) -> Result<()> {
+) -> Result<bool> {
     match &mut policy_result.decision {
         PolicyDecision::NotManaged => {
+            // NotManaged is outside the TEAL policy domain. Preserve its
+            // existing unbound, ticket_id=0 behaviour.
             if let Some(ticket) = policy_result.ticket.take() {
-                let _ = nl_tx.send_approve(req.id).await;
-                nl_tx.send_ticket_add(ticket).await
+                nl_tx.send_approve(req.id).await?;
+                queue_ticket(nl_tx, ticket, TicketCacheChoice::Unbound).await
             } else {
-                nl_tx.send_approve(req.id).await
+                nl_tx.send_approve(req.id).await?;
+                Ok(false)
             }
         }
         PolicyDecision::Allow => {
             if let Some(ticket) = policy_result.ticket.take() {
-                // 先にチケットの妥当性を確認
+                let choice = choose_ticket_cache(req, ticket.flags).await;
+                if choice == TicketCacheChoice::NoCache {
+                    // Policy allows the operation; only the reusable cache
+                    // ticket is suppressed when login context is unverified.
+                    eprintln!(
+                        "{}[WARN] TICKET_ADD skipped (unverified login context): pid={} uid={} audit_sid={:?} loginuid={:?}",
+                        ktime_prefix(), req.pid, req.uid,
+                        req.audit_session_id, req.loginuid
+                    );
+                    nl_tx.send_approve(req.id).await?;
+                    return Ok(false);
+                }
+
                 let approved = ApprovedTicket::from_result_with_req(policy_result, &ticket, req)
                     .ok_or_else(|| {
                         anyhow::anyhow!(
-                            "Failed to create ApprovedTicket: \
-                         rule_id={:?}, ticket_epoch={}",
+                            "Failed to create ApprovedTicket: rule_id={:?}, ticket_epoch={}",
                             policy_result.rule_id,
                             ticket.epoch
                         )
                     })?;
 
-                // まず元のリクエストを許可（レイテンシ最小化）
+                // Preserve the existing low-latency reply ordering.
                 nl_tx.send_approve(req.id).await?;
-
-                // カーネルへチケットを登録
-                nl_tx.send_ticket_add(ticket).await?;
-
-                // teald 側の台帳に登録
-                ACTIVE_TICKETS.insert(approved.ticket_id.clone(), approved);
-
-                Ok(())
+                let queued = queue_ticket(nl_tx, ticket, choice).await?;
+                if queued {
+                    ACTIVE_TICKETS.insert(approved.ticket_id.clone(), approved);
+                }
+                Ok(queued)
             } else {
-                nl_tx.send_approve(req.id).await
+                nl_tx.send_approve(req.id).await?;
+                Ok(false)
             }
         }
         PolicyDecision::Approved(approved) => {
-            // メタデータの補完
+            // Hydrate the approved MPA ticket from the actual kernel REQ.
             approved.origin_program = req.raw_program.clone();
             approved.origin_program_sha256 = req.prog_sha256.clone();
             approved.origin_script = req.raw_script.clone();
-
-            // --- パスの補完 ---
             approved.object = req.raw_target.clone();
             approved.new_object = req.raw_new_target.clone();
-
-            // --- EntityID (inode/dev) の補完 ---
             approved.uid = req.uid;
             approved.origin_program_id = EntityId::new((req.prog_dev, req.prog_ino));
             approved.origin_script_id = Some(EntityId::new((req.script_dev, req.script_ino)));
             approved.origin_applet = req.raw_applet.clone();
-
             approved.object_id = EntityId::new((req.target_dev, req.target_ino));
-
-            // new_object_id がある場合のみセット
-            if req.new_target_dev != 0 || req.new_target_ino != 0 {
-                approved.new_object_id =
-                    Some(EntityId::new((req.new_target_dev, req.new_target_ino)));
+            approved.new_object_id = if req.new_target_dev != 0 || req.new_target_ino != 0 {
+                Some(EntityId::new((req.new_target_dev, req.new_target_ino)))
             } else {
-                approved.new_object_id = None;
-            }
-
+                None
+            };
             approved.op_mask = Action::parse(&req.raw_action)
                 .unwrap_or(Action::Unknown)
                 .to_mask();
-            ACTIVE_TICKETS.insert(approved.ticket_id.clone(), (**approved).clone());
 
             if let Some(ticket) = policy_result.ticket.take() {
-                let _ = nl_tx.send_approve(req.id).await;
-                nl_tx.send_ticket_add(ticket).await
+                let choice = choose_ticket_cache(req, ticket.flags).await;
+                if choice == TicketCacheChoice::NoCache {
+                    // The MPA-approved operation can proceed once, but no
+                    // cross-session reusable kernel ticket is installed.
+                    // Remove the entry inserted by process_need_approval.
+                    ACTIVE_TICKETS.remove(&approved.ticket_id);
+                    eprintln!(
+                        "{}[WARN] MPA TICKET_ADD skipped (unverified login context): pid={} uid={} audit_sid={:?} loginuid={:?}",
+                        ktime_prefix(), req.pid, req.uid,
+                        req.audit_session_id, req.loginuid
+                    );
+                    nl_tx.send_approve(req.id).await?;
+                    return Ok(false);
+                }
+
+                // Preserve the existing ordering and activity tracking.
+                ACTIVE_TICKETS.insert(approved.ticket_id.clone(), (**approved).clone());
+                nl_tx.send_approve(req.id).await?;
+                queue_ticket(nl_tx, ticket, choice).await
             } else {
-                nl_tx.send_approve(req.id).await
+                nl_tx.send_approve(req.id).await?;
+                Ok(false)
             }
         }
-        PolicyDecision::AuditOnly => nl_tx.send_approve(req.id).await,
-        PolicyDecision::NeedApproval => Ok(()), // 承認待ちのためカーネルへは無応答（タイムアウトまで待機させる）
-        PolicyDecision::Deny | PolicyDecision::NoRuleMatched => nl_tx.send_deny(req.id).await,
+        PolicyDecision::AuditOnly => {
+            nl_tx.send_approve(req.id).await?;
+            Ok(false)
+        }
+        PolicyDecision::NeedApproval => Ok(false),
+        PolicyDecision::Deny | PolicyDecision::NoRuleMatched => {
+            nl_tx.send_deny(req.id).await?;
+            Ok(false)
+        }
+    }
+}
+
+#[cfg(test)]
+mod fastpath_session_cache_tests {
+    use super::*;
+    #[test]
+    fn verified_login_allows_session_independent_ticket() {
+        assert_eq!(
+            classify_session_cache(Some(77), Some(1000), true),
+            TicketCacheChoice::VerifiedLogin
+        );
+        assert_eq!(
+            classify_session_cache(Some(88), Some(1000), true),
+            TicketCacheChoice::VerifiedLogin
+        );
+    }
+    #[test]
+    fn unknown_login_does_not_downgrade() {
+        assert_eq!(
+            classify_session_cache(Some(77), Some(1000), false),
+            TicketCacheChoice::NoCache
+        );
+        assert_eq!(
+            classify_session_cache(Some(77), None, false),
+            TicketCacheChoice::NoCache
+        );
+        assert_eq!(
+            classify_session_cache(None, None, false),
+            TicketCacheChoice::NoCache
+        );
+    }
+    #[test]
+    fn delayed_mpa_approval_after_logout_keeps_login_principal() {
+        // The original PAM-attested SID=77 has already logged out. Ticket
+        // issuance is allowed and kernel use requires no active session.
+        assert_eq!(
+            classify_mpa_ticket_cache(Some(77), Some(1000), Some(1000)),
+            TicketCacheChoice::VerifiedLogin
+        );
+        assert_eq!(
+            classify_mpa_ticket_cache(Some(77), Some(1000), None),
+            TicketCacheChoice::NoCache
+        );
+        assert_eq!(
+            classify_mpa_ticket_cache(Some(77), Some(1001), Some(1000)),
+            TicketCacheChoice::NoCache
+        );
+    }
+    #[test]
+    fn mpa_for_daemon_without_login_remains_unbound() {
+        assert_eq!(
+            classify_mpa_ticket_cache(Some(u32::MAX), Some(u32::MAX), None),
+            TicketCacheChoice::Unbound
+        );
+    }
+    #[test]
+    fn service_process_remains_unbound() {
+        assert_eq!(
+            classify_session_cache(Some(u32::MAX), Some(u32::MAX), false),
+            TicketCacheChoice::Unbound
+        );
     }
 }

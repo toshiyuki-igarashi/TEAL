@@ -619,6 +619,9 @@ impl PendingEntry {
                 uid: req.uid,
                 gid: req.gid,
                 session_id: req.session_id,
+                audit_session_id: req.audit_session_id,
+                loginuid: req.loginuid,
+                verified_loginuid_at_request: None, // set only by Decision Worker at REQ time
                 prog_dev: req.prog_dev,
                 prog_ino: req.prog_ino,
                 program_path: req.raw_program.clone(),
@@ -816,6 +819,12 @@ pub struct SubjectContext {
     pub uid: u32,
     pub gid: u32,
     pub session_id: u32,
+    // Kernel audit identity captured at the original request, NOT the approver's identity.
+    pub audit_session_id: Option<u32>,
+    pub loginuid: Option<u32>,
+    /// PAM attestation at the original kernel REQ, retained for delayed MPA.
+    /// This does NOT imply the old Audit Session ID remains active.
+    pub verified_loginuid_at_request: Option<u32>,
 
     // Execution Paths
     pub prog_dev: u64, // 実行バイナリのデバイス番号
@@ -1177,4 +1186,38 @@ pub struct TicketPayload {
     pub ticket_id: String, // "0" (予約値) または "T-xxxxxx"
     pub epoch: u32, // 発行時点のポリシー世代
     pub audit_flags: u32, // logの制御フラグ
+}
+
+#[cfg(test)]
+mod pending_login_identity_tests {
+    use super::*;
+
+    #[test]
+    fn pending_entry_keeps_original_audit_login_identity() {
+        let nl_req = TealReq {
+            trans_id: 42,
+            uid: 0, // EUID may differ from the original login user (sudo)
+            audit_session_id: Some(81),
+            loginuid: Some(1000),
+            ..TealReq::default()
+        };
+        let req = Request::from_enforce_teal_req(nl_req);
+        let pending = PendingEntry::from_base_req(&req, 7);
+        assert_eq!(pending.subject.uid, 0);
+        assert_eq!(pending.subject.audit_session_id, Some(81));
+        assert_eq!(pending.subject.loginuid, Some(1000));
+    }
+
+    #[test]
+    fn pending_entry_preserves_unset_service_identity() {
+        let nl_req = TealReq {
+            audit_session_id: Some(u32::MAX),
+            loginuid: Some(u32::MAX),
+            ..TealReq::default()
+        };
+        let req = Request::from_enforce_teal_req(nl_req);
+        let pending = PendingEntry::from_base_req(&req, 7);
+        assert_eq!(pending.subject.audit_session_id, Some(u32::MAX));
+        assert_eq!(pending.subject.loginuid, Some(u32::MAX));
+    }
 }

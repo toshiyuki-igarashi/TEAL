@@ -108,7 +108,7 @@ pub fn process_log_line(line: &str, index: &mut TicketIndex) -> anyhow::Result<A
 
     // 2. インデックスの更新（内部状態の変更のみに専念）
     match entry.log_type {
-        LogType::InteractiveDecision | LogType::AccessAllowed => {
+        LogType::InteractiveDecision | LogType::AccessAllowed | LogType::TicketIssued => {
             if let AuthInfo::SlowPath {
                 ref policy_eval, ..
             } = entry.auth_info

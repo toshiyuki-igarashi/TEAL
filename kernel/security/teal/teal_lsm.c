@@ -48,6 +48,7 @@
 #include <linux/fs_struct.h>
 #include <linux/tty.h>
 #include <linux/audit.h>
+#include <linux/xarray.h>
 
 #include <net/genetlink.h>
 #include <net/net_namespace.h>
@@ -81,6 +82,8 @@ enum teal_nl_commands {
     TEAL_CMD_TICKET_ADD,    // 6: User -> Kernel: キャッシュ登録
     TEAL_CMD_MODE_SWITCH,   // 7: User -> Kernel: AUDIT <-> ENFORCE 切替 (START/STOP)
     TEAL_CMD_POLICY_UPDATE, // 8: User -> Kernel: Epoch同期とキャッシュフラッシュ
+    TEAL_CMD_PAM_SESSION_ADD, // 9: teald -> Kernel: PAM登録済みセッション
+    TEAL_CMD_PAM_SESSION_DEL, // 10: teald -> Kernel: PAMセッション終了
     __TEAL_CMD_MAX,
 };
 #define TEAL_CMD_MAX (__TEAL_CMD_MAX - 1)
@@ -156,6 +159,7 @@ static const struct nla_policy teal_nl_policy[TEAL_ATTR_MAX + 1] = {
     [TEAL_ATTR_TICKET_ID]   = { .type = NLA_U64 },
     [TEAL_ATTR_EPOCH]       = { .type = NLA_U32 },
     [TEAL_ATTR_AUDIT_FLG]   = { .type = NLA_U32 },
+    [TEAL_ATTR_FLAGS]       = { .type = NLA_U32 },
 
     // --- RENAME対応用 ---
     [TEAL_ATTR_NEW_TARGET_DEV]  = { .type = NLA_U32 },
@@ -211,6 +215,8 @@ static int teal_nl_recv_deny(struct sk_buff *skb, struct genl_info *info);
 static int teal_nl_recv_ticket_add(struct sk_buff *skb, struct genl_info *info);
 static int teal_nl_recv_mode_switch(struct sk_buff *skb, struct genl_info *info);
 static int teal_nl_recv_policy_update(struct sk_buff *skb, struct genl_info *info);
+static int teal_nl_recv_pam_session_add(struct sk_buff *skb, struct genl_info *info);
+static int teal_nl_recv_pam_session_del(struct sk_buff *skb, struct genl_info *info);
 static int teal_genl_send_req(struct teal_request *req, u8 teal_mode);
 
 /*
@@ -253,6 +259,18 @@ static const struct genl_ops teal_nl_ops[] = {
         .doit = teal_nl_recv_policy_update,
         .policy = teal_nl_policy,
     },
+    {
+        .cmd = TEAL_CMD_PAM_SESSION_ADD,
+        .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
+        .doit = teal_nl_recv_pam_session_add,
+        .policy = teal_nl_policy,
+    },
+    {
+        .cmd = TEAL_CMD_PAM_SESSION_DEL,
+        .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
+        .doit = teal_nl_recv_pam_session_del,
+        .policy = teal_nl_policy,
+    },
 };
 
 /*
@@ -284,6 +302,92 @@ static DEFINE_MUTEX(teal_daemon_lifecycle_mutex);
 static void teal_daemon_disconnect_workfn(struct work_struct *work);
 static DECLARE_WORK(teal_daemon_disconnect_work,
                     teal_daemon_disconnect_workfn);
+
+/*
+ * 現在のPAM認証済みセッション台帳。Audit SIDを索引にして、
+ * Linux Audit Login UIDを保存する。チケットとは独立した寿命を持つ。
+ *
+ * ログイン通知の検証・同期に使用する。Fast Path のチケット使用時には
+ * このセッション台帳を参照しない。
+ * PAM更新/teald切断はmutexで直列化し、古いエントリをRCU解放する。
+ */
+struct teal_verified_session {
+    u32 loginuid;
+    struct rcu_head rcu;
+};
+
+static DEFINE_XARRAY(teal_verified_sessions);
+static DEFINE_MUTEX(teal_verified_sessions_mutex);
+static unsigned int teal_verified_sessions_count;
+#define TEAL_MAX_VERIFIED_SESSIONS 65536U
+
+static int teal_verified_session_add(u32 sid, u32 loginuid)
+{
+    struct teal_verified_session *session, *old;
+    void *stored;
+    int ret = 0;
+
+    session = kzalloc(sizeof(*session), GFP_KERNEL);
+    if (!session)
+        return -ENOMEM;
+    session->loginuid = loginuid;
+
+    mutex_lock(&teal_verified_sessions_mutex);
+    old = xa_load(&teal_verified_sessions, sid);
+    if (old) {
+        ret = old->loginuid == loginuid ? 0 : -EEXIST;
+        goto out;
+    }
+    if (teal_verified_sessions_count >= TEAL_MAX_VERIFIED_SESSIONS) {
+        ret = -ENOSPC;
+        goto out;
+    }
+    stored = xa_store(&teal_verified_sessions, sid, session, GFP_KERNEL);
+    ret = xa_err(stored);
+    if (!ret) {
+        teal_verified_sessions_count++;
+        session = NULL; /* ownership moved to XArray */
+    }
+out:
+    mutex_unlock(&teal_verified_sessions_mutex);
+    kfree(session);
+    return ret;
+}
+
+static int teal_verified_session_del(u32 sid, u32 loginuid)
+{
+    struct teal_verified_session *old;
+    int ret = 0;
+
+    mutex_lock(&teal_verified_sessions_mutex);
+    old = xa_load(&teal_verified_sessions, sid);
+    if (!old) {
+        /* Duplicate logout or ACK-loss retry: already inactive is success. */
+        ret = 0;
+    } else if (old->loginuid != loginuid) {
+        ret = -EPERM;
+    } else {
+        xa_erase(&teal_verified_sessions, sid);
+        teal_verified_sessions_count--;
+        kfree_rcu(old, rcu);
+    }
+    mutex_unlock(&teal_verified_sessions_mutex);
+    return ret;
+}
+
+static void teal_verified_sessions_clear(void)
+{
+    struct teal_verified_session *session;
+    unsigned long sid;
+
+    mutex_lock(&teal_verified_sessions_mutex);
+    xa_for_each(&teal_verified_sessions, sid, session) {
+        xa_erase(&teal_verified_sessions, sid);
+        kfree_rcu(session, rcu);
+    }
+    teal_verified_sessions_count = 0;
+    mutex_unlock(&teal_verified_sessions_mutex);
+}
 
 /*
  * 登録済みtealdのTXソケットから
@@ -466,6 +570,10 @@ struct teal_log_entry {
 #define TEAL_TICKET_FLG_SILENT_IO  0x01
 #define TEAL_TICKET_FLG_INHERIT    0x02
 #define TEAL_TICKET_FLG_NAMELESS_IPC    0x04
+/* 0x08 is reserved; 0x10 is PARENT_MATCH. */
+/* Reserved: deprecated session-bound tickets must fail closed on TICKET_ADD. */
+#define TEAL_TICKET_FLG_SESSION_BOUND   (1U << 5)
+#define TEAL_TICKET_FLG_LOGIN_REQUIRED  (1U << 6)
 
 // per-task exec meta（task->security 直置き）
 #define TEAL_TASK_META_MAGIC 0x5445414Cull /* 'TEAL' */
@@ -1242,8 +1350,10 @@ static void teal_daemon_disconnect_workfn(struct work_struct *work)
 
     spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
 
-    if (disconnected)
+    if (disconnected) {
+        teal_verified_sessions_clear();
         teal_flush_all_queues();
+    }
 
     mutex_unlock(&teal_daemon_lifecycle_mutex);
 }
@@ -1301,6 +1411,8 @@ static int teal_nl_recv_register(struct sk_buff *skb,
 
         next_epoch = teal_last_epoch + 1;
 
+        /* 旧teald接続のセッション台帳も破棄（新規PAM通知で再登録）。 */
+        teal_verified_sessions_clear();
         /* 旧セッションのキャッシュと待機要求を破棄 */
         atomic_set(&teal_current_epoch, 0);
         teal_flush_all_queues_locked();
@@ -1533,11 +1645,62 @@ static int teal_nl_recv_ticket_add(struct sk_buff *skb, struct genl_info *info)
     if (info->attrs[TEAL_ATTR_FLAGS]) {
         ticket->flags = nla_get_u32(info->attrs[TEAL_ATTR_FLAGS]);
     } else {
-        ticket->flags = 0; // 属性が無い場合は安全側に倒す
+        ticket->flags = 0;
     }
 
-    /* 既存の登録処理へ流す */
+    /* Fast Path tickets carry no login-session conditions. Reject obsolete
+     * wire flags and unexpected session attributes rather than silently
+     * accepting a weaker meaning for a legacy ticket.
+     * PAM_SESSION_ADD/DEL are separate commands and remain supported.
+     */
+    if ((ticket->flags & (TEAL_TICKET_FLG_SESSION_BOUND |
+                          TEAL_TICKET_FLG_LOGIN_REQUIRED)) ||
+        info->attrs[TEAL_ATTR_AUDIT_SESSIONID] ||
+        info->attrs[TEAL_ATTR_LOGINUID]) {
+        rc = -EINVAL;
+        goto err_free_ticket;
+    }
+
     return handle_ticket_add(ticket);
+
+err_free_ticket:
+    kfree(ticket);
+    return rc;
+}
+
+/* PAMセッション通知は認証済みtealdのTXソケットからだけ受ける。 */
+static int teal_nl_recv_pam_session_update(struct genl_info *info, bool is_add)
+{
+    u32 sid, auid;
+    int ret;
+
+    if (!info || !info->attrs[TEAL_ATTR_AUDIT_SESSIONID] ||
+        !info->attrs[TEAL_ATTR_LOGINUID])
+        return -EINVAL;
+
+    sid = nla_get_u32(info->attrs[TEAL_ATTR_AUDIT_SESSIONID]);
+    auid = nla_get_u32(info->attrs[TEAL_ATTR_LOGINUID]);
+    if (sid == U32_MAX || auid == U32_MAX)
+        return -EINVAL;
+
+    /* RX再登録・切断後クリーンアップと直列化 */
+    mutex_lock(&teal_daemon_lifecycle_mutex);
+    ret = teal_nl_check_authorized(info);
+    if (!ret)
+        ret = is_add ? teal_verified_session_add(sid, auid)
+                     : teal_verified_session_del(sid, auid);
+    mutex_unlock(&teal_daemon_lifecycle_mutex);
+    return ret;
+}
+
+static int teal_nl_recv_pam_session_add(struct sk_buff *skb, struct genl_info *info)
+{
+    return teal_nl_recv_pam_session_update(info, true);
+}
+
+static int teal_nl_recv_pam_session_del(struct sk_buff *skb, struct genl_info *info)
+{
+    return teal_nl_recv_pam_session_update(info, false);
 }
 
 /*
@@ -1823,6 +1986,24 @@ static inline bool teal_should_bypass_all(void)
     return false;
 }
 
+/* Fast Path only checks cached ticket conditions. PAM and login context
+ * are evaluated by teald when the first Slow Path request is authorized.
+ * No session registry lookup is permitted on a cache hit.
+ */
+/* Both file and socket ticket checks must enforce the same UID semantics.
+ * The REQ sends the effective UID in init_user_ns, not the real UID.
+ */
+static bool teal_ticket_uid_matches(
+    const struct teal_ticket_add_payload *ticket)
+{
+    if (ticket->uid == U32_MAX ||
+        (ticket->flags & TEAL_TICKET_FLG_SILENT_IO))
+        return true;
+
+    return ticket->uid ==
+        from_kuid_munged(&init_user_ns, current_euid());
+}
+
 static bool is_ticket_matched(struct teal_ticket_add_payload *ticket, u64 now,
                              struct inode *obj_inode, struct teal_id_pair *org_id,
                              enum teal_event_type ev, struct teal_id_pair *new_id)
@@ -1844,16 +2025,9 @@ static bool is_ticket_matched(struct teal_ticket_add_payload *ticket, u64 now,
         return false;
     }
 
-    // C) UID チェック
-    // ★ silent_io 特権チケット、または UID がワイルドカード (0xFFFFFFFF) の場合は不問とする
-    bool is_wildcard_uid = (ticket->uid == (u32)-1);
-    bool is_silent_io    = (ticket->flags & TEAL_TICKET_FLG_SILENT_IO);
-
-    if (!is_wildcard_uid && !is_silent_io) {
-        if (ticket->uid != from_kuid(current_user_ns(), current_uid())) {
-            return false;
-        }
-    }
+    // C) Cached ticket subject UID check (no login session revalidation)
+    if (!teal_ticket_uid_matches(ticket))
+        return false;
 
     // D) Operation チェック
     if ((ticket->op & ev) == 0) {
@@ -2616,6 +2790,9 @@ static bool teal_check_socket_ticket_match(struct socket *sock, struct sockaddr 
             READ_ONCE(ticket->epoch) != current_epoch)
             continue;
 
+        if (!teal_ticket_uid_matches(ticket))
+            continue;
+
         // ==========================================================
         //  安全なインライン・マッチング (obj_inode を使わない)
         // ==========================================================
@@ -3188,6 +3365,7 @@ static void __exit teal_exit(void)
 {
     // 1. まず待機中のプロセスをすべて解放する
     // これをしないと、判定待ちの sh や cat が rmmod 後にフリーズします
+    teal_verified_sessions_clear();
     teal_flush_all_queues();
 
     // 2. Netlink 通知の解除
@@ -3197,6 +3375,8 @@ static void __exit teal_exit(void)
     cancel_delayed_work_sync(&teal_gc_work);
     
     rhltable_free_and_destroy(&teal_ticket_ht, teal_cache_free_cb, NULL);
+    /* RCU freeing callbacks may reference this module until completed. */
+    rcu_barrier();
     
     // 3. Netlinkファミリーの登録解除
     genl_unregister_family(&teal_nl_family);

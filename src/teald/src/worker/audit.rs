@@ -21,6 +21,7 @@ use crate::types::{
     ApprovedTicket, EntityId, InternalEvent, KernelEventLog, PendingEntry, PolicyDecision, Request,
     TicketPayload,
 };
+use crate::worker::decision::queue_ticket_for_login_context;
 
 use teal_policy_engine::eval::evaluate;
 use teal_policy_engine::ir::{CompiledRule, Decision};
@@ -179,18 +180,43 @@ pub async fn handle_audit_req(nl_req: TealReq, nl_tx: netlink::NlWriter) {
     // 2. 評価: ポリシーの評価と、必要なチケット（キャッシュ）の準備
     let eval_result = evaluate_audit_request(&mut req).await;
 
-    // 3. 送信: チケットのカーネルへの送信（必要な場合のみ）
-    let is_cache_issued = eval_result.ticket_to_send.is_some();
+    // 3. 送信: キャッシュ登録を全チケット種別で同じ基準で扱う。
+    // NotManaged はTEALの管理対象外なので従来どおり非束縛。
+    // 通常チケットはPAM登録済みなら束縛し、照合不能ならキャッシュしない。
+    let mut issued_ticket_id = eval_result.issued_ticket_id;
+    let mut is_cache_issued = false;
     if let Some(payload) = eval_result.ticket_to_send {
-        let _ = nl_tx.send_ticket_add(payload).await;
+        let result = if payload.ticket_id == "T-000000000" {
+            nl_tx.send_ticket_add(payload).await.map(|_| true)
+        } else {
+            queue_ticket_for_login_context(&nl_tx, payload, req.audit_session_id, req.loginuid)
+                .await
+        };
+        match result {
+            Ok(true) => is_cache_issued = true,
+            Ok(false) => {
+                // build_audit_matched_result previously inserted the log record.
+                ACTIVE_TICKETS.remove(&issued_ticket_id);
+                issued_ticket_id = "0".to_string();
+            }
+            Err(e) => {
+                ACTIVE_TICKETS.remove(&issued_ticket_id);
+                issued_ticket_id = "0".to_string();
+                eprintln!(
+                    "{}[WARN] Audit TICKET_ADD not queued: {}",
+                    ktime_prefix(),
+                    e
+                );
+            }
+        }
     }
 
-    // 4. 記録: 証跡ログの非同期エンリッチメントとディスクへの書き込み
+    // 4. 記録: 発行IDとcacheableを実際の送信キュー投入結果に合わせる。
     process_audit_log(
         &req,
         eval_result.rule,
         eval_result.effect,
-        eval_result.issued_ticket_id,
+        issued_ticket_id,
         is_cache_issued,
         eval_result.epoch,
     )

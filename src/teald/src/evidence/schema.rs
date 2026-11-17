@@ -5,8 +5,8 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer, Serialize};
 use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::types::MpaState;
 use teal_policy_engine::types::Effect;
@@ -172,8 +172,7 @@ impl<'de> Deserialize<'de> for AuthInfo {
                 mpa_proof: MpaState,
             }
 
-            let fields: SlowPathFields =
-                serde_json::from_value(value).map_err(D::Error::custom)?;
+            let fields: SlowPathFields = serde_json::from_value(value).map_err(D::Error::custom)?;
             Ok(Self::SlowPath {
                 policy_eval: fields.policy_eval,
                 mpa_proof: fields.mpa_proof,
@@ -184,8 +183,7 @@ impl<'de> Deserialize<'de> for AuthInfo {
                 ticket_context: TicketRef,
             }
 
-            let fields: FastPathFields =
-                serde_json::from_value(value).map_err(D::Error::custom)?;
+            let fields: FastPathFields = serde_json::from_value(value).map_err(D::Error::custom)?;
             Ok(Self::FastPath {
                 ticket_context: fields.ticket_context,
             })
@@ -316,7 +314,10 @@ mod auth_info_compatibility_tests {
         let entry: AuditLogEntry =
             serde_json::from_value(log).expect("SlowPath log must deserialize");
         match entry.auth_info {
-            AuthInfo::SlowPath { policy_eval, mpa_proof } => {
+            AuthInfo::SlowPath {
+                policy_eval,
+                mpa_proof,
+            } => {
                 assert_eq!(policy_eval.issued_ticket.unwrap().ttl_sec, u64::MAX);
                 assert_eq!(mpa_proof.threshold, 0);
             }

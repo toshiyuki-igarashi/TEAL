@@ -15,6 +15,7 @@ use neli::neli_enum;
 use neli::nl::{NlPayload, Nlmsghdr};
 use neli::socket::NlSocketHandle;
 use neli::types::GenlBuffer;
+use once_cell::sync::OnceCell;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::os::fd::AsRawFd;
@@ -27,6 +28,28 @@ use tokio::sync::oneshot;
 
 use crate::types::TicketPayload;
 use teal_policy_engine::util::ktime_prefix;
+
+// Legacy session-bound Fast Path flags are reserved and never transmitted.
+// The PAM session registry remains available for issuance-time verification
+// in teald, but no login attributes are included in TICKET_ADD.
+const TEAL_TICKET_FLG_SESSION_BOUND: u32 = 1 << 5;
+const TEAL_TICKET_FLG_LOGIN_REQUIRED: u32 = 1 << 6;
+const TEAL_UNSET_AUDIT_ID: u32 = u32::MAX;
+
+fn ticket_wire_flags(flags: u32) -> Result<u32> {
+    anyhow::ensure!(
+        flags & (TEAL_TICKET_FLG_SESSION_BOUND | TEAL_TICKET_FLG_LOGIN_REQUIRED) == 0,
+        "session-bound ticket flags are deprecated"
+    );
+    Ok(flags)
+}
+
+// PAM notification handler uses the same authenticated TX socket as TICKET_ADD.
+// Keeps the caller's public start_pam_listener() signature unchanged.
+static PAM_NETLINK_WRITER: OnceCell<NlWriter> = OnceCell::new();
+pub(crate) fn pam_netlink_writer() -> Option<NlWriter> {
+    PAM_NETLINK_WRITER.get().cloned()
+}
 
 // --- グローバル受信 PortID 管理 ---
 static RX_PORTID: AtomicU32 = AtomicU32::new(0);
@@ -71,6 +94,8 @@ pub enum TealCmd {
     TicketAdd = 6,
     ModeSwitch = 7,
     PolicyUpdate = 8,
+    PamSessionAdd = 9,
+    PamSessionDel = 10,
 }
 impl Cmd for TealCmd {}
 
@@ -186,6 +211,12 @@ pub enum NetlinkSendRequest {
     Approve(u64),
     Deny(u64),
     TicketAdd(TicketPayload),
+    PamSessionUpdate {
+        sid: u32,
+        loginuid: u32,
+        add: bool,
+        ack: oneshot::Sender<Result<()>>,
+    },
     ModeSwitch(u32),
     SyncEpoch(u32, oneshot::Sender<Result<()>>),
 }
@@ -242,10 +273,34 @@ impl NlWriter {
             !self.ticket_transition_active(),
             "TICKET_ADD suspended during epoch transition"
         );
+        ticket_wire_flags(ticket.flags)?;
         self.tx
             .send(NetlinkSendRequest::TicketAdd(ticket))
             .await
             .map_err(|_| anyhow::anyhow!("Failed to queue TICKET_ADD"))
+    }
+
+    /// Update the kernel-side verified login table. This method waits for the
+    /// kernel ACK; enqueue success alone does NOT establish PAM registration.
+    pub async fn send_pam_session_update(&self, sid: u32, loginuid: u32, add: bool) -> Result<()> {
+        anyhow::ensure!(
+            sid != TEAL_UNSET_AUDIT_ID && loginuid != TEAL_UNSET_AUDIT_ID,
+            "invalid PAM login identifiers"
+        );
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(NetlinkSendRequest::PamSessionUpdate {
+                sid,
+                loginuid,
+                add,
+                ack: tx,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("Failed to queue PAM session update"))?;
+        tokio::time::timeout(Duration::from_secs(5), rx)
+            .await
+            .map_err(|_| anyhow::anyhow!("PAM kernel ACK timed out"))?
+            .map_err(|_| anyhow::anyhow!("Netlink sender stopped before PAM ACK"))?
     }
 
     pub async fn send_mode_switch(&self, mode: u32) -> Result<()> {
@@ -449,6 +504,10 @@ pub async fn init_socket() -> Result<(
     tokio::spawn(async move {
         netlink_send_worker_loop(send_rx, worker_sock, family_id, ticket_transition).await;
     });
+
+    PAM_NETLINK_WRITER
+        .set(nl_tx.clone())
+        .map_err(|_| anyhow::anyhow!("PAM Netlink writer registered more than once"))?;
 
     // --- 4. 初期モード同期 ---
     nl_tx.send_mode_switch(0).await?;
@@ -674,7 +733,7 @@ fn parse_info_msg(genl_msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<TealInfo> 
 
 // Wait for the ACK corresponding to a specific POLICY_UPDATE sequence.
 // Ignore replies belonging to earlier TX commands.
-fn wait_policy_update_ack(sock: &NlSocketHandle, seq: u32, epoch: u32) -> Result<()> {
+fn wait_netlink_command_ack(sock: &NlSocketHandle, seq: u32, operation: &str) -> Result<()> {
     // SO_RCVTIMEO is already configured for the TX socket.
     let fd = sock.as_raw_fd();
     let mut buf = [0u8; 65536];
@@ -689,11 +748,11 @@ fn wait_policy_update_ack(sock: &NlSocketHandle, seq: u32, epoch: u32) -> Result
                 continue;
             }
 
-            anyhow::bail!("POLICY_UPDATE ACK recv failed: {}", err);
+            anyhow::bail!("{} ACK recv failed: {}", operation, err);
         }
 
         if n == 0 {
-            anyhow::bail!("TX socket closed while waiting for POLICY_UPDATE ACK");
+            anyhow::bail!("TX socket closed while waiting for Netlink ACK");
         }
 
         let n = n as usize;
@@ -724,15 +783,15 @@ fn wait_policy_update_ack(sock: &NlSocketHandle, seq: u32, epoch: u32) -> Result
 
                     if error == 0 {
                         eprintln!(
-                            "{}[INFO] POLICY_UPDATE ACK received: epoch={} seq={}",
+                            "{}[INFO] {} ACK received: seq={}",
                             ktime_prefix(),
-                            epoch,
+                            operation,
                             seq
                         );
                         return Ok(());
                     }
 
-                    anyhow::bail!("POLICY_UPDATE rejected by kernel: errno={}", error);
+                    anyhow::bail!("{} rejected by kernel: errno={}", operation, error);
                 }
             }
 
@@ -780,10 +839,34 @@ pub async fn netlink_send_worker_loop(
                     sock.send(packet)?;
 
                     // Wait for the corresponding ACK.
-                    wait_policy_update_ack(&sock, seq, epoch)
+                    wait_netlink_command_ack(&sock, seq, "POLICY_UPDATE")
                 })();
 
                 let _ = response.send(result);
+            }
+            NetlinkSendRequest::PamSessionUpdate {
+                sid,
+                loginuid,
+                add,
+                ack,
+            } => {
+                let seq = NEXT_SEQ.fetch_add(1, Ordering::Relaxed);
+                let result = (|| -> Result<()> {
+                    let mut packet = build_pam_session_packet(family_id, sid, loginuid, add)?;
+                    packet.nl_seq = seq;
+                    let mut sock = sock_mutex.lock().unwrap();
+                    sock.send(packet)?;
+                    wait_netlink_command_ack(
+                        &sock,
+                        seq,
+                        if add {
+                            "PAM_SESSION_ADD"
+                        } else {
+                            "PAM_SESSION_DEL"
+                        },
+                    )
+                })();
+                let _ = ack.send(result);
             }
             other => {
                 // Dispatch-time check also covers requests queued before suspension.
@@ -813,7 +896,8 @@ pub async fn netlink_send_worker_loop(
                     NetlinkSendRequest::ModeSwitch(mode) => {
                         build_mode_switch_packet(family_id, mode)
                     }
-                    NetlinkSendRequest::SyncEpoch(..) => unreachable!(),
+                    NetlinkSendRequest::SyncEpoch(..)
+                    | NetlinkSendRequest::PamSessionUpdate { .. } => unreachable!(),
                 };
                 match packet {
                     Ok(packet) => {
@@ -906,6 +990,7 @@ fn build_ticket_add(
     family_id: u16,
     ticket: &TicketPayload,
 ) -> Result<Nlmsghdr<u16, Genlmsghdr<TealCmd, TealAttr>>> {
+    let flags = ticket_wire_flags(ticket.flags)?;
     let mut expires_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -995,8 +1080,9 @@ fn build_ticket_add(
         false,
         false,
         TealAttr::Flags,
-        ticket.flags.to_ne_bytes().as_ref(),
+        flags.to_ne_bytes().as_ref(),
     )?);
+
     attrs.push(Nlattr::new(
         false,
         false,
@@ -1055,6 +1141,45 @@ fn build_mode_switch_packet(
         None,
         family_id,
         NlmFFlags::new(&[NlmF::Request]),
+        None,
+        None,
+        NlPayload::Payload(genlhdr),
+    ))
+}
+
+fn build_pam_session_packet(
+    family_id: u16,
+    sid: u32,
+    loginuid: u32,
+    add: bool,
+) -> Result<Nlmsghdr<u16, Genlmsghdr<TealCmd, TealAttr>>> {
+    anyhow::ensure!(
+        sid != u32::MAX && loginuid != u32::MAX,
+        "invalid PAM session"
+    );
+    let mut attrs = GenlBuffer::new();
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::AuditSessionId,
+        sid.to_ne_bytes().as_ref(),
+    )?);
+    attrs.push(Nlattr::new(
+        false,
+        false,
+        TealAttr::LoginUid,
+        loginuid.to_ne_bytes().as_ref(),
+    )?);
+    let cmd = if add {
+        TealCmd::PamSessionAdd
+    } else {
+        TealCmd::PamSessionDel
+    };
+    let genlhdr = Genlmsghdr::new(cmd, 1, attrs);
+    Ok(Nlmsghdr::new(
+        None,
+        family_id,
+        NlmFFlags::new(&[NlmF::Request, NlmF::Ack]),
         None,
         None,
         NlPayload::Payload(genlhdr),
@@ -1124,4 +1249,22 @@ pub fn get_netlink_socket_metrics() -> (f64, u64) {
     }
 
     (0.0, 0)
+}
+
+#[cfg(test)]
+mod ticket_issue_flags_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_and_suppression_tickets_have_no_session_binding() {
+        for flags in [0, 1, 1 << 2, 1 << 4] {
+            assert_eq!(ticket_wire_flags(flags).unwrap(), flags);
+        }
+    }
+
+    #[test]
+    fn deprecated_session_flags_cannot_be_issued() {
+        assert!(ticket_wire_flags(TEAL_TICKET_FLG_SESSION_BOUND).is_err());
+        assert!(ticket_wire_flags(TEAL_TICKET_FLG_LOGIN_REQUIRED).is_err());
+    }
 }
