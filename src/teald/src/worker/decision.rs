@@ -18,8 +18,7 @@ use crate::netlink::{NlWriter, TealNetlinkMessage};
 use crate::state::app_state;
 use crate::types::{next_audit_ticket_id, to_kernel_dev, ACTIVE_TICKETS};
 use crate::types::{
-    ApprovedTicket, EntityId, InternalEvent, PendingEntry, PolicyDecision, PolicyResult, Request,
-    TicketPayload,
+    ApprovedTicket, EntityId, InternalEvent, PolicyDecision, PolicyResult, Request, TicketPayload,
 };
 
 use teal_policy_engine::eval::evaluate;
@@ -300,26 +299,12 @@ async fn process_need_approval(
     req: &Request,
     current_epoch: u32,
 ) -> PolicyResult {
-    // 【フェーズ1: 準備】
-    // Uuid生成やメモリ確保を伴う重い処理は、ロックを取る「前」に済ませておく
-    let mut pending_entry = PendingEntry::from_rule(r, req, current_epoch);
-
-    // 【フェーズ2: 状態変更 (一瞬だけロック)】
+    // Pre-approval is explicit (teal-cli ticket + MPA). A first access
+    // without an approved draft must be DENIED immediately; never put the
+    // already-denied kernel request into slow.pending_requests for later approval.
+    // Approved drafts still follow JIT Hydration on their first matching REQ.
     let approved_ticket_opt = {
         let mut state = app_state().lock().await;
-        // The MPA request may be approved AFTER logout. Attest the original
-        // request's PAM login here. This is issuance-time proof only:
-        // future Fast Path use never consults PAM or Audit Session ID.
-        pending_entry.subject.verified_loginuid_at_request = if state
-            .check_registered_session(req.audit_session_id, req.loginuid)
-            .is_some()
-        {
-            req.loginuid.filter(|&id| id != u32::MAX)
-        } else {
-            None
-        };
-
-        // 1. HashMapから該当ルールのチケットを探す
         let target_ticket_id = state
             .fast
             .approved
@@ -328,20 +313,16 @@ async fn process_need_approval(
             .map(|t| t.ticket_id.clone());
 
         if let Some(ticket_id) = target_ticket_id {
-            // 2. 見つかった場合: JIT Hydration (approved から tickets へ移動)
             if let Some(approved) = state.fast.approved.remove(&ticket_id) {
                 ACTIVE_TICKETS.insert(approved.ticket_id.clone(), approved.clone());
-                Some(approved) // 成功したチケット情報をコピーして返す
+                Some(approved)
             } else {
                 None
             }
         } else {
-            // 3. 見つからなかった場合: 承認待ちキューへ登録
-            // (事前のフェーズ1で作っておいた pending_entry を挿入するだけ)
-            state.slow.pending_requests.insert(req.id, pending_entry);
             None
         }
-    }; // 即座にロック解放！
+    };
 
     // 【フェーズ3: 結果の構築】
     // ロック解放後に、取得できたチケット情報を使ってペイロードを組み立てる
@@ -618,8 +599,9 @@ async fn reply_to_kernel(
             nl_tx.send_approve(req.id).await?;
             Ok(false)
         }
-        PolicyDecision::NeedApproval => Ok(false),
-        PolicyDecision::Deny | PolicyDecision::NoRuleMatched => {
+        // No pre-approved MPA ticket: reject this syscall now, rather than
+        // leaving the kernel waiting for its 3-second fail-open timeout.
+        PolicyDecision::NeedApproval | PolicyDecision::Deny | PolicyDecision::NoRuleMatched => {
             nl_tx.send_deny(req.id).await?;
             Ok(false)
         }

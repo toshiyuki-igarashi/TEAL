@@ -547,7 +547,7 @@ async fn process_resolved_event(
         req.is_audit,
         matches!(
             &decision,
-            PolicyDecision::Deny | PolicyDecision::NoRuleMatched
+            PolicyDecision::Deny | PolicyDecision::NoRuleMatched | PolicyDecision::NeedApproval
         ),
     );
 
@@ -557,7 +557,10 @@ async fn process_resolved_event(
         PolicyDecision::AuditOnly => (Effect::AuditOnly, LogType::AccessAllowed),
         PolicyDecision::Deny => (Effect::Deny, LogType::AccessDenied),
         PolicyDecision::NoRuleMatched => (Effect::Deny, LogType::AccessDenied),
-        PolicyDecision::NeedApproval | PolicyDecision::Approved(_) => {
+        // NeedApproval means the *current syscall* was rejected because no
+        // approved MPA ticket exists. Record and notify the actual denial.
+        PolicyDecision::NeedApproval => (Effect::Deny, LogType::AccessDenied),
+        PolicyDecision::Approved(_) => {
             return Ok(());
         }
     };
