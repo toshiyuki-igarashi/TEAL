@@ -22,7 +22,8 @@ use teald::bundle::{
 use teald::evidence::EvidenceManager;
 use teald::management::load_from_management;
 use teald::netlink::{
-    get_netlink_socket_metrics, init_socket, kernel_next_epoch, NlWriter, TealNetlinkMessage,
+    compile_guard_manifest, get_netlink_socket_metrics, init_socket, kernel_next_epoch,
+    kernel_runtime_mode, NlWriter, TealNetlinkMessage,
 };
 use teald::pam_server::start_pam_listener;
 use teald::ticket::preload_silent_directory_tickets;
@@ -125,7 +126,8 @@ async fn main() -> Result<()> {
         ktime_prefix()
     );
 
-    // 起動直後は確実に DRAIN モードに設定
+    // Until kernel mode and Guard are verified, discard audit traffic.
+    // Kernel ENFORCE, if previously set, remains active throughout.
     set_daemon_mode(DaemonMode::Drain);
 
     // まずポリシーを検証・コンパイルするが、Epochはまだ確定しない。
@@ -149,9 +151,34 @@ async fn main() -> Result<()> {
     // 重要: 新Epochは、カーネルのPOLICY_UPDATE ACKまで運用状態と見なさない。
     let next_epoch = kernel_next_epoch();
     anyhow::ensure!(next_epoch != 0, "REGISTER did not return a valid Epoch");
+    let inherited_kernel_mode = kernel_runtime_mode()?;
     init_bundle_at_epoch(compiled, next_epoch)?;
     let b = bundle();
     load_from_management(&b.roles)?;
+
+    // On an ENFORCE reconnect, do not replace the last committed Guard
+    // with a different manifest as an implicit side effect of startup.
+    // A different Guard must be handled by an explicitly authorized update.
+    if inherited_kernel_mode == 1 {
+        let before = nl_tx.guard_status().await
+            .context("GUARD_STATUS before ENFORCE recovery")?;
+        let manifest = compile_guard_manifest(&policy_snapshot().bundle)
+            .context("compile policy Guard for ENFORCE recovery")?;
+        anyhow::ensure!(
+            before.guard_state == 1
+                && before.guard_epoch == before.last_epoch
+                && before.last_epoch.checked_add(1) == Some(next_epoch)
+                && !before.staged
+                && before.active_sha256 == Some(manifest.sha256),
+            "ENFORCE recovery blocked: committed Guard and policy manifest differ \
+             (kernel last={}, guard={}, new epoch={}, staged={}); refusing implicit policy change",
+            before.last_epoch, before.guard_epoch, next_epoch, before.staged
+        );
+        eprintln!(
+            "{}[INFO] ENFORCE recovery: old Guard verified, last_epoch={}, next_epoch={}",
+            ktime_prefix(), before.last_epoch, next_epoch
+        );
+    }
 
     // 初期要求を処理するワーカーや事前チケット登録を始める前に同期を確定する。
     // netlink.rsのsend_sync_epoch()はカーネルACKを待つ実装が必須。
@@ -258,65 +285,78 @@ async fn main() -> Result<()> {
         start_pam_listener().await;
     });
 
-    let nl_tx_monitor = nl_tx.clone();
-
-    // ==============================================================
-    // ログストーム収束監視タスク (Drain -> Audit 自動移行)
-    // ==============================================================
-    tokio::spawn(async move {
+    if inherited_kernel_mode == 1 {
+        // Kernel is still ENFORCE. The old ticket table was purged on
+        // disconnect/REGISTER, so any pre-approval cache is NEW at next_epoch.
+        set_daemon_mode(DaemonMode::Enforce);
         eprintln!(
-            "{}[INFO] teald: Started in DRAIN mode. Absorbing boot storm...",
-            ktime_prefix()
+            "{}[INFO] teald: Restored ENFORCE from kernel REGISTER, epoch={}",
+            ktime_prefix(), next_epoch
         );
+        if let Err(e) = preload_silent_directory_tickets(&nl_tx).await {
+            eprintln!("{}[WARN] ENFORCE recovery ticket preload failed: {e}", ktime_prefix());
+        }
+    } else {
+        let nl_tx_monitor = nl_tx.clone();
 
-        // ★ ここで silent_io かつ prefix: なディレクトリ包括チケットを一括投入！
-        if let Err(e) = preload_silent_directory_tickets(&nl_tx_monitor).await {
+        // ==============================================================
+        // ログストーム収束監視タスク (Drain -> Audit for AUDIT-only boot)
+        // ==============================================================
+        tokio::spawn(async move {
             eprintln!(
-                "{}[WARN] Failed to preload directory tickets: {}",
-                ktime_prefix(),
-                e
+                "{}[INFO] teald: Started in DRAIN mode. Absorbing boot storm...",
+                ktime_prefix()
             );
-        }
 
-        // 1. 起動直後の過渡期を無条件待機 (この間にチケットがカーネルに定着する)
-        tokio::time::sleep(INIT_WAIT).await;
-
-        eprintln!(
-            "{}[INFO] teald: Monitoring Netlink buffer settle...",
-            ktime_prefix()
-        );
-        let mut settled_consecutive = 0;
-        let mut interval = tokio::time::interval(POLL_INTERVAL);
-
-        // 監視タスク専用の前回ドロップ数保持（admin.rs と競合させない）
-        let (_, mut prev_drops) = get_netlink_socket_metrics();
-
-        loop {
-            interval.tick().await;
-
-            let (usage_pct, current_drops) = get_netlink_socket_metrics();
-            let drops_delta = current_drops.saturating_sub(prev_drops);
-            prev_drops = current_drops;
-
-            // バッファ使用率が 5% 未満、かつ新たなパケットドロップが 0
-            if usage_pct < SETTLED_BUFFER_THRESHOLD_PCT && drops_delta == 0 {
-                settled_consecutive += 1;
-
-                if settled_consecutive >= SETTLED_CONSECUTIVE_THRESHOLD {
-                    eprintln!(
-                        "{}[INFO] teald: Log storm settled. Transitioning to AUDIT mode.",
-                        ktime_prefix()
-                    );
-
-                    // モードを AUDIT に切り替え（worker/audit が通常ログ処理を開始）
-                    set_daemon_mode(DaemonMode::Audit);
-                    break;
-                }
-            } else {
-                settled_consecutive = 0;
+            // ★ ここで silent_io かつ prefix: なディレクトリ包括チケットを一括投入！
+            if let Err(e) = preload_silent_directory_tickets(&nl_tx_monitor).await {
+                eprintln!(
+                    "{}[WARN] Failed to preload directory tickets: {}",
+                    ktime_prefix(),
+                    e
+                );
             }
-        }
-    });
+
+            // 1. 起動直後の過渡期を無条件待機 (この間にチケットがカーネルに定着する)
+            tokio::time::sleep(INIT_WAIT).await;
+
+            eprintln!(
+                "{}[INFO] teald: Monitoring Netlink buffer settle...",
+                ktime_prefix()
+            );
+            let mut settled_consecutive = 0;
+            let mut interval = tokio::time::interval(POLL_INTERVAL);
+
+            // 監視タスク専用の前回ドロップ数保持（admin.rs と競合させない）
+            let (_, mut prev_drops) = get_netlink_socket_metrics();
+
+            loop {
+                interval.tick().await;
+
+                let (usage_pct, current_drops) = get_netlink_socket_metrics();
+                let drops_delta = current_drops.saturating_sub(prev_drops);
+                prev_drops = current_drops;
+
+                // バッファ使用率が 5% 未満、かつ新たなパケットドロップが 0
+                if usage_pct < SETTLED_BUFFER_THRESHOLD_PCT && drops_delta == 0 {
+                    settled_consecutive += 1;
+
+                    if settled_consecutive >= SETTLED_CONSECUTIVE_THRESHOLD {
+                        eprintln!(
+                            "{}[INFO] teald: Log storm settled. Transitioning to AUDIT mode.",
+                            ktime_prefix()
+                        );
+
+                        // モードを AUDIT に切り替え（worker/audit が通常ログ処理を開始）
+                        set_daemon_mode(DaemonMode::Audit);
+                        break;
+                    }
+                } else {
+                    settled_consecutive = 0;
+                }
+            }
+        });
+    }
 
     // メインワーカー起動へ
     let worker_result = run_workers(nl_tx, rx_decision, rx_audit, listener).await;

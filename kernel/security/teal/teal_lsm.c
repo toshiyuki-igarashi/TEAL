@@ -80,7 +80,7 @@
  */
 enum teal_nl_commands {
     TEAL_CMD_UNSPEC = 0,
-    TEAL_CMD_REGISTER,      // 1: User -> Kernel: tealdのアタッチ（AUDITモード開始）
+    TEAL_CMD_REGISTER,      // 1: User -> Kernel: tealdのアタッチ（実効モードは変更しない）
     TEAL_CMD_REQ,           // 2: Kernel -> User: 承認要求 (Slow Path)
     TEAL_CMD_INFO,          // 3: Kernel -> User: 状態通知 (Fast Path)
     TEAL_CMD_APPROVE,       // 4: User -> Kernel: 許可
@@ -165,6 +165,7 @@ enum teal_nl_attrs {
     TEAL_ATTR_GUARD_NEXT_EPOCH = 54,     // u32 (STATUS reply)
     TEAL_ATTR_GUARD_ACTIVE_SHA256 = 55, // binary[32] (READY active only)
     TEAL_ATTR_GUARD_COMMIT_VERSION = 56, // u16 REGISTER capability
+    TEAL_ATTR_RUNTIME_MODE = 57,        // u32 REGISTER: 0=AUDIT, 1=ENFORCE
 
     __TEAL_ATTR_MAX,
 };
@@ -221,6 +222,7 @@ static const struct nla_policy teal_nl_policy[TEAL_ATTR_MAX + 1] = {
     [TEAL_ATTR_GUARD_NEXT_EPOCH] = { .type = NLA_U32 },
     [TEAL_ATTR_GUARD_ACTIVE_SHA256] = { .type = NLA_BINARY, .len = 32 },
     [TEAL_ATTR_GUARD_COMMIT_VERSION] = { .type = NLA_U16 },
+    [TEAL_ATTR_RUNTIME_MODE] = { .type = NLA_U32 },
 };
 
 struct teal_request {
@@ -698,6 +700,13 @@ teal_task_meta_of(const struct task_struct *task)
 // --- Rust連携用ポインタ ---
 static int (*teal_decision_maker)(int event_type, void *ctx) = NULL;
 static void (*teal_configurator)(int mode) = NULL;
+/* Userland MODE_SWITCH values, distinct from TEAL_MODE_* request lane bits.
+ * Kernel owns this latch across teald disconnect/re-REGISTER. Only an
+ * authenticated MODE_SWITCH changes it. Initial state is AUDIT.
+ */
+#define TEAL_RUNTIME_AUDIT 0
+#define TEAL_RUNTIME_ENFORCE 1
+static atomic_t teal_runtime_mode = ATOMIC_INIT(TEAL_RUNTIME_AUDIT);
 
 void teal_register_decision_maker(int (*callback)(int, void*)) {
     teal_decision_maker = callback;
@@ -712,14 +721,19 @@ void teal_unregister_decision_maker(void) {
 EXPORT_SYMBOL(teal_unregister_decision_maker);
 
 void teal_register_configurator(void (*callback)(int)) {
-    pr_info("[teal] register configurator: %ps\n", callback);
-    teal_configurator = callback;
+    int mode;
 
-    /* 初期状態を STOP に揃える */
-    if (teal_configurator) {
-        pr_info("[teal] init configurator with STOP(0)\n");
-        teal_configurator(0);
-    }
+    /* Do not silently reset ENFORCE if the Rust module re-registers its
+     * configurator. Serialize with MODE_SWITCH and read the kernel latch.
+     */
+    mutex_lock(&teal_daemon_lifecycle_mutex);
+    teal_configurator = callback;
+    mode = atomic_read(&teal_runtime_mode);
+    pr_info("[teal] register configurator: %ps; restore mode=%s\n",
+            callback, mode == TEAL_RUNTIME_ENFORCE ? "ENFORCE" : "AUDIT");
+    if (callback)
+        callback(mode);
+    mutex_unlock(&teal_daemon_lifecycle_mutex);
 }
 EXPORT_SYMBOL(teal_register_configurator);
 
@@ -2247,6 +2261,9 @@ static int teal_nl_send_register_reply(struct genl_info *info, u32 next_epoch)
                           TEAL_GUARD_FORMAT_VERSION);
     if (!ret)
         ret = nla_put_u16(reply, TEAL_ATTR_GUARD_COMMIT_VERSION, 1);
+    if (!ret)
+        ret = nla_put_u32(reply, TEAL_ATTR_RUNTIME_MODE,
+                          (u32)atomic_read(&teal_runtime_mode));
     if (ret) {
         genlmsg_cancel(reply, hdr);
         nlmsg_free(reply);
@@ -2671,6 +2688,10 @@ static int teal_nl_recv_mode_switch(struct sk_buff *skb, struct genl_info *info)
         goto out_mode;
     }
     teal_configurator(mode);
+    /* This is the only netlink control path changing the runtime latch.
+     * Lifecycle mutex also protects REGISTER's coherent mode snapshot.
+     */
+    atomic_set(&teal_runtime_mode, mode);
     pr_info("TEAL: Mode switched to %s by teald.\n",
             mode ? "ENFORCE" : "AUDIT");
     rc = 0;

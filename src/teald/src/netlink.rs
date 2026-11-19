@@ -56,6 +56,8 @@ static RX_PORTID: AtomicU32 = AtomicU32::new(0);
 static KERNEL_NEXT_EPOCH: AtomicU32 = AtomicU32::new(0);
 static KERNEL_GUARD_VERSION: AtomicU32 = AtomicU32::new(0);
 static KERNEL_GUARD_COMMIT_VERSION: AtomicU32 = AtomicU32::new(0);
+// u32::MAX = not yet negotiated. Never assume AUDIT on missing data.
+static KERNEL_RUNTIME_MODE: AtomicU32 = AtomicU32::new(u32::MAX);
 static NEXT_SEQ: AtomicU32 = AtomicU32::new(1000);
 
 pub fn kernel_next_epoch() -> u32 {
@@ -64,6 +66,14 @@ pub fn kernel_next_epoch() -> u32 {
 
 pub fn kernel_guard_version() -> u32 {
     KERNEL_GUARD_VERSION.load(Ordering::Acquire)
+}
+
+/// Runtime mode returned by the kernel's RX REGISTER (0=AUDIT, 1=ENFORCE).
+/// This is NOT DaemonMode's internal numeric representation.
+pub fn kernel_runtime_mode() -> Result<u32> {
+    let mode = KERNEL_RUNTIME_MODE.load(Ordering::Acquire);
+    anyhow::ensure!(mode <= 1, "kernel REGISTER runtime mode was not negotiated");
+    Ok(mode)
 }
 
 fn ensure_guard_supported() -> Result<()> {
@@ -98,6 +108,19 @@ fn parse_guard_capability(msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<u16> {
         }
     }
     Ok(0) // Older kernel: staging operations not available.
+}
+
+fn parse_register_runtime_mode(msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<u32> {
+    for attr in msg.get_attr_handle().iter() {
+        if attr.nla_type.nla_type == TealAttr::RuntimeMode {
+            let bytes: [u8; 4] = attr.nla_payload.as_ref().try_into()
+                .map_err(|_| anyhow::anyhow!("invalid REGISTER runtime mode length"))?;
+            let mode = u32::from_ne_bytes(bytes);
+            anyhow::ensure!(mode <= 1, "invalid kernel runtime mode: {mode}");
+            return Ok(mode);
+        }
+    }
+    anyhow::bail!("kernel REGISTER reply missing RuntimeMode (update kernel first)")
 }
 
 fn parse_register_epoch(msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<u32> {
@@ -206,6 +229,7 @@ pub enum TealAttr {
     GuardNextEpoch = 54,
     GuardActiveSha256 = 55,
     GuardCommitVersion = 56,
+    RuntimeMode = 57,
 }
 impl NlAttrType for TealAttr {}
 
@@ -730,7 +754,11 @@ pub async fn init_socket() -> Result<(
                     parse_guard_commit_capability(&genl)? as u32,
                     Ordering::Release,
                 );
-                break parse_register_epoch(&genl)?;
+                let next_epoch = parse_register_epoch(&genl)?;
+                // Required: no implicit AUDIT fallback on old/invalid kernel.
+                let runtime_mode = parse_register_runtime_mode(&genl)?;
+                KERNEL_RUNTIME_MODE.store(runtime_mode, Ordering::Release);
+                break next_epoch;
             }
             NlPayload::Payload(_) => continue,
             _ => continue, // Successful ACK may arrive before/after reply.
@@ -843,8 +871,8 @@ pub async fn init_socket() -> Result<(
         .set(nl_tx.clone())
         .map_err(|_| anyhow::anyhow!("PAM Netlink writer registered more than once"))?;
 
-    // --- 4. 初期モード同期 ---
-    nl_tx.send_mode_switch(0).await?;
+    // RX REGISTER supplied the kernel-owned runtime mode. Never send
+    // MODE_SWITCH(0) at daemon startup: this would silently disable ENFORCE.
 
     // --- 5. 受信スレッドの起動 ---
     let (tx_decision, rx_decision) = mpsc::channel(1024);
@@ -1985,6 +2013,23 @@ mod ticket_issue_flags_tests {
     use super::*;
 
     #[test]
+    fn register_mode_is_required_and_strictly_validated() {
+        fn reply(mode: Option<&[u8]>) -> Genlmsghdr<TealCmd, TealAttr> {
+            let mut attrs = GenlBuffer::new();
+            if let Some(bytes) = mode {
+                attrs.push(Nlattr::new(false, false, TealAttr::RuntimeMode, bytes)
+                    .expect("build runtime mode attr"));
+            }
+            Genlmsghdr::new(TealCmd::Register, 1, attrs)
+        }
+        assert!(parse_register_runtime_mode(&reply(None)).is_err());
+        assert_eq!(parse_register_runtime_mode(&reply(Some(&0u32.to_ne_bytes()))).unwrap(), 0);
+        assert_eq!(parse_register_runtime_mode(&reply(Some(&1u32.to_ne_bytes()))).unwrap(), 1);
+        assert!(parse_register_runtime_mode(&reply(Some(&2u32.to_ne_bytes()))).is_err());
+        assert!(parse_register_runtime_mode(&reply(Some(&[1u8]))).is_err());
+    }
+
+    #[test]
     fn ordinary_and_suppression_tickets_have_no_session_binding() {
         for flags in [0, 1, 1 << 2, 1 << 4] {
             assert_eq!(ticket_wire_flags(flags).unwrap(), flags);
@@ -2194,7 +2239,7 @@ mod guard_staging_live_tests {
         );
 
         // init_socket uses the same RX/TX REGISTER, version negotiation and
-        // authenticated TX worker as normal teald. It switches to AUDIT mode.
+        // authenticated TX worker as normal teald. No mode change on REGISTER.
         let (writer, _rx_decision, _rx_audit) = init_socket().await?;
         anyhow::ensure!(
             kernel_guard_version() == 1,
