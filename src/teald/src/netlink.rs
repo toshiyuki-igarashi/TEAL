@@ -5,7 +5,7 @@
  * Copyright (c) 2026 Toshiyuki Igarashi
  */
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use neli::consts::genl::{Cmd, NlAttrType};
 use neli::consts::nl::{NlmF, NlmFFlags};
 use neli::consts::socket::NlFamily;
@@ -749,6 +749,56 @@ impl NlWriter {
     }
 }
 
+// The control (TX) socket receives all ACKs and GUARD_STATUS replies.
+// SO_RCVBUF is per-socket: the large RX socket buffer does not cover TX.
+fn configure_tx_receive_buffer(sock: &NlSocketHandle) -> Result<i32> {
+    const TX_RCVBUF_BYTES: i32 = 4 * 1024 * 1024;
+    let fd = sock.as_raw_fd();
+    let optlen = std::mem::size_of::<i32>() as libc::socklen_t;
+    let arg = (&TX_RCVBUF_BYTES as *const i32).cast::<libc::c_void>();
+    let forced = unsafe {
+        libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_RCVBUFFORCE, arg, optlen)
+    };
+    if forced != 0 {
+        // CAP_NET_ADMIN may be absent: try an ordinary SO_RCVBUF instead.
+        let ordinary = unsafe {
+            libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_RCVBUF, arg, optlen)
+        };
+        anyhow::ensure!(
+            ordinary == 0,
+            "TX socket receive-buffer setup failed: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    let mut effective: i32 = 0;
+    let mut actual_len = optlen;
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVBUF,
+            (&mut effective as *mut i32).cast::<libc::c_void>(),
+            &mut actual_len,
+        )
+    };
+    anyhow::ensure!(
+        rc == 0 && actual_len == optlen && effective > 0,
+        "TX SO_RCVBUF verification failed: {}",
+        std::io::Error::last_os_error()
+    );
+    Ok(effective)
+}
+
+// ENOBUFS on recvmsg means Netlink delivery was lost. Only read-only
+// GUARD_STATUS can be safely reissued; do NOT blindly retry COMMIT/REUSE/READY.
+fn is_netlink_receive_overrun(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.raw_os_error() == Some(libc::ENOBUFS))
+    })
+}
+
 // ==========================================
 // 3. ソケット初期化とメイン処理
 // ==========================================
@@ -850,8 +900,15 @@ pub async fn init_socket() -> Result<(
         next_epoch
     );
 
-    // RXソケットとは独立したTXソケット
+    // RXとは独立したTXソケット。GUARD_STATUS/ACKはこのソケットで受信する。
+    // RX受信バッファの16MB設定はTXには適用されないため別途設定する。
     let mut tx_sock = NlSocketHandle::connect(NlFamily::Generic, None, &[])?;
+    let tx_rcvbuf = configure_tx_receive_buffer(&tx_sock)?;
+    eprintln!(
+        "{}[INFO] Netlink TX SO_RCVBUF effective={} bytes",
+        ktime_prefix(),
+        tx_rcvbuf
+    );
 
     // TX REGISTER
     let mut attrs = GenlBuffer::new();
@@ -1356,13 +1413,27 @@ pub async fn netlink_send_worker_loop(
                 let _ = ack.send(result);
             }
             NetlinkSendRequest::GuardStatus(ack) => {
-                let seq = NEXT_SEQ.fetch_add(1, Ordering::Relaxed);
                 let result = (|| -> Result<GuardStatus> {
-                    let mut packet = build_guard_status_packet(family_id)?;
-                    packet.nl_seq = seq;
                     let mut sock = sock_mutex.lock().unwrap();
-                    sock.send(packet)?;
-                    wait_guard_status(&sock, seq, family_id)
+                    // Query is idempotent. A fresh sequence number is needed
+                    // after ENOBUFS: the previous response may have been lost.
+                    for attempt in 1..=3 {
+                        let seq = NEXT_SEQ.fetch_add(1, Ordering::Relaxed);
+                        let mut packet = build_guard_status_packet(family_id)?;
+                        packet.nl_seq = seq;
+                        sock.send(packet)?;
+                        match wait_guard_status(&sock, seq, family_id) {
+                            Ok(status) => return Ok(status),
+                            Err(error) if attempt < 3 && is_netlink_receive_overrun(&error) => {
+                                eprintln!(
+                                    "{}[WARN] GUARD_STATUS Netlink ENOBUFS: lost response; retrying read-only query ({}/3)",
+                                    ktime_prefix(), attempt
+                                );
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    unreachable!("three guarded GUARD_STATUS attempts completed")
                 })();
                 let _ = ack.send(result);
             }
@@ -1767,7 +1838,7 @@ fn wait_guard_status(sock: &NlSocketHandle, seq: u32, family_id: u16) -> Result<
             if err.kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
-            anyhow::bail!("GUARD_STATUS recvmsg failed: {err}");
+            return Err(err).context("GUARD_STATUS recvmsg failed");
         }
         if n == 0 {
             anyhow::bail!("GUARD_STATUS socket closed");
@@ -2669,6 +2740,21 @@ mod guard_staging_live_tests {
         if let Err(error) = run_live_test().await {
             panic!("Guard Netlink live integration failed: {error:#}");
         }
+    }
+}
+
+#[cfg(test)]
+mod netlink_overrun_tests {
+    use super::*;
+
+    #[test]
+    fn retries_only_netlink_enobufs_error() {
+        let overrun = anyhow::Error::new(std::io::Error::from_raw_os_error(libc::ENOBUFS))
+            .context("GUARD_STATUS recvmsg failed");
+        assert!(is_netlink_receive_overrun(&overrun));
+        let timeout = anyhow::Error::new(std::io::Error::from_raw_os_error(libc::EAGAIN))
+            .context("GUARD_STATUS recvmsg failed");
+        assert!(!is_netlink_receive_overrun(&timeout));
     }
 }
 
