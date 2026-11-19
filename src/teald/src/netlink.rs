@@ -58,6 +58,7 @@ static KERNEL_GUARD_VERSION: AtomicU32 = AtomicU32::new(0);
 static KERNEL_GUARD_COMMIT_VERSION: AtomicU32 = AtomicU32::new(0);
 // u32::MAX = not yet negotiated. Never assume AUDIT on missing data.
 static KERNEL_RUNTIME_MODE: AtomicU32 = AtomicU32::new(u32::MAX);
+static KERNEL_READY_VERSION: AtomicU32 = AtomicU32::new(0);
 static NEXT_SEQ: AtomicU32 = AtomicU32::new(1000);
 
 pub fn kernel_next_epoch() -> u32 {
@@ -108,6 +109,25 @@ fn parse_guard_capability(msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<u16> {
         }
     }
     Ok(0) // Older kernel: staging operations not available.
+}
+
+fn parse_register_ready_version(msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<u16> {
+    for attr in msg.get_attr_handle().iter() {
+        if attr.nla_type.nla_type == TealAttr::ReadyVersion {
+            let version = u16::from_ne_bytes(attr.nla_payload.as_ref().try_into()?);
+            anyhow::ensure!(version == 1, "unsupported kernel READY handshake version={version}");
+            return Ok(version);
+        }
+    }
+    anyhow::bail!("kernel REGISTER missing READY handshake capability (update kernel first)")
+}
+
+fn ensure_ready_supported() -> Result<()> {
+    anyhow::ensure!(
+        KERNEL_READY_VERSION.load(Ordering::Acquire) == 1,
+        "kernel does not advertise DAEMON_READY handshake v1"
+    );
+    Ok(())
 }
 
 fn parse_register_runtime_mode(msg: &Genlmsghdr<TealCmd, TealAttr>) -> Result<u32> {
@@ -163,6 +183,7 @@ pub enum TealCmd {
     GuardAdd = 12,
     GuardAbort = 13,
     GuardStatus = 14,
+    DaemonReady = 15,
 }
 impl Cmd for TealCmd {}
 
@@ -230,6 +251,8 @@ pub enum TealAttr {
     GuardActiveSha256 = 55,
     GuardCommitVersion = 56,
     RuntimeMode = 57,
+    RecoveryState = 58,
+    ReadyVersion = 59,
 }
 impl NlAttrType for TealAttr {}
 
@@ -280,6 +303,7 @@ pub struct GuardStatus {
     pub last_epoch: u32,
     pub guard_epoch: u32,
     pub guard_state: u8, // 0=UNINITIALIZED, 1=READY, 2=INVALID
+    pub daemon_ready: bool, // kernel RECOVERING=0, READY=1
     pub active_sha256: Option<[u8; 32]>,
     pub staged: bool,
     pub staged_tx_id: Option<u64>,
@@ -455,6 +479,11 @@ pub enum NetlinkSendRequest {
     },
     GuardAbort(u64, oneshot::Sender<Result<()>>),
     GuardStatus(oneshot::Sender<Result<GuardStatus>>),
+    DaemonReady {
+        epoch: u32,
+        sha256: [u8; 32],
+        ack: oneshot::Sender<Result<()>>,
+    },
 }
 
 // --- [構造体] 軽量化された NlWriter ---
@@ -617,6 +646,51 @@ impl NlWriter {
             .map_err(|_| anyhow::anyhow!("Guard worker exited"))?
     }
 
+    /// Complete RECOVERING only after policy and worker initialization.
+    /// READY is bound to the active committed Epoch and Guard SHA-256.
+    pub async fn daemon_ready_verified(
+        &self,
+        epoch: u32,
+        expected_sha256: [u8; 32],
+    ) -> Result<GuardStatus> {
+        ensure_ready_supported()?;
+        anyhow::ensure!(epoch != 0, "DAEMON_READY requires a nonzero Epoch");
+        let before = self.guard_status().await?;
+        anyhow::ensure!(
+            before.current_epoch == epoch
+                && before.last_epoch == epoch
+                && before.guard_epoch == epoch
+                && before.guard_state == 1
+                && !before.staged
+                && before.active_sha256 == Some(expected_sha256),
+            "DAEMON_READY precondition failed: epoch={epoch}, kernel={before:?}"
+        );
+        let (ack, rx) = oneshot::channel();
+        self.tx
+            .send(NetlinkSendRequest::DaemonReady {
+                epoch,
+                sha256: expected_sha256,
+                ack,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("Failed to queue DAEMON_READY"))?;
+        tokio::time::timeout(Duration::from_secs(5), rx)
+            .await
+            .map_err(|_| anyhow::anyhow!("DAEMON_READY ACK timed out"))?
+            .map_err(|_| anyhow::anyhow!("Netlink sender stopped before DAEMON_READY ACK"))??;
+        let after = self.guard_status().await?;
+        anyhow::ensure!(
+            after.daemon_ready
+                && after.current_epoch == epoch
+                && after.last_epoch == epoch
+                && after.guard_epoch == epoch
+                && after.active_sha256 == Some(expected_sha256)
+                && !after.staged,
+            "DAEMON_READY ACK received but kernel READY state mismatched: {after:?}"
+        );
+        Ok(after)
+    }
+
     /// COMMIT is valid only after all BEGIN/ADD ACKs. On timeout the result
     /// is UNKNOWN: use GUARD_STATUS to reconcile, not a blind retry.
     pub async fn guard_commit(&self, epoch: u32, tx_id: u64, sha256: [u8; 32]) -> Result<()> {
@@ -757,6 +831,8 @@ pub async fn init_socket() -> Result<(
                 let next_epoch = parse_register_epoch(&genl)?;
                 // Required: no implicit AUDIT fallback on old/invalid kernel.
                 let runtime_mode = parse_register_runtime_mode(&genl)?;
+                let ready_version = parse_register_ready_version(&genl)?;
+                KERNEL_READY_VERSION.store(ready_version as u32, Ordering::Release);
                 KERNEL_RUNTIME_MODE.store(runtime_mode, Ordering::Release);
                 break next_epoch;
             }
@@ -1270,6 +1346,15 @@ pub async fn netlink_send_worker_loop(
                 );
                 let _ = ack.send(result);
             }
+            NetlinkSendRequest::DaemonReady { epoch, sha256, ack } => {
+                let result = send_guard_command(
+                    &sock_mutex,
+                    NEXT_SEQ.fetch_add(1, Ordering::Relaxed),
+                    build_daemon_ready_packet(family_id, epoch, &sha256),
+                    "DAEMON_READY",
+                );
+                let _ = ack.send(result);
+            }
             NetlinkSendRequest::GuardStatus(ack) => {
                 let seq = NEXT_SEQ.fetch_add(1, Ordering::Relaxed);
                 let result = (|| -> Result<GuardStatus> {
@@ -1338,7 +1423,8 @@ pub async fn netlink_send_worker_loop(
                     | NetlinkSendRequest::GuardStatus(..)
                     | NetlinkSendRequest::ModeSwitch(..)
                     | NetlinkSendRequest::CommitGuard { .. }
-                    | NetlinkSendRequest::ReuseGuard { .. } => unreachable!(),
+                    | NetlinkSendRequest::ReuseGuard { .. }
+                    | NetlinkSendRequest::DaemonReady { .. } => unreachable!(),
                 };
                 match packet {
                     Ok(packet) => {
@@ -1531,6 +1617,18 @@ fn build_guard_reuse_packet(family_id: u16, epoch: u32, sha256: &[u8; 32]) -> Re
     Ok(guard_packet!(family_id, TealCmd::PolicyUpdate, attrs, true))
 }
 
+fn build_daemon_ready_packet(
+    family_id: u16,
+    epoch: u32,
+    sha256: &[u8; 32],
+) -> Result<GuardPacket> {
+    anyhow::ensure!(epoch != 0, "invalid DAEMON_READY Epoch=0");
+    let mut attrs = GenlBuffer::new();
+    guard_attr_bytes!(attrs, TealAttr::Epoch, epoch.to_ne_bytes().as_ref());
+    guard_attr_bytes!(attrs, TealAttr::GuardSha256, sha256.as_ref());
+    Ok(guard_packet!(family_id, TealCmd::DaemonReady, attrs, true))
+}
+
 fn build_guard_status_packet(family_id: u16) -> Result<GuardPacket> {
     Ok(guard_packet!(
         family_id,
@@ -1604,6 +1702,11 @@ fn parse_guard_status_response(
         last_epoch: get_u32(49)?,
         guard_epoch: get_u32(50)?,
         guard_state: get_u8(51)?,
+        daemon_ready: match get_u8(58)? {
+            0 => false,
+            1 => true,
+            value => anyhow::bail!("invalid kernel RECOVERY_STATE={value}"),
+        },
         active_sha256: None,
         staged,
         staged_tx_id: None,
@@ -2057,6 +2160,21 @@ mod guard_staging_wire_tests {
         }
     }
     #[test]
+    fn ready_capability_is_required_and_versioned() {
+        fn reply(version: Option<&[u8]>) -> Genlmsghdr<TealCmd, TealAttr> {
+            let mut attrs = GenlBuffer::new();
+            if let Some(value) = version {
+                attrs.push(Nlattr::new(false, false, TealAttr::ReadyVersion, value).unwrap());
+            }
+            Genlmsghdr::new(TealCmd::Register, 1, attrs)
+        }
+        assert!(parse_register_ready_version(&reply(None)).is_err());
+        assert_eq!(parse_register_ready_version(&reply(Some(&1u16.to_ne_bytes()))).unwrap(), 1);
+        assert!(parse_register_ready_version(&reply(Some(&2u16.to_ne_bytes()))).is_err());
+        assert!(parse_register_ready_version(&reply(Some(&[1u8]))).is_err());
+    }
+
+    #[test]
     fn accepts_a_normalized_path_and_exact_packet() {
         let e = entry();
         assert_eq!(e.validate().unwrap(), GUARD_RECORD_OVERHEAD + 13);
@@ -2144,12 +2262,22 @@ mod guard_staging_wire_tests {
         push_attr(&mut pkt, 50, &0u32.to_ne_bytes());
         push_attr(&mut pkt, 51, &[0u8]);
         push_attr(&mut pkt, 52, &[0u8]);
+        push_attr(&mut pkt, 58, &[0u8]);
         let size = pkt.len() as u32;
         pkt[0..4].copy_from_slice(&size.to_ne_bytes());
         let s = parse_guard_status_response(&pkt, 32, 700).unwrap().unwrap();
         assert_eq!(s.last_epoch, 4);
         assert_eq!(s.guard_epoch, 0);
         assert!(!s.staged);
+        assert!(!s.daemon_ready);
+        let mut ready_packet = pkt.clone();
+        let ready_offset = ready_packet
+            .windows(4)
+            .position(|w| w == [5, 0, 58, 0])
+            .expect("RECOVERY_STATE TLV");
+        ready_packet[ready_offset + 4] = 1;
+        assert!(parse_guard_status_response(&ready_packet, 32, 700)
+            .unwrap().unwrap().daemon_ready);
         assert!(parse_guard_status_response(&pkt, 32, 701)
             .unwrap()
             .is_none());
@@ -2157,6 +2285,26 @@ mod guard_staging_wire_tests {
         let size = pkt.len() as u32;
         pkt[0..4].copy_from_slice(&size.to_ne_bytes());
         assert!(parse_guard_status_response(&pkt, 32, 700).is_err());
+    }
+
+    #[test]
+    fn daemon_ready_packet_requires_epoch_and_binds_digest() {
+        assert!(build_daemon_ready_packet(32, 0, &[0u8; 32]).is_err());
+        let digest = [0x51u8; 32];
+        let packet = build_daemon_ready_packet(32, 9, &digest).unwrap();
+        match packet.nl_payload {
+            NlPayload::Payload(genl) => {
+                assert_eq!(genl.cmd, TealCmd::DaemonReady);
+                let attrs = genl.get_attr_handle();
+                assert!(attrs.iter().any(|attr|
+                    attr.nla_type.nla_type == TealAttr::Epoch
+                        && attr.nla_payload.as_ref() == 9u32.to_ne_bytes()));
+                assert!(attrs.iter().any(|attr|
+                    attr.nla_type.nla_type == TealAttr::GuardSha256
+                        && attr.nla_payload.as_ref() == digest));
+            }
+            _ => panic!("expected DAEMON_READY packet"),
+        }
     }
 
     #[test]

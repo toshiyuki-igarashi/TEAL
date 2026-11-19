@@ -8,7 +8,7 @@
 use std::time::Duration;
 use tokio::net::UnixListener;
 use tokio::signal;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -69,19 +69,30 @@ pub async fn run_workers(
     rx_decision: mpsc::Receiver<TealNetlinkMessage>, // ★ Decision用受信
     rx_audit: mpsc::Receiver<TealNetlinkMessage>,    // ★ Audit用受信
     listener: UnixListener,
+    inherited_kernel_mode: u32,
+    startup_ready_tx: oneshot::Sender<()>,
 ) -> Result<()> {
     let (internal_tx, internal_rx) = mpsc::channel::<InternalEvent>(5000);
     let admin_tx = internal_tx.clone();
 
+    // Worker tasks acknowledge entry into their event loops before READY.
+    // Pending requests remain Guard-classified in the kernel until handshake ACK.
+    let (audit_started_tx, audit_started_rx) = oneshot::channel();
+    let (decision_started_tx, decision_started_rx) = oneshot::channel();
+    let (admin_started_tx, admin_started_rx) = oneshot::channel();
+    let (admin_release_tx, admin_release_rx) = oneshot::channel();
+
     // ① Audit Worker
     let nl_tx_audit = nl_tx.clone();
     let audit_handle = tokio::spawn(async move {
+        let _ = audit_started_tx.send(());
         teald::worker::audit::audit_worker_loop(rx_audit, internal_rx, nl_tx_audit).await;
     });
 
     // ② Decision Worker
     let nl_tx_decision = nl_tx.clone();
     let decision_handle = tokio::spawn(async move {
+        let _ = decision_started_tx.send(());
         teald::worker::decision::decision_worker_loop(rx_decision, internal_tx, nl_tx_decision)
             .await;
     });
@@ -89,8 +100,46 @@ pub async fn run_workers(
     // ③ Admin Socket Worker (管理ソケット)
     let nl_tx_admin = nl_tx.clone();
     let admin_handle = tokio::spawn(async move {
-        teald::worker::admin::admin_socket_loop(listener, admin_tx, nl_tx_admin).await;
+        let _ = admin_started_tx.send(());
+        // Do not accept management commands while the kernel is RECOVERING.
+        if admin_release_rx.await.is_ok() {
+            teald::worker::admin::admin_socket_loop(listener, admin_tx, nl_tx_admin).await;
+        }
     });
+
+    tokio::try_join!(audit_started_rx, decision_started_rx, admin_started_rx)
+        .context("Worker startup failed before DAEMON_READY")?;
+
+    let snapshot = policy_snapshot();
+    let guard = compile_guard_manifest(&snapshot.bundle)
+        .context("Failed to compile Guard before DAEMON_READY")?;
+    if inherited_kernel_mode == 1 {
+        set_daemon_mode(DaemonMode::Enforce);
+    }
+    // ACK + GUARD_STATUS verification is mandatory. No mode downgrade on error.
+    if let Err(e) = nl_tx
+        .daemon_ready_verified(snapshot.epoch, guard.sha256)
+        .await
+    {
+        set_daemon_mode(DaemonMode::Drain);
+        return Err(e).context("DAEMON_READY handshake failed; kernel remains RECOVERING");
+    }
+    eprintln!(
+        "{}[INFO] DAEMON_READY confirmed: epoch={}, kernel_mode={}",
+        ktime_prefix(), snapshot.epoch,
+        if inherited_kernel_mode == 1 { "ENFORCE" } else { "AUDIT" }
+    );
+    // Management commands and startup preloading are released only after ACK.
+    let _ = admin_release_tx.send(());
+    let _ = startup_ready_tx.send(());
+    if inherited_kernel_mode == 1 {
+        let nl_tx_preload = nl_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = preload_silent_directory_tickets(&nl_tx_preload).await {
+                eprintln!("{}[WARN] ENFORCE recovery ticket preload failed: {e}", ktime_prefix());
+            }
+        });
+    }
 
     let mut terminate = signal::unix::signal(signal::unix::SignalKind::terminate())?;
     tokio::select! {
@@ -285,17 +334,13 @@ async fn main() -> Result<()> {
         start_pam_listener().await;
     });
 
+    // The startup monitor/preloader is dormant until the kernel confirms READY.
+    let (startup_ready_tx, startup_ready_rx) = oneshot::channel::<()>();
     if inherited_kernel_mode == 1 {
-        // Kernel is still ENFORCE. The old ticket table was purged on
-        // disconnect/REGISTER, so any pre-approval cache is NEW at next_epoch.
-        set_daemon_mode(DaemonMode::Enforce);
         eprintln!(
-            "{}[INFO] teald: Restored ENFORCE from kernel REGISTER, epoch={}",
+            "{}[INFO] ENFORCE recovery: waiting for worker startup and DAEMON_READY, epoch={}",
             ktime_prefix(), next_epoch
         );
-        if let Err(e) = preload_silent_directory_tickets(&nl_tx).await {
-            eprintln!("{}[WARN] ENFORCE recovery ticket preload failed: {e}", ktime_prefix());
-        }
     } else {
         let nl_tx_monitor = nl_tx.clone();
 
@@ -303,6 +348,10 @@ async fn main() -> Result<()> {
         // ログストーム収束監視タスク (Drain -> Audit for AUDIT-only boot)
         // ==============================================================
         tokio::spawn(async move {
+            // No initial audit preload until handshake has completed.
+            if startup_ready_rx.await.is_err() {
+                return;
+            }
             eprintln!(
                 "{}[INFO] teald: Started in DRAIN mode. Absorbing boot storm...",
                 ktime_prefix()
@@ -359,7 +408,10 @@ async fn main() -> Result<()> {
     }
 
     // メインワーカー起動へ
-    let worker_result = run_workers(nl_tx, rx_decision, rx_audit, listener).await;
+    let worker_result = run_workers(
+        nl_tx, rx_decision, rx_audit, listener,
+        inherited_kernel_mode, startup_ready_tx,
+    ).await;
 
     // 通知システムの終了処理
     if let Some(runtime) = notification_runtime {

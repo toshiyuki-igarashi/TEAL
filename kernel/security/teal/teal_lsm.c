@@ -94,6 +94,7 @@ enum teal_nl_commands {
     TEAL_CMD_GUARD_ADD = 12,
     TEAL_CMD_GUARD_ABORT = 13,
     TEAL_CMD_GUARD_STATUS = 14,
+    TEAL_CMD_DAEMON_READY = 15, /* Epoch/Guard-bound recovery completion */
     __TEAL_CMD_MAX,
 };
 #define TEAL_CMD_MAX (__TEAL_CMD_MAX - 1)
@@ -166,6 +167,8 @@ enum teal_nl_attrs {
     TEAL_ATTR_GUARD_ACTIVE_SHA256 = 55, // binary[32] (READY active only)
     TEAL_ATTR_GUARD_COMMIT_VERSION = 56, // u16 REGISTER capability
     TEAL_ATTR_RUNTIME_MODE = 57,        // u32 REGISTER: 0=AUDIT, 1=ENFORCE
+    TEAL_ATTR_RECOVERY_STATE = 58,      // u8 STATUS: 0=RECOVERING, 1=READY
+    TEAL_ATTR_READY_VERSION = 59,       // u16 REGISTER: handshake version 1
 
     __TEAL_ATTR_MAX,
 };
@@ -223,6 +226,8 @@ static const struct nla_policy teal_nl_policy[TEAL_ATTR_MAX + 1] = {
     [TEAL_ATTR_GUARD_ACTIVE_SHA256] = { .type = NLA_BINARY, .len = 32 },
     [TEAL_ATTR_GUARD_COMMIT_VERSION] = { .type = NLA_U16 },
     [TEAL_ATTR_RUNTIME_MODE] = { .type = NLA_U32 },
+    [TEAL_ATTR_RECOVERY_STATE] = { .type = NLA_U8 },
+    [TEAL_ATTR_READY_VERSION] = { .type = NLA_U16 },
 };
 
 struct teal_request {
@@ -276,6 +281,7 @@ static int teal_nl_recv_guard_begin(struct sk_buff *skb, struct genl_info *info)
 static int teal_nl_recv_guard_add(struct sk_buff *skb, struct genl_info *info);
 static int teal_nl_recv_guard_abort(struct sk_buff *skb, struct genl_info *info);
 static int teal_nl_recv_guard_status(struct sk_buff *skb, struct genl_info *info);
+static int teal_nl_recv_daemon_ready(struct sk_buff *skb, struct genl_info *info);
 static void teal_guard_discard_staging(void);
 static int teal_guard_failure_decision(const struct teal_request *req,
                                        const char *reason, int send_rc);
@@ -354,6 +360,11 @@ static const struct genl_ops teal_nl_ops[] = {
         .doit = teal_nl_recv_guard_status,
         .policy = teal_nl_policy,
     },
+    {
+        .cmd = TEAL_CMD_DAEMON_READY,
+        .doit = teal_nl_recv_daemon_ready,
+        .policy = teal_nl_policy,
+    },
 };
 
 /*
@@ -373,6 +384,11 @@ static struct genl_family teal_nl_family = {
 /* tealdのポートID (0は未接続状態) */
 static atomic_t teal_daemon_rx_portid = ATOMIC_INIT(0);
 static atomic_t teal_daemon_tx_portid = ATOMIC_INIT(0);
+/* 0=RECOVERING/disconnected; 1=READY. Independent of AUDIT/ENFORCE.
+ * All 0->1 transitions require authorized DAEMON_READY with matching
+ * committed epoch/digest. A disconnect or epoch change closes the gate.
+ */
+static atomic_t teal_daemon_ready = ATOMIC_INIT(0);
 
 /*
  * REGISTER / NETLINK_URELEASE の状態遷移はこのspinlockで直列化する。
@@ -921,7 +937,8 @@ int teal_wait_for_approval(const char *action,
          * against the LAST COMPLETE Guard, never against staging data.
          */
         decision_rc = (teal_mode == TEAL_MODE_AUDIT) ? 0 :
-                      teal_guard_failure_decision(req, "SEND_FAILURE", rc);
+                      teal_guard_failure_decision(req,
+                          rc == -EAGAIN ? "RECOVERING" : "SEND_FAILURE", rc);
         kfree(req);
         return decision_rc;
     }
@@ -1265,6 +1282,14 @@ static int teal_req_enqueue(struct teal_request *req, u8 teal_mode)
     int rc;
     req->id = atomic64_inc_return(&teal_next_id);
 
+    /* Before READY, do not dispatch ENFORCE requests to a half-started
+     * daemon. The caller immediately classifies using the last active Guard.
+     * This gate is separate from the committed policy/current Epoch.
+     */
+    if (teal_mode != TEAL_MODE_AUDIT &&
+        !atomic_read(&teal_daemon_ready))
+        return -EAGAIN;
+
     if (teal_mode == TEAL_MODE_AUDIT) {
         req->flags |= TEAL_REQ_F_AUDIT;
         /* AUDITモード: リストに入れずに即送信 */
@@ -1366,7 +1391,7 @@ static int handle_ticket_add(struct teal_ticket_add_payload *ticket)
     mutex_lock(&teal_ticket_update_mutex);
 
     /* 3. epochの最終確認 */
-    if (ticket->epoch == 0 ||
+    if (!atomic_read(&teal_daemon_ready) || ticket->epoch == 0 ||
         ticket->epoch != (u32)atomic_read(&teal_current_epoch)) {
         ret = -ESTALE;
         goto err_unlock;
@@ -2205,6 +2230,8 @@ static int teal_nl_recv_guard_status(struct sk_buff *skb, struct genl_info *info
         nla_put_u32(reply, TEAL_ATTR_GUARD_EPOCH, guard_epoch) ||
         nla_put_u8(reply, TEAL_ATTR_GUARD_STATE, guard_state) ||
         nla_put_u8(reply, TEAL_ATTR_GUARD_STAGED, s ? 1 : 0) ||
+        nla_put_u8(reply, TEAL_ATTR_RECOVERY_STATE,
+                   (u8)atomic_read(&teal_daemon_ready)) ||
         (active && active->state == TEAL_GUARD_READY &&
          nla_put(reply, TEAL_ATTR_GUARD_ACTIVE_SHA256, 32,
                  active->sha256))) {
@@ -2237,6 +2264,64 @@ out_ticket:
     return rc;
 }
 
+/* The new daemon has finished Guard COMMIT and started its workers.
+ * A stale/forged ACK cannot complete recovery: the calling TX socket,
+ * the committed epoch, and the active Guard digest must all match.
+ */
+static int teal_nl_recv_daemon_ready(struct sk_buff *skb, struct genl_info *info)
+{
+    struct teal_mpa_guard_snapshot *active;
+    unsigned long flags;
+    u32 epoch;
+    int rc;
+
+    if (!info || !info->attrs[TEAL_ATTR_EPOCH] ||
+        !info->attrs[TEAL_ATTR_GUARD_SHA256] ||
+        nla_len(info->attrs[TEAL_ATTR_GUARD_SHA256]) != 32)
+        return -EINVAL;
+    epoch = nla_get_u32(info->attrs[TEAL_ATTR_EPOCH]);
+    if (!epoch)
+        return -EINVAL;
+
+    mutex_lock(&teal_daemon_lifecycle_mutex);
+    mutex_lock(&teal_ticket_update_mutex);
+    mutex_lock(&teal_guard_update_mutex);
+    rc = teal_nl_check_authorized(info);
+    if (rc)
+        goto out_ready;
+    active = rcu_dereference_protected(teal_guard_active,
+                        lockdep_is_held(&teal_guard_update_mutex));
+
+    /* The disconnect notifier is spinlock-only and can run while the
+     * lifecycle mutex is held. Publish READY under that SAME spinlock,
+     * otherwise a late READY might overwrite notifier's RECOVERING=0.
+     */
+    spin_lock_irqsave(&teal_daemon_state_lock, flags);
+    if (atomic_read(&teal_daemon_rx_portid) == 0 ||
+        (u32)atomic_read(&teal_daemon_tx_portid) != info->snd_portid ||
+        epoch != teal_last_epoch ||
+        epoch != (u32)atomic_read(&teal_current_epoch) ||
+        teal_guard_staging || !active ||
+        active->state != TEAL_GUARD_READY ||
+        active->epoch != epoch ||
+        memcmp(active->sha256,
+               nla_data(info->attrs[TEAL_ATTR_GUARD_SHA256]), 32)) {
+        rc = -ESTALE;
+    } else {
+        atomic_set(&teal_daemon_ready, 1);
+        rc = 0;
+    }
+    spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
+    if (!rc)
+        pr_info("TEAL: DAEMON_READY epoch=%u; normal decision requests enabled\n",
+                epoch);
+out_ready:
+    mutex_unlock(&teal_guard_update_mutex);
+    mutex_unlock(&teal_ticket_update_mutex);
+    mutex_unlock(&teal_daemon_lifecycle_mutex);
+    return rc;
+}
+
 /* REGISTERへの通常応答。TEAL_ATTR_EPOCHは次に使用すべきEpoch。 */
 static int teal_nl_send_register_reply(struct genl_info *info, u32 next_epoch)
 {
@@ -2264,6 +2349,8 @@ static int teal_nl_send_register_reply(struct genl_info *info, u32 next_epoch)
     if (!ret)
         ret = nla_put_u32(reply, TEAL_ATTR_RUNTIME_MODE,
                           (u32)atomic_read(&teal_runtime_mode));
+    if (!ret)
+        ret = nla_put_u16(reply, TEAL_ATTR_READY_VERSION, 1);
     if (ret) {
         genlmsg_cancel(reply, hdr);
         nlmsg_free(reply);
@@ -2354,6 +2441,8 @@ static int teal_nl_recv_register(struct sk_buff *skb,
         atomic64_inc(&teal_guard_daemon_generation);
         /* 旧teald接続のセッション台帳も破棄（新規PAM通知で再登録）。 */
         teal_verified_sessions_clear();
+        /* Close READY before invalidating the old Epoch and tickets. */
+        atomic_set(&teal_daemon_ready, 0);
         /* 旧セッションのキャッシュと待機要求を破棄 */
         atomic_set(&teal_current_epoch, 0);
         teal_flush_all_queues_locked();
@@ -2379,6 +2468,7 @@ out_ticket_unlock:
                 atomic_set(&teal_daemon_tx_portid, 0);
                 atomic_set(&teal_daemon_tgid, 0);
                 atomic_set(&teal_current_epoch, 0);
+                atomic_set(&teal_daemon_ready, 0);
             }
             spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
             goto out_lifecycle_unlock;
@@ -2448,6 +2538,8 @@ static int teal_nl_notifier(struct notifier_block *nb,
         atomic_set(&teal_daemon_tx_portid, 0);
         atomic_set(&teal_daemon_tgid, 0);
 
+        /* Fast-path tickets and normal decision service are both disabled. */
+        atomic_set(&teal_daemon_ready, 0);
         /* FAST PATHの旧チケット/Self-Bakingを即時失効 */
         atomic_set(&teal_current_epoch, 0);
 
@@ -2676,7 +2768,8 @@ static int teal_nl_recv_mode_switch(struct sk_buff *skb, struct genl_info *info)
         struct teal_mpa_guard_snapshot *active =
             rcu_dereference_protected(teal_guard_active,
                              lockdep_is_held(&teal_guard_update_mutex));
-        if (!active || active->state != TEAL_GUARD_READY ||
+        if (!atomic_read(&teal_daemon_ready) ||
+            !active || active->state != TEAL_GUARD_READY ||
             active->epoch != teal_last_epoch ||
             (u32)atomic_read(&teal_current_epoch) != teal_last_epoch) {
             rc = -EPERM;
@@ -2823,6 +2916,8 @@ static int teal_nl_recv_policy_update(struct sk_buff *skb,
                info->snd_portid != tx_portid) {
         rc = -EPERM;
     } else {
+        /* Every policy Epoch transition requires a new READY handshake. */
+        atomic_set(&teal_daemon_ready, 0);
         if (staged_commit) {
             next->entries = stage->entries;
             stage->entries = NULL;
@@ -3077,7 +3172,7 @@ static bool is_ticket_matched(struct teal_ticket_add_payload *ticket, u64 now,
 {
     u32 current_epoch = (u32)atomic_read(&teal_current_epoch);
 
-    if (current_epoch == 0 ||
+    if (!atomic_read(&teal_daemon_ready) || current_epoch == 0 ||
         READ_ONCE(ticket->epoch) != current_epoch) {
         return false;
     }

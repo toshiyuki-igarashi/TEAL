@@ -757,6 +757,7 @@ mod guard_verify_status_tests {
             last_epoch: epoch,
             guard_epoch: epoch,
             guard_state: 1,
+            daemon_ready: true,
             active_sha256: Some(digest),
             staged: false,
             staged_tx_id: None,
@@ -1927,7 +1928,8 @@ async fn execute_mgmt_ctl_core(
 async fn execute_start(nl_tx: &NlWriter) -> MgmtResult<MgmtOutcome> {
     let epoch = policy_snapshot().epoch;
     let guard = nl_tx.guard_status().await.map_err(|e| e.to_string())?;
-    if guard.guard_state != 1
+    if !guard.daemon_ready
+        || guard.guard_state != 1
         || guard.guard_epoch != epoch
         || guard.current_epoch != epoch
         || guard.last_epoch != epoch
@@ -2035,6 +2037,16 @@ async fn execute_policy_update(target_hash: &str, nl_tx: &NlWriter) -> MgmtResul
     commit_management(prepared.new_management);
 
     invalidate_old_approvals().await;
+    // COMMIT closed the kernel decision gate. Open it only after publishing
+    // both the new policy and management snapshots and clearing old approvals.
+    if let Err(e) = nl_tx
+        .daemon_ready_verified(new_epoch, prepared.new_guard.sha256)
+        .await
+    {
+        terminate_on_epoch_uncertainty(
+            "POLICY_UPDATE DAEMON_READY", old_epoch, new_epoch, &e.to_string(),
+        );
+    }
     drop(ticket_guard);
     if let Err(e) = preload_silent_directory_tickets(nl_tx).await {
         // Policy is committed. Never claim that the update was rolled back.
@@ -2170,6 +2182,19 @@ async fn execute_flush(nl_tx: &NlWriter) -> MgmtResult<MgmtOutcome> {
         state.is_flushed = true;
         clear_ephemeral_state_for_enforce(&mut state);
         state.fast.approved.clear();
+    }
+    // FLUSH also advances the kernel Epoch and closes READY. Validate that
+    // the retained Guard matches this compiled policy before resuming.
+    let digest = match compile_guard_manifest(&policy_snapshot().bundle) {
+        Ok(manifest) => manifest.sha256,
+        Err(e) => terminate_on_epoch_uncertainty(
+            "FLUSH Guard compile", old_epoch, new_epoch, &e.to_string(),
+        ),
+    };
+    if let Err(e) = nl_tx.daemon_ready_verified(actual_epoch, digest).await {
+        terminate_on_epoch_uncertainty(
+            "FLUSH DAEMON_READY", old_epoch, new_epoch, &e.to_string(),
+        );
     }
     drop(ticket_guard);
     Ok(MgmtOutcome {
