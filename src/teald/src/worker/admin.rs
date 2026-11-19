@@ -20,7 +20,9 @@ use crate::bundle::{compute_directory_hash, DEFAULT_TEAL_DIR, STAGE_TEAL_DIR};
 use crate::common::{find_rule, is_mgmt_id, DecisionKind, NetlinkStatus, QueueStatus, TealStatus};
 use crate::management::{commit_management, management, prepare_management};
 use crate::netlink::get_netlink_socket_metrics;
-use crate::netlink::NlWriter;
+use crate::netlink::{
+    compile_guard_manifest, GuardManifest, GuardMatchType, GuardObjectType, GuardStatus, NlWriter,
+};
 use crate::state::app_state;
 use crate::ticket::{draft_from_rule, is_ticketable, preload_silent_directory_tickets};
 use crate::types::{is_enforce, set_daemon_mode, DaemonMode, ACTIVE_TICKETS};
@@ -95,6 +97,9 @@ async fn handle_admin_connection(
     let (response, event) = match cmd_name {
         "STATUS" => handle_status().await,
         "NETLINK_STATUS" => (handle_netlink_status(), None),
+        // VM diagnostic: verify the compiled Guard against the kernel's
+        // committed digest without exposing a new kernel command.
+        "GUARD_VERIFY" => handle_guard_verify(&cmd, uid, nl_tx).await,
         "LIST" => handle_list(&cmd, uid).await,
         "REGISTER" => handle_register(&cmd, uid).await,
         "TICKET" => handle_ticket(&cmd, uid, nl_tx).await,
@@ -602,6 +607,205 @@ async fn handle_status() -> (String, Option<InternalEvent>) {
     }
 }
 
+/// Check only immutable committed kernel Guard metadata. This is not an
+/// active-entry dump: the expected entries are reconstructed from the current
+/// policy and authenticated by the kernel's canonical SHA-256 commitment.
+///
+/// A mismatch MUST NOT be presented as an authoritative Guard listing.
+fn guard_verify_status(
+    status: &GuardStatus,
+    expected_epoch: u32,
+    expected_sha256: &[u8; 32],
+) -> Result<(), String> {
+    if expected_epoch == 0
+        || status.guard_state != 1
+        || status.staged
+        || status.guard_epoch != expected_epoch
+        || status.current_epoch != expected_epoch
+        || status.last_epoch != expected_epoch
+        || status.active_sha256.as_ref() != Some(expected_sha256)
+    {
+        return Err(format!(
+            "Guard mismatch: expected_epoch={expected_epoch}, expected_sha256={}, kernel={status:?}",
+            hex::encode(expected_sha256)
+        ));
+    }
+    Ok(())
+}
+
+fn guard_operation_names(op_mask: u32) -> Vec<&'static str> {
+    const OPERATIONS: [(u32, &str); 9] = [
+        (1, "READ"),
+        (2, "WRITE"),
+        (4, "EXECUTE"),
+        (8, "DELETE"),
+        (16, "UNLINK"),
+        (32, "RENAME"),
+        (64, "CHMOD"),
+        (128, "CHOWN"),
+        (256, "CONNECT"),
+    ];
+    OPERATIONS
+        .iter()
+        .filter_map(|(bit, name)| (op_mask & bit != 0).then_some(*name))
+        .collect()
+}
+
+/// The Unix socket is already peercred-authenticated. For this diagnostic
+/// endpoint, limit disclosure of protected paths to root on the test VM.
+/// Do not use this root-only policy as general ENFORCE management authorization.
+async fn handle_guard_verify(
+    cmd: &str,
+    uid: u32,
+    nl_tx: &NlWriter,
+) -> (String, Option<InternalEvent>) {
+    if cmd != "GUARD_VERIFY" {
+        return ("ERR usage: GUARD_VERIFY\n".into(), None);
+    }
+    if uid != 0 {
+        return ("ERR GUARD_VERIFY requires UID 0\n".into(), None);
+    }
+
+    // Snapshot first. No locks or any mutable global state are held during
+    // compilation and Netlink round-trip. An epoch race fails verification.
+    let before = policy_snapshot();
+    let expected_epoch = before.epoch;
+    let manifest = match compile_guard_manifest(&before.bundle) {
+        Ok(m) => m,
+        Err(e) => return (format!("ERR Guard manifest compilation: {e:#}\n"), None),
+    };
+    let kernel = match nl_tx.guard_status().await {
+        Ok(s) => s,
+        Err(e) => return (format!("ERR GUARD_STATUS: {e:#}\n"), None),
+    };
+    if policy_snapshot().epoch != expected_epoch {
+        return (
+            "ERR policy epoch changed during Guard verification\n".into(),
+            None,
+        );
+    }
+    if let Err(e) = guard_verify_status(&kernel, expected_epoch, &manifest.sha256) {
+        return (format!("ERR {e}\n"), None);
+    }
+
+    let entries: Vec<_> = manifest
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let obj = match entry.object_type {
+                GuardObjectType::Path => "PATH",
+                GuardObjectType::Any => "ANY",
+            };
+            let matcher = match entry.match_type {
+                GuardMatchType::Exact => "EXACT",
+                GuardMatchType::Prefix => "PREFIX",
+                GuardMatchType::All => "ALL",
+            };
+            let path_hex = entry.path.as_ref().map(hex::encode);
+            let path_utf8 = entry
+                .path
+                .as_ref()
+                .and_then(|bytes| std::str::from_utf8(bytes).ok());
+            serde_json::json!({
+                "index": index,
+                "op_mask": entry.op_mask,
+                "operations": guard_operation_names(entry.op_mask),
+                "object_type": obj,
+                "object_type_id": entry.object_type as u8,
+                "match_type": matcher,
+                "match_type_id": entry.match_type as u8,
+                "target_mask": entry.target_mask,
+                "path": path_utf8,
+                "path_hex": path_hex,
+            })
+        })
+        .collect();
+
+    let json = serde_json::json!({
+        "status": "ok",
+        "verified": true,
+        "verification_method": "kernel GUARD_STATUS digest == compiled canonical Guard SHA-256",
+        "source_of_entries": "teald compiled policy snapshot, verified by kernel digest (NOT a kernel entry dump)",
+        "policy_epoch": expected_epoch,
+        "kernel": {
+            "current_epoch": kernel.current_epoch,
+            "last_epoch": kernel.last_epoch,
+            "guard_epoch": kernel.guard_epoch,
+            "guard_state": "READY",
+            "guard_state_id": kernel.guard_state,
+            "staged": kernel.staged,
+            "active_sha256": hex::encode(kernel.active_sha256.unwrap()),
+        },
+        "manifest": {
+            "sha256": hex::encode(manifest.sha256),
+            "expected_entry_count": manifest.entries.len(),
+            "total_bytes": manifest.total_bytes,
+            "entries": entries,
+        },
+    });
+    (format!("{json}\n"), None)
+}
+
+#[cfg(test)]
+mod guard_verify_status_tests {
+    use super::*;
+
+    fn ready(epoch: u32, digest: [u8; 32]) -> GuardStatus {
+        GuardStatus {
+            current_epoch: epoch,
+            last_epoch: epoch,
+            guard_epoch: epoch,
+            guard_state: 1,
+            active_sha256: Some(digest),
+            staged: false,
+            staged_tx_id: None,
+            base_epoch: None,
+            next_epoch: None,
+            expected_count: None,
+            received_count: None,
+            total_bytes: None,
+            sha256: None,
+        }
+    }
+
+    #[test]
+    fn rejects_uninitialized_staged_epoch_drift_and_digest_drift() {
+        let digest = [0x5a; 32];
+        let ok = ready(7, digest);
+        assert!(guard_verify_status(&ok, 7, &digest).is_ok());
+        assert!(guard_verify_status(&ok, 0, &digest).is_err());
+        let mut bad = ok.clone();
+        bad.guard_state = 0;
+        assert!(guard_verify_status(&bad, 7, &digest).is_err());
+        bad = ok.clone();
+        bad.staged = true;
+        assert!(guard_verify_status(&bad, 7, &digest).is_err());
+        bad = ok.clone();
+        bad.guard_epoch = 6;
+        assert!(guard_verify_status(&bad, 7, &digest).is_err());
+        bad = ok.clone();
+        bad.current_epoch = 0;
+        assert!(guard_verify_status(&bad, 7, &digest).is_err());
+        bad = ok.clone();
+        bad.last_epoch = 6;
+        assert!(guard_verify_status(&bad, 7, &digest).is_err());
+        bad = ok.clone();
+        bad.active_sha256 = None;
+        assert!(guard_verify_status(&bad, 7, &digest).is_err());
+        bad = ok.clone();
+        bad.active_sha256 = Some([0x22; 32]);
+        assert!(guard_verify_status(&bad, 7, &digest).is_err());
+    }
+
+    #[test]
+    fn canonical_operation_labels() {
+        assert_eq!(guard_operation_names(1 | 32), vec!["READ", "RENAME"]);
+        assert_eq!(guard_operation_names(256), vec!["CONNECT"]);
+        assert!(guard_operation_names(0).is_empty());
+    }
+}
+
 /// ログストーム時でも app_state() のロックを取得せずに即座に Netlink の健康状態を返す
 fn handle_netlink_status() -> String {
     let (buffer_usage_pct, drops) = get_netlink_socket_metrics();
@@ -650,7 +854,7 @@ async fn handle_list(_cmd: &str, _uid: u32) -> (String, Option<InternalEvent>) {
 
     // クローンしたデータを使って、安全に文字列を生成する
     for (id, draft) in &drafts {
-        s.push_str(&format!("DRAFT ID: {} | Rule-ID: {} | Status: {} | MPA: {}/{} | Roles: {:?} | timeout_minutes: {} | max_uses = {}\n",         
+        s.push_str(&format!("DRAFT ID: {} | Rule-ID: {} | Status: {} | MPA: {}/{} | Roles: {:?} | ttl_sec: {} | max_uses = {}\n",
             id, draft.rule_id, draft.mpa_state.is_fulfilled(), draft.mpa_state.approvals.len(), draft.mpa_state.threshold, draft.mpa_state.required_roles, draft.ttl_sec, draft.max_uses,
         ));
     }
@@ -1656,6 +1860,7 @@ struct PreparedPolicyUpdate {
     old_epoch: u32,
     new_epoch: u32,
     new_bundle: CompiledBundle,
+    new_guard: GuardManifest,
     new_management: CompiledManagement,
     backup_dir: PathBuf,
 }
@@ -1720,6 +1925,19 @@ async fn execute_mgmt_ctl_core(
 }
 
 async fn execute_start(nl_tx: &NlWriter) -> MgmtResult<MgmtOutcome> {
+    let epoch = policy_snapshot().epoch;
+    let guard = nl_tx.guard_status().await.map_err(|e| e.to_string())?;
+    if guard.guard_state != 1
+        || guard.guard_epoch != epoch
+        || guard.current_epoch != epoch
+        || guard.last_epoch != epoch
+        || guard.active_sha256.is_none()
+        || guard.staged
+    {
+        return Err(format!(
+            "Guard is not READY for ENFORCE at policy epoch {epoch}: {guard:?}"
+        ));
+    }
     // Switch the kernel first. A send success may not imply kernel ACK.
     nl_tx.send_mode_switch(1).await.map_err(|e| e.to_string())?;
 
@@ -1771,6 +1989,11 @@ async fn execute_stop(nl_tx: &NlWriter) -> MgmtResult<MgmtOutcome> {
 }
 
 async fn execute_policy_update(target_hash: &str, nl_tx: &NlWriter) -> MgmtResult<MgmtOutcome> {
+    // Stage 3 cannot yet guarantee that in-flight ALLOW/APPROVE decisions are
+    // serialized with the Rust-side policy snapshot. Restrict updates to AUDIT.
+    if is_enforce() {
+        return Err("Guard policy replacement in ENFORCE requires epoch-bound decision barrier (pending stage)".into());
+    }
     // Stop new ticket dispatch before validation / directory switching.
     // The guard is released on all ordinary returns; fatal paths exit teald.
     let ticket_guard = nl_tx.begin_ticket_transition().map_err(|e| e.to_string())?;
@@ -1781,10 +2004,18 @@ async fn execute_policy_update(target_hash: &str, nl_tx: &NlWriter) -> MgmtResul
     // through this transition; see integration notes.
     switch_policy_directory(&prepared).await?;
 
-    if let Err(e) = synchronize_kernel_epoch(nl_tx, prepared.new_epoch).await {
+    if let Err(e) = nl_tx
+        .sync_guard_manifest(&prepared.new_guard, old_epoch, prepared.new_epoch)
+        .await
+    {
         // ACKが欠落していても、kernelでは更新が完了している可能性がある。
         // /etc/teal.dを旧版に戻さず、処理を停止してREGISTER同期から復旧する。
-        terminate_on_epoch_uncertainty("POLICY_UPDATE", old_epoch, prepared.new_epoch, &e);
+        terminate_on_epoch_uncertainty(
+            "POLICY_UPDATE",
+            old_epoch,
+            prepared.new_epoch,
+            &e.to_string(),
+        );
     }
 
     // ACK成功後にユーザー空間のSnapshot確定に失敗した場合も同期不整合。
@@ -1824,6 +2055,9 @@ async fn prepare_policy_update(target_hash: &str) -> MgmtResult<PreparedPolicyUp
     tokio::task::spawn_blocking(move || {
         validate_staged_policy(&target_hash)?;
         let new_bundle = compile_staged_bundle()?;
+        // Validate the entire Guard before filesystem switch or kernel commit.
+        let new_guard = compile_guard_manifest(&new_bundle)
+            .map_err(|e| format!("Guard compilation failed: {e:#}"))?;
         let staged_management_path = std::path::Path::new(STAGE_TEAL_DIR).join("management.json");
         let new_management = prepare_management(&staged_management_path, &new_bundle.roles)
             .map_err(|e| format!("staged management validation failed: {:#}", e))?;
@@ -1838,6 +2072,7 @@ async fn prepare_policy_update(target_hash: &str) -> MgmtResult<PreparedPolicyUp
             old_epoch,
             new_epoch,
             new_bundle,
+            new_guard,
             new_management,
             backup_dir,
         })
@@ -1881,15 +2116,6 @@ async fn switch_policy_directory(update: &PreparedPolicyUpdate) -> MgmtResult<()
     .map_err(|e| format!("directory switch task failed: {}", e))?
 }
 
-async fn synchronize_kernel_epoch(nl_tx: &NlWriter, epoch: u32) -> MgmtResult<()> {
-    // send_sync_epoch() waits for the kernel NLMSG_ERROR(success ACK).
-    nl_tx
-        .send_sync_epoch(epoch)
-        .await
-        .map_err(|e| format!("send epoch {}: {}", epoch, e))?;
-    Ok(())
-}
-
 fn commit_policy_snapshot(
     new_bundle: CompiledBundle,
     expected_old_epoch: u32,
@@ -1921,8 +2147,8 @@ async fn execute_flush(nl_tx: &NlWriter) -> MgmtResult<MgmtOutcome> {
     let ticket_guard = nl_tx.begin_ticket_transition().map_err(|e| e.to_string())?;
     let old_epoch = policy_snapshot().epoch;
     let new_epoch = old_epoch.checked_add(1).ok_or("epoch overflow")?;
-    if let Err(e) = synchronize_kernel_epoch(nl_tx, new_epoch).await {
-        terminate_on_epoch_uncertainty("FLUSH", old_epoch, new_epoch, &e);
+    if let Err(e) = nl_tx.reuse_guard_verified(old_epoch, new_epoch).await {
+        terminate_on_epoch_uncertainty("FLUSH", old_epoch, new_epoch, &e.to_string());
     }
     let actual_epoch = match advance_epoch(old_epoch) {
         Ok(epoch) if epoch == new_epoch => epoch,

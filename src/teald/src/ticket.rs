@@ -40,12 +40,29 @@ use crate::types::{ApprovedTicket, EntityId, MpaState, PendingEntry, PreApproval
 // ==================================
 
 pub fn is_ticketable(rule: &CompiledRule) -> Result<(), String> {
-    // 1. TTLチェック (最優先)
+    // 1. カーネルチケットは許可専用。deny / audit_only 等は登録不可。
+    match rule.effect.as_str() {
+        "allow" | "need_approval" => {}
+        effect => {
+            return Err(format!(
+                "TICKET is not supported for effect '{}' (requires allow or need_approval)",
+                effect
+            ));
+        }
+    }
+
+    // 2. 事前チケット発行が明示的に許可されていること
+    // ttl_sec はデフォルト値が非ゼロでも、enabled=false なら発行禁止。
+    if !rule.pre_approval.enabled {
+        return Err("pre_approval.enabled=true is required for TICKET".to_string());
+    }
+
+    // 3. TTLチェック
     if rule.pre_approval.ttl_sec == 0 {
         return Err("ttl_sec > 0 is required for TICKET".to_string());
     }
 
-    // 2. object path 必須（Exact相当）
+    // 4. object path 必須（Exact相当）
     // 名無しルール (SubjectOnly または allow_nameless_ipc) の場合はチェックをスキップ
     if rule.rule_type != RuleType::SubjectOnly {
         // Standardルールの場合: object が存在し、かつ path が Exact であることを要求
@@ -60,14 +77,14 @@ pub fn is_ticketable(rule: &CompiledRule) -> Result<(), String> {
         }
     }
 
-    // 3. action(op) 単一必須
+    // 5. action(op) 単一必須
     match &rule.action_match {
         ActionMatcher::OneOf(s) if s.len() == 1 => Ok(()),
         ActionMatcher::Any => Err("ActionMatcher::Any is too broad for TICKET".to_string()),
         _ => Err("single action op is required for TICKET".to_string()),
     }?;
 
-    // 4. origin_program は必須かつ Exact であること
+    // 6. origin_program は必須かつ Exact であること
     let is_origin_exact = rule
         .subject
         .origin_program
@@ -77,7 +94,7 @@ pub fn is_ticketable(rule: &CompiledRule) -> Result<(), String> {
         return Err("subject.origin_program (exact) is required for TICKET".to_string());
     }
 
-    // 5. スクリプト指定がある場合も Exact が必要
+    // 7. スクリプト指定がある場合も Exact が必要
     if let Some(script) = &rule.subject.origin_script {
         if !script.is_exact() {
             return Err("subject.origin_script (exact) is required if specified".to_string());

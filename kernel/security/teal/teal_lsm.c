@@ -49,6 +49,12 @@
 #include <linux/tty.h>
 #include <linux/audit.h>
 #include <linux/xarray.h>
+#include <linux/bitmap.h>
+#include <linux/limits.h>
+#include <crypto/hash.h>
+#if IS_ENABLED(CONFIG_KUNIT)
+#include <kunit/test.h>
+#endif
 
 #include <net/genetlink.h>
 #include <net/net_namespace.h>
@@ -84,6 +90,10 @@ enum teal_nl_commands {
     TEAL_CMD_POLICY_UPDATE, // 8: User -> Kernel: Epoch同期とキャッシュフラッシュ
     TEAL_CMD_PAM_SESSION_ADD, // 9: teald -> Kernel: PAM登録済みセッション
     TEAL_CMD_PAM_SESSION_DEL, // 10: teald -> Kernel: PAMセッション終了
+    TEAL_CMD_GUARD_BEGIN = 11, // staged Guard transfer; no enforcement yet
+    TEAL_CMD_GUARD_ADD = 12,
+    TEAL_CMD_GUARD_ABORT = 13,
+    TEAL_CMD_GUARD_STATUS = 14,
     __TEAL_CMD_MAX,
 };
 #define TEAL_CMD_MAX (__TEAL_CMD_MAX - 1)
@@ -134,6 +144,28 @@ enum teal_nl_attrs {
     TEAL_ATTR_AUDIT_SESSIONID,  // 34: u32
     TEAL_ATTR_LOGINUID,         // 35: u32
 
+    TEAL_ATTR_GUARD_TX_ID = 36,       // u64
+    TEAL_ATTR_GUARD_BASE_EPOCH = 37,  // u32
+    TEAL_ATTR_GUARD_COUNT = 38,       // u32
+    TEAL_ATTR_GUARD_SHA256 = 39,      // binary, exactly 32 bytes
+    TEAL_ATTR_GUARD_INDEX = 40,       // u32
+    TEAL_ATTR_GUARD_OP_MASK = 41,     // u32
+    TEAL_ATTR_GUARD_OBJECT_TYPE = 42, // u8
+    TEAL_ATTR_GUARD_MATCH_TYPE = 43,  // u8
+    TEAL_ATTR_GUARD_TARGET_MASK = 44, // u8
+    TEAL_ATTR_GUARD_PATH = 45,        // NUL-terminated UTF-8? path treated as bytes
+    TEAL_ATTR_GUARD_FORMAT_VERSION = 46, // u16; first format is 1
+    TEAL_ATTR_GUARD_TOTAL_BYTES = 47,    // u32; canonical encoded entries
+    TEAL_ATTR_GUARD_REUSE = 48,          // reserved for phase 2
+    TEAL_ATTR_GUARD_LAST_EPOCH = 49,     // u32 (STATUS reply)
+    TEAL_ATTR_GUARD_EPOCH = 50,          // u32 (STATUS reply)
+    TEAL_ATTR_GUARD_STATE = 51,          // u8 (STATUS reply)
+    TEAL_ATTR_GUARD_STAGED = 52,         // u8 (STATUS reply)
+    TEAL_ATTR_GUARD_RECEIVED = 53,       // u32 (STATUS reply)
+    TEAL_ATTR_GUARD_NEXT_EPOCH = 54,     // u32 (STATUS reply)
+    TEAL_ATTR_GUARD_ACTIVE_SHA256 = 55, // binary[32] (READY active only)
+    TEAL_ATTR_GUARD_COMMIT_VERSION = 56, // u16 REGISTER capability
+
     __TEAL_ATTR_MAX,
 };
 #define TEAL_ATTR_MAX (__TEAL_ATTR_MAX - 1)
@@ -168,6 +200,27 @@ static const struct nla_policy teal_nl_policy[TEAL_ATTR_MAX + 1] = {
     [TEAL_ATTR_LANE]            = { .type = NLA_U32 },
     [TEAL_ATTR_AUDIT_SESSIONID] = { .type = NLA_U32 },
     [TEAL_ATTR_LOGINUID]        = { .type = NLA_U32 },
+    [TEAL_ATTR_GUARD_TX_ID] = { .type = NLA_U64 },
+    [TEAL_ATTR_GUARD_BASE_EPOCH] = { .type = NLA_U32 },
+    [TEAL_ATTR_GUARD_COUNT] = { .type = NLA_U32 },
+    [TEAL_ATTR_GUARD_SHA256] = { .type = NLA_BINARY, .len = 32 },
+    [TEAL_ATTR_GUARD_INDEX] = { .type = NLA_U32 },
+    [TEAL_ATTR_GUARD_OP_MASK] = { .type = NLA_U32 },
+    [TEAL_ATTR_GUARD_OBJECT_TYPE] = { .type = NLA_U8 },
+    [TEAL_ATTR_GUARD_MATCH_TYPE] = { .type = NLA_U8 },
+    [TEAL_ATTR_GUARD_TARGET_MASK] = { .type = NLA_U8 },
+    [TEAL_ATTR_GUARD_PATH] = { .type = NLA_NUL_STRING, .len = 4097 },
+    [TEAL_ATTR_GUARD_FORMAT_VERSION] = { .type = NLA_U16 },
+    [TEAL_ATTR_GUARD_TOTAL_BYTES] = { .type = NLA_U32 },
+    [TEAL_ATTR_GUARD_REUSE] = { .type = NLA_U8 },
+    [TEAL_ATTR_GUARD_LAST_EPOCH] = { .type = NLA_U32 },
+    [TEAL_ATTR_GUARD_EPOCH] = { .type = NLA_U32 },
+    [TEAL_ATTR_GUARD_STATE] = { .type = NLA_U8 },
+    [TEAL_ATTR_GUARD_STAGED] = { .type = NLA_U8 },
+    [TEAL_ATTR_GUARD_RECEIVED] = { .type = NLA_U32 },
+    [TEAL_ATTR_GUARD_NEXT_EPOCH] = { .type = NLA_U32 },
+    [TEAL_ATTR_GUARD_ACTIVE_SHA256] = { .type = NLA_BINARY, .len = 32 },
+    [TEAL_ATTR_GUARD_COMMIT_VERSION] = { .type = NLA_U16 },
 };
 
 struct teal_request {
@@ -217,6 +270,13 @@ static int teal_nl_recv_mode_switch(struct sk_buff *skb, struct genl_info *info)
 static int teal_nl_recv_policy_update(struct sk_buff *skb, struct genl_info *info);
 static int teal_nl_recv_pam_session_add(struct sk_buff *skb, struct genl_info *info);
 static int teal_nl_recv_pam_session_del(struct sk_buff *skb, struct genl_info *info);
+static int teal_nl_recv_guard_begin(struct sk_buff *skb, struct genl_info *info);
+static int teal_nl_recv_guard_add(struct sk_buff *skb, struct genl_info *info);
+static int teal_nl_recv_guard_abort(struct sk_buff *skb, struct genl_info *info);
+static int teal_nl_recv_guard_status(struct sk_buff *skb, struct genl_info *info);
+static void teal_guard_discard_staging(void);
+static int teal_guard_failure_decision(const struct teal_request *req,
+                                       const char *reason, int send_rc);
 static int teal_genl_send_req(struct teal_request *req, u8 teal_mode);
 
 /*
@@ -269,6 +329,27 @@ static const struct genl_ops teal_nl_ops[] = {
         .cmd = TEAL_CMD_PAM_SESSION_DEL,
         .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
         .doit = teal_nl_recv_pam_session_del,
+        .policy = teal_nl_policy,
+    },
+    /* New Guard commands deliberately use strict attribute validation. */
+    {
+        .cmd = TEAL_CMD_GUARD_BEGIN,
+        .doit = teal_nl_recv_guard_begin,
+        .policy = teal_nl_policy,
+    },
+    {
+        .cmd = TEAL_CMD_GUARD_ADD,
+        .doit = teal_nl_recv_guard_add,
+        .policy = teal_nl_policy,
+    },
+    {
+        .cmd = TEAL_CMD_GUARD_ABORT,
+        .doit = teal_nl_recv_guard_abort,
+        .policy = teal_nl_policy,
+    },
+    {
+        .cmd = TEAL_CMD_GUARD_STATUS,
+        .doit = teal_nl_recv_guard_status,
         .policy = teal_nl_policy,
     },
 };
@@ -673,6 +754,72 @@ static atomic_t teal_current_epoch = ATOMIC_INIT(0);
  */
 static u32 teal_last_epoch;
 
+/* MPA Guard transfer / commit state (Stage 2).
+ * These constants are a wire contract shared with teald netlink.rs.
+ */
+#define TEAL_GUARD_FORMAT_VERSION 1U
+#define TEAL_GUARD_MAX_ENTRIES 1024U
+#define TEAL_GUARD_MAX_PATH 4096U /* bytes excluding terminating NUL */
+#define TEAL_GUARD_MAX_MEMORY (1024U * 1024U)
+#define TEAL_GUARD_TTL (30 * HZ)
+#define TEAL_GUARD_RECORD_OVERHEAD 9U /* u32 op + 3 u8 + u16 path_len */
+#define TEAL_GUARD_OP_BITS 0x1ffU /* READ through CONNECT */
+#define TEAL_GUARD_SOURCE 1U
+#define TEAL_GUARD_DESTINATION 2U
+
+enum teal_guard_object_type {
+    TEAL_GUARD_PATH = 1,
+    TEAL_GUARD_NETWORK = 2, /* not supported as an entry in v1 */
+    TEAL_GUARD_ANY = 3,
+};
+enum teal_guard_match_type {
+    TEAL_GUARD_EXACT = 1,
+    TEAL_GUARD_PREFIX = 2,
+    TEAL_GUARD_ALL = 3,
+};
+enum teal_guard_state {
+    TEAL_GUARD_UNINITIALIZED = 0,
+    TEAL_GUARD_READY = 1,
+    TEAL_GUARD_INVALID = 2,
+};
+struct teal_mpa_guard_entry {
+    u32 op_mask;
+    u8 object_type;
+    u8 match_type;
+    u8 target_mask;
+    u16 path_len;
+    char *path;
+};
+struct teal_mpa_guard_snapshot {
+    struct rcu_head rcu;
+    u32 epoch;
+    u32 entry_count;
+    u32 state;
+    u8 sha256[32];
+    struct teal_mpa_guard_entry *entries;
+};
+struct teal_guard_staging {
+    u64 tx_id;
+    u64 owner_generation;
+    u32 base_epoch;
+    u32 next_epoch;
+    u32 expected_count;
+    u32 received_count;
+    u32 total_bytes;
+    u32 received_bytes;
+    u32 owner_portid;
+    u8 expected_sha256[32];
+    unsigned long expires_jiffies;
+    unsigned long *received_bitmap;
+    struct teal_mpa_guard_entry *entries;
+};
+static DEFINE_MUTEX(teal_guard_update_mutex);
+static struct teal_guard_staging *teal_guard_staging;
+static struct teal_mpa_guard_snapshot __rcu *teal_guard_active;
+static atomic64_t teal_guard_daemon_generation = ATOMIC64_INIT(0);
+static void teal_guard_expiry_workfn(struct work_struct *work);
+static DECLARE_DELAYED_WORK(teal_guard_expiry_work, teal_guard_expiry_workfn);
+
 
 // --- 待機キュー & JIT管理 ---
 // teal_request.flags definition
@@ -754,19 +901,15 @@ int teal_wait_for_approval(const char *action,
 
     rc = teal_req_enqueue(req, teal_mode);
     if (rc < 0) {
-        /* * 送信失敗時は、プロセスを止めないために特別に許可（0）を返してリクエストを解放する。
-         * ただし、teald未接続（-ENOTCONN）による意図的なFail-Safe移行の通信スキップ時は、
-         * ログストームを防ぐためエラーメッセージを出力しない。
+        int decision_rc;
+
+        /* AUDIT is always non-blocking. ENFORCE must classify failures
+         * against the LAST COMPLETE Guard, never against staging data.
          */
-        if (rc != -ENOTCONN) {
-            pr_warn_ratelimited(
-                "TEAL: Failed to send request (rc=%d). Fail-safe: ALLOW. "
-                "action=%s target=%s prog=%s script=%s applet=%s\n", 
-                rc, action, target_name, exec_path, script_path, applet
-            );
-        }
+        decision_rc = (teal_mode == TEAL_MODE_AUDIT) ? 0 :
+                      teal_guard_failure_decision(req, "SEND_FAILURE", rc);
         kfree(req);
-        return 0; 
+        return decision_rc;
     }
 
     /*
@@ -1028,13 +1171,17 @@ static struct teal_request *teal_req_build(const char *action,
     req->new_target_ino = new_target_ino;
 
     strscpy(req->action, !IS_ERR_OR_NULL(action) ? action : "-", sizeof(req->action));
-    strscpy(req->target, target_name, sizeof(req->target));
+    if (strscpy(req->target, target_name, sizeof(req->target)) < 0)
+        req->flags |= TEAL_REQ_F_TRUNC;
     
     // 新しいパス情報を構造体にコピー
-    if (!IS_ERR_OR_NULL(new_target) && new_target[0])
-        strscpy(req->new_target, new_target, sizeof(req->new_target));
-    else
+    if (!IS_ERR_OR_NULL(new_target) && new_target[0]) {
+        if (strscpy(req->new_target, new_target,
+                    sizeof(req->new_target)) < 0)
+            req->flags |= TEAL_REQ_F_TRUNC;
+    } else {
         strscpy(req->new_target, "-", sizeof(req->new_target));
+    }
 
     /* パス情報の最終コピー */
     if (!IS_ERR_OR_NULL(exec_path) && exec_path[0] && exec_path != req->program)
@@ -1084,13 +1231,14 @@ int teal_req_wait(struct teal_request *req)
     );
 
     if (remaining == 0) {
-        // タイムアウト発生: デーモン無応答のため Fail-Safe ALLOW
-        pr_warn_ratelimited(
-            "TEAL: Request timed out (daemon unresponsive). Fail-safe: ALLOW. "
-            "action=%s target=%s prog=%s\n",
-            req->action, req->target, req->program
-        );
-        return TEAL_DECISION_APPROVE;
+        int rc;
+
+        /* A reply may race the timeout: prefer any already-set decision. */
+        if (READ_ONCE(req->decision))
+            return READ_ONCE(req->decision);
+
+        rc = teal_guard_failure_decision(req, "TIMEOUT", 0);
+        return rc == 0 ? TEAL_DECISION_APPROVE : rc;
     } else if (remaining < 0) {
         return -EINTR;
     }
@@ -1308,6 +1456,773 @@ static void teal_flush_all_queues(void)
  * 新しいREGISTERが先行した場合はREGISTER側がフラッシュ済みなので、
  * cleanup workerが新セッションのチケットを消さないよう判定する。
  */
+/* Guard staging and immutable active snapshots. */
+static void teal_guard_free_staging_locked(void)
+{
+    struct teal_guard_staging *s = teal_guard_staging;
+    u32 i;
+
+    if (!s)
+        return;
+    teal_guard_staging = NULL;
+    for (i = 0; i < s->expected_count; i++)
+        kfree(s->entries[i].path);
+    kfree(s->entries);
+    bitmap_free(s->received_bitmap);
+    kfree(s);
+}
+
+static void teal_guard_discard_staging(void)
+{
+    mutex_lock(&teal_guard_update_mutex);
+    teal_guard_free_staging_locked();
+    mutex_unlock(&teal_guard_update_mutex);
+}
+
+/* Old snapshots remain readable by timeout readers until their RCU grace
+ * period ends. The callback must not sleep; entries and strings are kmalloc.
+ */
+static void teal_guard_free_active_rcu(struct rcu_head *head)
+{
+    struct teal_mpa_guard_snapshot *snapshot =
+        container_of(head, struct teal_mpa_guard_snapshot, rcu);
+    u32 i;
+
+    if (snapshot->entries) {
+        for (i = 0; i < snapshot->entry_count; ++i)
+            kfree(snapshot->entries[i].path);
+    }
+    kfree(snapshot->entries);
+    kfree(snapshot);
+}
+
+/* Canonical Guard digest v1:
+ * index-ordered records; each is:
+ *    LE32 op_mask | u8 object_type | u8 match_type | u8 target_mask |
+ *    LE16 path_length | raw path bytes (NO trailing NUL).
+ * An empty Guard is SHA256 of the empty byte string.
+ * The format is deliberately independent of C structure padding and endian.
+ */
+static int teal_guard_digest_entries(const struct teal_mpa_guard_entry *entries,
+                                     u32 count, u8 digest[32])
+{
+    struct crypto_shash *tfm;
+    struct shash_desc *desc;
+    u8 record[TEAL_GUARD_RECORD_OVERHEAD];
+    u32 i;
+    int rc;
+
+    tfm = crypto_alloc_shash("sha256", 0, 0);
+    if (IS_ERR(tfm))
+        return PTR_ERR(tfm);
+    desc = kzalloc(sizeof(*desc) + crypto_shash_descsize(tfm), GFP_KERNEL);
+    if (!desc) {
+        crypto_free_shash(tfm);
+        return -ENOMEM;
+    }
+    desc->tfm = tfm;
+    rc = crypto_shash_init(desc);
+    for (i = 0; !rc && i < count; i++) {
+        const struct teal_mpa_guard_entry *e = &entries[i];
+        u16 len = e->path_len;
+
+        record[0] = (u8)e->op_mask;
+        record[1] = (u8)(e->op_mask >> 8);
+        record[2] = (u8)(e->op_mask >> 16);
+        record[3] = (u8)(e->op_mask >> 24);
+        record[4] = e->object_type;
+        record[5] = e->match_type;
+        record[6] = e->target_mask;
+        record[7] = (u8)len;
+        record[8] = (u8)(len >> 8);
+        rc = crypto_shash_update(desc, record, sizeof(record));
+        if (!rc && len)
+            rc = crypto_shash_update(desc, (const u8 *)e->path, len);
+    }
+    if (!rc)
+        rc = crypto_shash_final(desc, digest);
+    kfree(desc);
+    crypto_free_shash(tfm);
+    return rc;
+}
+
+/* Prepare a detached copy for FLUSH. Never change the live snapshot's
+ * epoch or entry storage in place: concurrent RCU readers own that view.
+ */
+static struct teal_mpa_guard_snapshot *
+teal_guard_clone_active(const struct teal_mpa_guard_snapshot *active,
+                        u32 next_epoch)
+{
+    struct teal_mpa_guard_snapshot *copy;
+    u32 i;
+
+    copy = kzalloc(sizeof(*copy), GFP_KERNEL);
+    if (!copy)
+        return ERR_PTR(-ENOMEM);
+    copy->epoch = next_epoch;
+    copy->entry_count = active->entry_count;
+    copy->state = TEAL_GUARD_READY;
+    memcpy(copy->sha256, active->sha256, sizeof(copy->sha256));
+    if (!copy->entry_count)
+        return copy;
+    copy->entries = kcalloc(copy->entry_count, sizeof(*copy->entries), GFP_KERNEL);
+    if (!copy->entries)
+        goto nomem;
+    for (i = 0; i < copy->entry_count; i++) {
+        copy->entries[i] = active->entries[i];
+        copy->entries[i].path = NULL;
+        if (active->entries[i].path) {
+            copy->entries[i].path = kmemdup_nul(active->entries[i].path,
+                                                 active->entries[i].path_len,
+                                                 GFP_KERNEL);
+            if (!copy->entries[i].path)
+                goto nomem;
+        }
+    }
+    return copy;
+nomem:
+    teal_guard_free_active_rcu(&copy->rcu);
+    return ERR_PTR(-ENOMEM);
+}
+
+/* Must be called with teal_guard_update_mutex held. */
+static void teal_guard_expire_locked(void)
+{
+    if (teal_guard_staging &&
+        time_after_eq(jiffies, teal_guard_staging->expires_jiffies))
+        teal_guard_free_staging_locked();
+}
+
+/* Ensure 30-second expiry is enforced even without further Netlink traffic. */
+static void teal_guard_expiry_workfn(struct work_struct *work)
+{
+    mutex_lock(&teal_guard_update_mutex);
+    teal_guard_expire_locked();
+    if (teal_guard_staging)
+        mod_delayed_work(system_wq, &teal_guard_expiry_work,
+                         teal_guard_staging->expires_jiffies - jiffies);
+    mutex_unlock(&teal_guard_update_mutex);
+}
+
+/* Exact bytes (not UTF-8 interpretation); reject noncanonical path components. */
+static bool teal_guard_valid_path(const char *path, size_t len)
+{
+    size_t i, start;
+
+    if (!len || len > TEAL_GUARD_MAX_PATH || path[0] != '/')
+        return false;
+    for (i = 1, start = 1; i <= len; ++i) {
+        if (i == len || path[i] == '/') {
+            size_t component_len = i - start;
+
+            if (i != len && component_len == 0)
+                return false;
+            if (component_len == 1 && path[start] == '.')
+                return false;
+            if (component_len == 2 && path[start] == '.' &&
+                path[start + 1] == '.')
+                return false;
+            start = i + 1;
+        }
+    }
+    return true;
+}
+
+/* Timeout-only Guard classification (not used for normal policy decisions).
+ * UNKNOWN must never be converted to ALLOW. A snapshot is usable only
+ * when its epoch still equals the last committed policy epoch.
+ * Staging is deliberately never consulted here.
+ */
+enum teal_guard_verdict {
+    TEAL_GUARD_UNPROTECTED = 0,
+    TEAL_GUARD_PROTECTED = 1,
+    TEAL_GUARD_UNKNOWN = 2,
+};
+
+static atomic64_t teal_guard_failure_allow_count = ATOMIC64_INIT(0);
+static atomic64_t teal_guard_failure_deny_count = ATOMIC64_INIT(0);
+static atomic64_t teal_guard_failure_unknown_count = ATOMIC64_INIT(0);
+
+static u32 teal_guard_action_op(const char *action)
+{
+    if (!strcmp(action, "READ")) return TEAL_EVENT_READ;
+    if (!strcmp(action, "WRITE")) return TEAL_EVENT_WRITE;
+    if (!strcmp(action, "EXEC") || !strcmp(action, "EXECUTE"))
+        return TEAL_EVENT_EXECUTE;
+    if (!strcmp(action, "DELETE")) return TEAL_EVENT_DELETE;
+    if (!strcmp(action, "UNLINK")) return TEAL_EVENT_UNLINK;
+    if (!strcmp(action, "RENAME")) return TEAL_EVENT_RENAME;
+    if (!strcmp(action, "CHMOD")) return TEAL_EVENT_CHMOD;
+    if (!strcmp(action, "CHOWN")) return TEAL_EVENT_CHOWN;
+    if (!strcmp(action, "CONNECT")) return TEAL_EVENT_CONNECT;
+    /* Do not guess for unknown or composite operation names. */
+    return 0;
+}
+
+static bool teal_guard_path_matches(const struct teal_mpa_guard_entry *entry,
+                                    const char *path)
+{
+    size_t len = entry->path_len;
+
+    if (!entry->path)
+        return false;
+    if (entry->match_type == TEAL_GUARD_EXACT)
+        return strlen(path) == len && !memcmp(entry->path, path, len);
+    if (entry->match_type != TEAL_GUARD_PREFIX)
+        return false;
+    /* A /dir/ prefix includes the directory /dir itself. */
+    if (len > 1 && entry->path[len - 1] == '/' &&
+        strlen(path) == len - 1 && !memcmp(entry->path, path, len - 1))
+        return true;
+    if (strncmp(entry->path, path, len))
+        return false;
+    /* /backup must not match /backup2; root / matches every path. */
+    if (len == 1 && entry->path[0] == '/')
+        return true;
+    if (entry->path[len - 1] == '/')
+        return true;
+    return path[len] == '/' || path[len] == '\0';
+}
+
+static enum teal_guard_verdict
+teal_guard_classify_snapshot(const struct teal_mpa_guard_snapshot *snapshot,
+                             const char *action, const char *target,
+                             const char *new_target, u32 flags)
+{
+    bool needs_path;
+    u32 op, i;
+
+    if (!snapshot || snapshot->state != TEAL_GUARD_READY)
+        return TEAL_GUARD_UNKNOWN;
+    op = teal_guard_action_op(action);
+    if (!op || (flags & TEAL_REQ_F_TRUNC))
+        return TEAL_GUARD_UNKNOWN;
+
+    /* File operations need complete, absolute, canonical paths. CONNECT
+     * v1 supports ANY/ALL only, so no network path is required.
+     */
+    needs_path = op != TEAL_EVENT_CONNECT;
+    if (needs_path &&
+        (!target || !teal_guard_valid_path(target, strlen(target))))
+        return TEAL_GUARD_UNKNOWN;
+    if (op == TEAL_EVENT_RENAME &&
+        (!new_target || !teal_guard_valid_path(new_target,
+                                               strlen(new_target))))
+        return TEAL_GUARD_UNKNOWN;
+
+    for (i = 0; i < snapshot->entry_count; i++) {
+        const struct teal_mpa_guard_entry *entry = &snapshot->entries[i];
+
+        if (!(entry->op_mask & op))
+            continue;
+        if (entry->object_type == TEAL_GUARD_ANY &&
+            entry->match_type == TEAL_GUARD_ALL)
+            return TEAL_GUARD_PROTECTED;
+        if (entry->object_type != TEAL_GUARD_PATH || !needs_path)
+            return TEAL_GUARD_UNKNOWN;
+        if ((entry->target_mask & TEAL_GUARD_SOURCE) &&
+            teal_guard_path_matches(entry, target))
+            return TEAL_GUARD_PROTECTED;
+        if (op == TEAL_EVENT_RENAME &&
+            (entry->target_mask & TEAL_GUARD_DESTINATION) &&
+            teal_guard_path_matches(entry, new_target))
+            return TEAL_GUARD_PROTECTED;
+    }
+    return TEAL_GUARD_UNPROTECTED;
+}
+
+/* 0 means ALLOW, a negative errno is DENY. Called in a sleepable LSM
+ * path, and uses only immutable RCU-published Guard data; no update mutex.
+ */
+static int teal_guard_failure_decision(const struct teal_request *req,
+                                       const char *reason, int send_rc)
+{
+    struct teal_mpa_guard_snapshot *snapshot;
+    enum teal_guard_verdict verdict;
+    u32 last_before, last_after;
+
+    rcu_read_lock();
+    last_before = READ_ONCE(teal_last_epoch);
+    snapshot = rcu_dereference(teal_guard_active);
+    if (!snapshot || snapshot->epoch != last_before) {
+        verdict = TEAL_GUARD_UNKNOWN;
+    } else {
+        verdict = teal_guard_classify_snapshot(snapshot, req->action,
+                                               req->target, req->new_target,
+                                               req->flags);
+    }
+    last_after = READ_ONCE(teal_last_epoch);
+    if (last_before != last_after)
+        verdict = TEAL_GUARD_UNKNOWN;
+    rcu_read_unlock();
+
+    if (verdict == TEAL_GUARD_UNPROTECTED) {
+        atomic64_inc(&teal_guard_failure_allow_count);
+        pr_warn_ratelimited("TEAL: GUARD_FAILURE reason=%s class=UNPROTECTED verdict=ALLOW rc=%d action=%s target=%s\n",
+                            reason, send_rc, req->action, req->target);
+        return 0;
+    }
+    atomic64_inc(&teal_guard_failure_deny_count);
+    if (verdict == TEAL_GUARD_UNKNOWN)
+        atomic64_inc(&teal_guard_failure_unknown_count);
+    pr_warn_ratelimited("TEAL: GUARD_FAILURE reason=%s class=%s verdict=DENY rc=%d action=%s target=%s\n",
+                        reason,
+                        verdict == TEAL_GUARD_PROTECTED ? "PROTECTED" : "UNKNOWN",
+                        send_rc, req->action, req->target);
+    return -EACCES;
+}
+
+/* Validate wire budget before allocating entries or paths. */
+static bool teal_guard_begin_limits_valid(u32 count, u32 bytes)
+{
+    size_t allocation_bound;
+
+    if (count > TEAL_GUARD_MAX_ENTRIES ||
+        bytes < count * TEAL_GUARD_RECORD_OVERHEAD ||
+        (count == 0 && bytes != 0) || bytes > TEAL_GUARD_MAX_MEMORY)
+        return false;
+    allocation_bound = sizeof(struct teal_guard_staging) +
+        sizeof(struct teal_mpa_guard_snapshot) +
+        (size_t)count * sizeof(struct teal_mpa_guard_entry) +
+        BITS_TO_LONGS(count) * sizeof(unsigned long) +
+        (size_t)bytes + count;
+    return allocation_bound <= TEAL_GUARD_MAX_MEMORY;
+}
+
+/* Called while the staging mutex is held. Also unit-testable with a fake stage. */
+static int teal_guard_check_slot(const struct teal_guard_staging *s,
+                                 u32 index, u32 record_bytes)
+{
+    if (index >= s->expected_count)
+        return -ERANGE;
+    if (test_bit(index, s->received_bitmap))
+        return -EEXIST;
+    if (record_bytes > s->total_bytes - s->received_bytes)
+        return -E2BIG;
+    return 0;
+}
+
+#if IS_ENABLED(CONFIG_KUNIT)
+static void teal_guard_path_validation_kunit(struct kunit *test)
+{
+    KUNIT_EXPECT_TRUE(test, teal_guard_valid_path("/etc/hostname", 13));
+    KUNIT_EXPECT_TRUE(test, teal_guard_valid_path("/", 1));
+    KUNIT_EXPECT_TRUE(test, teal_guard_valid_path("/backup/", 8));
+    KUNIT_EXPECT_FALSE(test, teal_guard_valid_path("etc/passwd", 10));
+    KUNIT_EXPECT_FALSE(test, teal_guard_valid_path("/a//b", 5));
+    KUNIT_EXPECT_FALSE(test, teal_guard_valid_path("/a/../b", 7));
+    KUNIT_EXPECT_FALSE(test, teal_guard_valid_path("/a/./b", 6));
+}
+static void teal_guard_staging_limits_kunit(struct kunit *test)
+{
+    KUNIT_EXPECT_TRUE(test, teal_guard_begin_limits_valid(0, 0));
+    KUNIT_EXPECT_TRUE(test, teal_guard_begin_limits_valid(1, 9));
+    KUNIT_EXPECT_FALSE(test, teal_guard_begin_limits_valid(0, 1));
+    KUNIT_EXPECT_FALSE(test, teal_guard_begin_limits_valid(1, 8));
+    KUNIT_EXPECT_FALSE(test, teal_guard_begin_limits_valid(1025, 1025 * 9));
+    KUNIT_EXPECT_FALSE(test, teal_guard_begin_limits_valid(1, 1024 * 1024));
+}
+static void teal_guard_duplicate_and_budget_kunit(struct kunit *test)
+{
+    unsigned long bits = 0;
+    struct teal_guard_staging stage = {
+        .expected_count = 2, .received_count = 1,
+        .total_bytes = 30, .received_bytes = 15,
+        .received_bitmap = &bits,
+    };
+
+    set_bit(0, &bits);
+    KUNIT_EXPECT_EQ(test, teal_guard_check_slot(&stage, 0, 9), -EEXIST);
+    KUNIT_EXPECT_EQ(test, teal_guard_check_slot(&stage, 2, 9), -ERANGE);
+    KUNIT_EXPECT_EQ(test, teal_guard_check_slot(&stage, 1, 16), -E2BIG);
+    KUNIT_EXPECT_EQ(test, teal_guard_check_slot(&stage, 1, 15), 0);
+}
+static void teal_guard_timeout_classification_kunit(struct kunit *test)
+{
+    struct teal_mpa_guard_entry entries[] = {
+        {
+            .op_mask = TEAL_EVENT_READ, .object_type = TEAL_GUARD_PATH,
+            .match_type = TEAL_GUARD_EXACT, .target_mask = TEAL_GUARD_SOURCE,
+            .path_len = 13, .path = "/etc/hostname",
+        },
+        {
+            .op_mask = TEAL_EVENT_RENAME, .object_type = TEAL_GUARD_PATH,
+            .match_type = TEAL_GUARD_PREFIX,
+            .target_mask = TEAL_GUARD_SOURCE | TEAL_GUARD_DESTINATION,
+            .path_len = 7, .path = "/backup",
+        },
+    };
+    struct teal_mpa_guard_snapshot snapshot = {
+        .state = TEAL_GUARD_READY,
+        .entry_count = ARRAY_SIZE(entries), .entries = entries,
+    };
+
+    KUNIT_EXPECT_EQ(test, (int)teal_guard_classify_snapshot(&snapshot,
+                    "READ", "/etc/hostname", "-", 0),
+                    (int)TEAL_GUARD_PROTECTED);
+    KUNIT_EXPECT_EQ(test, (int)teal_guard_classify_snapshot(&snapshot,
+                    "READ", "/etc/hosts", "-", 0),
+                    (int)TEAL_GUARD_UNPROTECTED);
+    KUNIT_EXPECT_EQ(test, (int)teal_guard_classify_snapshot(&snapshot,
+                    "READ", "/etc/hosts", "-", TEAL_REQ_F_TRUNC),
+                    (int)TEAL_GUARD_UNKNOWN);
+    KUNIT_EXPECT_EQ(test, (int)teal_guard_classify_snapshot(&snapshot,
+                    "READ", "unknown", "-", 0),
+                    (int)TEAL_GUARD_UNKNOWN);
+    KUNIT_EXPECT_EQ(test, (int)teal_guard_classify_snapshot(&snapshot,
+                    "RENAME", "/tmp/foo", "/backup/foo", 0),
+                    (int)TEAL_GUARD_PROTECTED);
+    KUNIT_EXPECT_EQ(test, (int)teal_guard_classify_snapshot(&snapshot,
+                    "RENAME", "/tmp/foo", "/backup2/foo", 0),
+                    (int)TEAL_GUARD_UNPROTECTED);
+    entries[1].path_len = 8;
+    entries[1].path = "/backup/";
+    KUNIT_EXPECT_EQ(test, (int)teal_guard_classify_snapshot(&snapshot,
+                    "RENAME", "/tmp/foo", "/backup", 0),
+                    (int)TEAL_GUARD_PROTECTED);
+    KUNIT_EXPECT_EQ(test, (int)teal_guard_classify_snapshot(&snapshot,
+                    "UNKNOWN", "/tmp/foo", "-", 0),
+                    (int)TEAL_GUARD_UNKNOWN);
+    snapshot.entry_count = 0; /* 0 READY is not NULL/uninitialized. */
+    KUNIT_EXPECT_EQ(test, (int)teal_guard_classify_snapshot(&snapshot,
+                    "READ", "/etc/hostname", "-", 0),
+                    (int)TEAL_GUARD_UNPROTECTED);
+    snapshot.state = TEAL_GUARD_UNINITIALIZED;
+    KUNIT_EXPECT_EQ(test, (int)teal_guard_classify_snapshot(&snapshot,
+                    "READ", "/etc/hostname", "-", 0),
+                    (int)TEAL_GUARD_UNKNOWN);
+}
+
+static void teal_guard_digest_kunit(struct kunit *test)
+{
+    static const u8 expected[32] = {
+        0x43, 0xae, 0x21, 0xfe, 0xd6, 0xff, 0x55, 0xfb,
+        0x77, 0xae, 0xdc, 0xb3, 0xb4, 0x47, 0x0d, 0x9d,
+        0xe9, 0x25, 0xf0, 0x8f, 0x31, 0x52, 0x05, 0x0e,
+        0xac, 0xd2, 0x6a, 0xdf, 0x53, 0xc3, 0x37, 0x97
+    };
+    static const u8 empty_digest[32] = {
+        0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
+        0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
+        0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
+        0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55
+    };
+    struct teal_mpa_guard_entry entry = {
+        .op_mask = 1, .object_type = TEAL_GUARD_PATH,
+        .match_type = TEAL_GUARD_EXACT, .target_mask = TEAL_GUARD_SOURCE,
+        .path_len = 13, .path = "/etc/hostname",
+    };
+    u8 calculated[32];
+    int rc;
+
+    rc = teal_guard_digest_entries(&entry, 1, calculated);
+    KUNIT_ASSERT_EQ(test, rc, 0);
+    KUNIT_EXPECT_EQ(test, memcmp(expected, calculated, 32), 0);
+    rc = teal_guard_digest_entries(NULL, 0, calculated);
+    KUNIT_ASSERT_EQ(test, rc, 0);
+    KUNIT_EXPECT_EQ(test, memcmp(empty_digest, calculated, 32), 0);
+    entry.op_mask = 2;
+    rc = teal_guard_digest_entries(&entry, 1, calculated);
+    KUNIT_ASSERT_EQ(test, rc, 0);
+    KUNIT_EXPECT_NE(test, memcmp(expected, calculated, 32), 0);
+}
+
+static struct kunit_case teal_guard_staging_cases[] = {
+    KUNIT_CASE(teal_guard_path_validation_kunit),
+    KUNIT_CASE(teal_guard_staging_limits_kunit),
+    KUNIT_CASE(teal_guard_duplicate_and_budget_kunit),
+    KUNIT_CASE(teal_guard_timeout_classification_kunit),
+    KUNIT_CASE(teal_guard_digest_kunit),
+    {}
+};
+static struct kunit_suite teal_guard_staging_suite = {
+    .name = "teal-guard-staging",
+    .test_cases = teal_guard_staging_cases,
+};
+kunit_test_suite(teal_guard_staging_suite);
+#endif
+
+/* BEGIN and ADD use strictly typed attributes; no stringified numeric fields. */
+static int teal_nl_recv_guard_begin(struct sk_buff *skb, struct genl_info *info)
+{
+    struct teal_guard_staging *s;
+    u32 base, next, count, bytes;
+    u64 tx_id;
+    int rc;
+
+    if (!info || !info->attrs[TEAL_ATTR_GUARD_TX_ID] ||
+        !info->attrs[TEAL_ATTR_GUARD_BASE_EPOCH] ||
+        !info->attrs[TEAL_ATTR_EPOCH] ||
+        !info->attrs[TEAL_ATTR_GUARD_COUNT] ||
+        !info->attrs[TEAL_ATTR_GUARD_TOTAL_BYTES] ||
+        !info->attrs[TEAL_ATTR_GUARD_SHA256] ||
+        !info->attrs[TEAL_ATTR_GUARD_FORMAT_VERSION])
+        return -EINVAL;
+    if (nla_len(info->attrs[TEAL_ATTR_GUARD_SHA256]) != 32 ||
+        nla_get_u16(info->attrs[TEAL_ATTR_GUARD_FORMAT_VERSION]) !=
+            TEAL_GUARD_FORMAT_VERSION)
+        return -EINVAL;
+
+    tx_id = nla_get_u64(info->attrs[TEAL_ATTR_GUARD_TX_ID]);
+    base = nla_get_u32(info->attrs[TEAL_ATTR_GUARD_BASE_EPOCH]);
+    next = nla_get_u32(info->attrs[TEAL_ATTR_EPOCH]);
+    count = nla_get_u32(info->attrs[TEAL_ATTR_GUARD_COUNT]);
+    bytes = nla_get_u32(info->attrs[TEAL_ATTR_GUARD_TOTAL_BYTES]);
+    if (!tx_id || !teal_guard_begin_limits_valid(count, bytes))
+        return -E2BIG;
+
+    mutex_lock(&teal_daemon_lifecycle_mutex);
+    mutex_lock(&teal_ticket_update_mutex);
+    rc = teal_nl_check_authorized(info);
+    if (rc)
+        goto out_ticket;
+    mutex_lock(&teal_guard_update_mutex);
+    teal_guard_expire_locked();
+    if (teal_guard_staging) {
+        rc = -EBUSY;
+        goto out_guard;
+    }
+    /* Only a candidate for the next committed epoch can be staged. */
+    if (teal_last_epoch == U32_MAX || base != teal_last_epoch ||
+        next != base + 1 || next == 0) {
+        rc = -ESTALE;
+        goto out_guard;
+    }
+    s = kzalloc(sizeof(*s), GFP_KERNEL);
+    if (!s) {
+        rc = -ENOMEM;
+        goto out_guard;
+    }
+    if (count) {
+        s->entries = kcalloc(count, sizeof(*s->entries), GFP_KERNEL);
+        s->received_bitmap = bitmap_zalloc(count, GFP_KERNEL);
+        if (!s->entries || !s->received_bitmap) {
+            kfree(s->entries);
+            bitmap_free(s->received_bitmap);
+            kfree(s);
+            rc = -ENOMEM;
+            goto out_guard;
+        }
+    }
+    s->tx_id = tx_id;
+    s->base_epoch = base;
+    s->next_epoch = next;
+    s->expected_count = count;
+    s->total_bytes = bytes;
+    s->owner_portid = info->snd_portid;
+    s->owner_generation = atomic64_read(&teal_guard_daemon_generation);
+    s->expires_jiffies = jiffies + TEAL_GUARD_TTL;
+    memcpy(s->expected_sha256,
+           nla_data(info->attrs[TEAL_ATTR_GUARD_SHA256]), 32);
+    teal_guard_staging = s;
+    mod_delayed_work(system_wq, &teal_guard_expiry_work,
+                     TEAL_GUARD_TTL);
+    rc = 0;
+out_guard:
+    mutex_unlock(&teal_guard_update_mutex);
+out_ticket:
+    mutex_unlock(&teal_ticket_update_mutex);
+    mutex_unlock(&teal_daemon_lifecycle_mutex);
+    return rc;
+}
+
+static int teal_nl_recv_guard_add(struct sk_buff *skb, struct genl_info *info)
+{
+    struct teal_guard_staging *s;
+    struct teal_mpa_guard_entry *e;
+    struct nlattr *path_attr;
+    const char *path = NULL;
+    size_t len = 0;
+    u32 idx, op, record_bytes;
+    u8 object_type, match_type, target_mask;
+    int rc;
+
+    if (!info || !info->attrs[TEAL_ATTR_GUARD_TX_ID] ||
+        !info->attrs[TEAL_ATTR_GUARD_INDEX] ||
+        !info->attrs[TEAL_ATTR_GUARD_OP_MASK] ||
+        !info->attrs[TEAL_ATTR_GUARD_OBJECT_TYPE] ||
+        !info->attrs[TEAL_ATTR_GUARD_MATCH_TYPE] ||
+        !info->attrs[TEAL_ATTR_GUARD_TARGET_MASK])
+        return -EINVAL;
+    idx = nla_get_u32(info->attrs[TEAL_ATTR_GUARD_INDEX]);
+    op = nla_get_u32(info->attrs[TEAL_ATTR_GUARD_OP_MASK]);
+    object_type = nla_get_u8(info->attrs[TEAL_ATTR_GUARD_OBJECT_TYPE]);
+    match_type = nla_get_u8(info->attrs[TEAL_ATTR_GUARD_MATCH_TYPE]);
+    target_mask = nla_get_u8(info->attrs[TEAL_ATTR_GUARD_TARGET_MASK]);
+    if (!op || (op & ~TEAL_GUARD_OP_BITS) ||
+        /* RENAME must protect both sides; other actions use SOURCE. */
+        ((op & TEAL_EVENT_RENAME) ?
+         target_mask != (TEAL_GUARD_SOURCE | TEAL_GUARD_DESTINATION) :
+         target_mask != TEAL_GUARD_SOURCE))
+        return -EINVAL;
+    path_attr = info->attrs[TEAL_ATTR_GUARD_PATH];
+    if (object_type == TEAL_GUARD_PATH &&
+        (match_type == TEAL_GUARD_EXACT || match_type == TEAL_GUARD_PREFIX)) {
+        if (!path_attr || nla_len(path_attr) < 2)
+            return -EINVAL;
+        path = nla_data(path_attr);
+        len = nla_len(path_attr) - 1;
+        if (len > TEAL_GUARD_MAX_PATH || path[len] != '\0' ||
+            memchr(path, '\0', len) || !teal_guard_valid_path(path, len))
+            return -EINVAL;
+    } else if (object_type == TEAL_GUARD_ANY &&
+               match_type == TEAL_GUARD_ALL) {
+        if (path_attr)
+            return -EINVAL;
+    } else {
+        /* NETWORK entries are not supported in this first format;
+         * CONNECT must be compiled as ANY/ALL instead.
+         */
+        return -EOPNOTSUPP;
+    }
+    record_bytes = TEAL_GUARD_RECORD_OVERHEAD + len;
+    mutex_lock(&teal_daemon_lifecycle_mutex);
+    mutex_lock(&teal_ticket_update_mutex);
+    rc = teal_nl_check_authorized(info);
+    if (rc)
+        goto out_ticket;
+    mutex_lock(&teal_guard_update_mutex);
+    teal_guard_expire_locked();
+    s = teal_guard_staging;
+    if (!s || s->tx_id != nla_get_u64(info->attrs[TEAL_ATTR_GUARD_TX_ID]) ||
+        s->owner_portid != info->snd_portid ||
+        s->owner_generation != atomic64_read(&teal_guard_daemon_generation)) {
+        rc = -ESTALE;
+        goto out_guard;
+    }
+    if (s->base_epoch != teal_last_epoch) {
+        rc = -ESTALE;
+        goto out_guard;
+    }
+    rc = teal_guard_check_slot(s, idx, record_bytes);
+    if (rc)
+        goto out_guard;
+    e = &s->entries[idx];
+    if (path) {
+        e->path = kmemdup_nul(path, len, GFP_KERNEL);
+        if (!e->path) {
+            rc = -ENOMEM;
+            goto out_guard;
+        }
+    }
+    e->op_mask = op;
+    e->object_type = object_type;
+    e->match_type = match_type;
+    e->target_mask = target_mask;
+    e->path_len = len;
+    s->received_bytes += record_bytes;
+    s->received_count++;
+    set_bit(idx, s->received_bitmap);
+    rc = 0;
+out_guard:
+    mutex_unlock(&teal_guard_update_mutex);
+out_ticket:
+    mutex_unlock(&teal_ticket_update_mutex);
+    mutex_unlock(&teal_daemon_lifecycle_mutex);
+    return rc;
+}
+
+static int teal_nl_recv_guard_abort(struct sk_buff *skb, struct genl_info *info)
+{
+    int rc;
+
+    if (!info || !info->attrs[TEAL_ATTR_GUARD_TX_ID])
+        return -EINVAL;
+    mutex_lock(&teal_daemon_lifecycle_mutex);
+    rc = teal_nl_check_authorized(info);
+    if (rc)
+        goto out_lifecycle;
+    mutex_lock(&teal_guard_update_mutex);
+    teal_guard_expire_locked();
+    if (!teal_guard_staging ||
+        teal_guard_staging->tx_id != nla_get_u64(info->attrs[TEAL_ATTR_GUARD_TX_ID]) ||
+        teal_guard_staging->owner_portid != info->snd_portid ||
+        teal_guard_staging->owner_generation != atomic64_read(&teal_guard_daemon_generation))
+        rc = -ESTALE;
+    else {
+        teal_guard_free_staging_locked();
+        rc = 0;
+    }
+    mutex_unlock(&teal_guard_update_mutex);
+out_lifecycle:
+    mutex_unlock(&teal_daemon_lifecycle_mutex);
+    return rc;
+}
+
+/* STATUS exposes committed digest separately from staged digest. */
+static int teal_nl_recv_guard_status(struct sk_buff *skb, struct genl_info *info)
+{
+    struct teal_guard_staging *s;
+    struct sk_buff *reply;
+    struct teal_mpa_guard_snapshot *active;
+    void *hdr;
+    u32 current_epoch, last_epoch, guard_epoch;
+    u8 guard_state;
+    int rc;
+
+    mutex_lock(&teal_daemon_lifecycle_mutex);
+    mutex_lock(&teal_ticket_update_mutex);
+    rc = teal_nl_check_authorized(info);
+    if (rc)
+        goto out_ticket;
+    mutex_lock(&teal_guard_update_mutex);
+    teal_guard_expire_locked();
+    s = teal_guard_staging;
+    active = rcu_dereference_protected(teal_guard_active,
+                                       lockdep_is_held(&teal_guard_update_mutex));
+    guard_epoch = active ? active->epoch : 0;
+    guard_state = active ? active->state : TEAL_GUARD_UNINITIALIZED;
+    /* Ticket epoch may be zero while disconnected; last_epoch persists. */
+    current_epoch = atomic_read(&teal_current_epoch);
+    last_epoch = teal_last_epoch;
+    reply = genlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
+    if (!reply) {
+        rc = -ENOMEM;
+        goto out_guard;
+    }
+    hdr = genlmsg_put_reply(reply, info, &teal_nl_family, 0,
+                            TEAL_CMD_GUARD_STATUS);
+    if (!hdr) {
+        rc = -EMSGSIZE;
+        goto out_free;
+    }
+    if (nla_put_u32(reply, TEAL_ATTR_EPOCH, current_epoch) ||
+        nla_put_u32(reply, TEAL_ATTR_GUARD_LAST_EPOCH, last_epoch) ||
+        nla_put_u32(reply, TEAL_ATTR_GUARD_EPOCH, guard_epoch) ||
+        nla_put_u8(reply, TEAL_ATTR_GUARD_STATE, guard_state) ||
+        nla_put_u8(reply, TEAL_ATTR_GUARD_STAGED, s ? 1 : 0) ||
+        (active && active->state == TEAL_GUARD_READY &&
+         nla_put(reply, TEAL_ATTR_GUARD_ACTIVE_SHA256, 32,
+                 active->sha256))) {
+        rc = -EMSGSIZE;
+        goto out_cancel;
+    }
+    if (s && (nla_put_u64_64bit(reply, TEAL_ATTR_GUARD_TX_ID,
+                                s->tx_id, TEAL_ATTR_UNSPEC) ||
+              nla_put_u32(reply, TEAL_ATTR_GUARD_BASE_EPOCH, s->base_epoch) ||
+              nla_put_u32(reply, TEAL_ATTR_GUARD_COUNT, s->expected_count) ||
+              nla_put_u32(reply, TEAL_ATTR_GUARD_RECEIVED, s->received_count) ||
+              nla_put_u32(reply, TEAL_ATTR_GUARD_TOTAL_BYTES, s->total_bytes) ||
+              nla_put_u32(reply, TEAL_ATTR_GUARD_NEXT_EPOCH, s->next_epoch) ||
+              nla_put(reply, TEAL_ATTR_GUARD_SHA256, 32, s->expected_sha256))) {
+        rc = -EMSGSIZE;
+        goto out_cancel;
+    }
+    genlmsg_end(reply, hdr);
+    rc = genlmsg_reply(reply, info);
+    goto out_guard;
+out_cancel:
+    genlmsg_cancel(reply, hdr);
+out_free:
+    nlmsg_free(reply);
+out_guard:
+    mutex_unlock(&teal_guard_update_mutex);
+out_ticket:
+    mutex_unlock(&teal_ticket_update_mutex);
+    mutex_unlock(&teal_daemon_lifecycle_mutex);
+    return rc;
+}
+
 /* REGISTERへの通常応答。TEAL_ATTR_EPOCHは次に使用すべきEpoch。 */
 static int teal_nl_send_register_reply(struct genl_info *info, u32 next_epoch)
 {
@@ -1327,6 +2242,11 @@ static int teal_nl_send_register_reply(struct genl_info *info, u32 next_epoch)
     }
 
     ret = nla_put_u32(reply, TEAL_ATTR_EPOCH, next_epoch);
+    if (!ret)
+        ret = nla_put_u16(reply, TEAL_ATTR_GUARD_FORMAT_VERSION,
+                          TEAL_GUARD_FORMAT_VERSION);
+    if (!ret)
+        ret = nla_put_u16(reply, TEAL_ATTR_GUARD_COMMIT_VERSION, 1);
     if (ret) {
         genlmsg_cancel(reply, hdr);
         nlmsg_free(reply);
@@ -1351,6 +2271,7 @@ static void teal_daemon_disconnect_workfn(struct work_struct *work)
     spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
 
     if (disconnected) {
+        teal_guard_discard_staging();
         teal_verified_sessions_clear();
         teal_flush_all_queues();
     }
@@ -1411,6 +2332,9 @@ static int teal_nl_recv_register(struct sk_buff *skb,
 
         next_epoch = teal_last_epoch + 1;
 
+        /* Staged updates belong to the prior daemon generation only. */
+        teal_guard_discard_staging();
+        atomic64_inc(&teal_guard_daemon_generation);
         /* 旧teald接続のセッション台帳も破棄（新規PAM通知で再登録）。 */
         teal_verified_sessions_clear();
         /* 旧セッションのキャッシュと待機要求を破棄 */
@@ -1723,15 +2647,38 @@ static int teal_nl_recv_mode_switch(struct sk_buff *skb, struct genl_info *info)
 
     mode = nla_get_u32(info->attrs[TEAL_ATTR_FLAGS]); // 0: AUDIT, 1: ENFORCE
 
-    /* Rust側のコンフィギュレータを呼び出し、システム全体のモードを更新 */
-    if (teal_configurator) {
-        teal_configurator(mode);
-        pr_info("TEAL: Mode switched to %s by teald.\n", mode == 1 ? "ENFORCE" : "AUDIT");
-    } else {
-        pr_warn("TEAL: Mode switch requested, but no configurator registered.\n");
+    if (mode > 1)
+        return -EINVAL;
+    mutex_lock(&teal_daemon_lifecycle_mutex);
+    mutex_lock(&teal_ticket_update_mutex);
+    mutex_lock(&teal_guard_update_mutex);
+    rc = teal_nl_check_authorized(info);
+    if (rc)
+        goto out_mode;
+    if (mode == 1) {
+        struct teal_mpa_guard_snapshot *active =
+            rcu_dereference_protected(teal_guard_active,
+                             lockdep_is_held(&teal_guard_update_mutex));
+        if (!active || active->state != TEAL_GUARD_READY ||
+            active->epoch != teal_last_epoch ||
+            (u32)atomic_read(&teal_current_epoch) != teal_last_epoch) {
+            rc = -EPERM;
+            goto out_mode;
+        }
     }
-
-    return 0;
+    if (!teal_configurator) {
+        rc = -ENODEV;
+        goto out_mode;
+    }
+    teal_configurator(mode);
+    pr_info("TEAL: Mode switched to %s by teald.\n",
+            mode ? "ENFORCE" : "AUDIT");
+    rc = 0;
+out_mode:
+    mutex_unlock(&teal_guard_update_mutex);
+    mutex_unlock(&teal_ticket_update_mutex);
+    mutex_unlock(&teal_daemon_lifecycle_mutex);
+    return rc;
 }
 
 /*
@@ -1739,58 +2686,157 @@ static int teal_nl_recv_mode_switch(struct sk_buff *skb, struct genl_info *info)
  * teald から新しい Epoch を受け取り、カーネル内のチケットキャッシュおよび
  * 保留中リクエストキューを一括フラッシュして Fast Path を初期化する。
  */
+/* Atomic Guard + policy epoch COMMIT. Stage 2 wire contract:
+ *  - STAGED: EPOCH + GUARD_TX_ID + GUARD_SHA256
+ *  - REUSE (flush): EPOCH + GUARD_REUSE=1 + GUARD_SHA256
+ *  - LEGACY: EPOCH only, allowed strictly before the first READY Guard,
+ *            and never while staging or in ENFORCE mode.
+ * A failure leaves last/current epochs, active Guard and ticket caches intact.
+ * The publication linearization point is inside teal_daemon_state_lock;
+ * lockless readers require (snapshot->epoch == last_epoch), else UNKNOWN.
+ */
 static int teal_nl_recv_policy_update(struct sk_buff *skb,
-                                       struct genl_info *info)
+                                      struct genl_info *info)
 {
+    struct teal_mpa_guard_snapshot *old, *next = NULL;
+    struct teal_guard_staging *stage;
     unsigned long flags;
-    u32 new_epoch, old_epoch;
-    u32 tx_portid;
+    u32 new_epoch, old_epoch, tx_portid;
+    u8 calculated[32];
+    bool reuse, staged_commit, legacy;
     int rc;
 
+    if (!info || !info->attrs[TEAL_ATTR_EPOCH])
+        return -EINVAL;
+    reuse = !!info->attrs[TEAL_ATTR_GUARD_REUSE];
+    staged_commit = !!info->attrs[TEAL_ATTR_GUARD_TX_ID];
+    if (reuse && (nla_get_u8(info->attrs[TEAL_ATTR_GUARD_REUSE]) != 1 ||
+                  staged_commit))
+        return -EINVAL;
+    legacy = !reuse && !staged_commit;
+    if (!legacy && (!info->attrs[TEAL_ATTR_GUARD_SHA256] ||
+        nla_len(info->attrs[TEAL_ATTR_GUARD_SHA256]) != 32))
+        return -EINVAL;
+    if (legacy && info->attrs[TEAL_ATTR_GUARD_SHA256])
+        return -EINVAL;
+    new_epoch = nla_get_u32(info->attrs[TEAL_ATTR_EPOCH]);
+
+    mutex_lock(&teal_daemon_lifecycle_mutex);
+    mutex_lock(&teal_ticket_update_mutex);
+    mutex_lock(&teal_guard_update_mutex);
+    teal_guard_expire_locked();
     rc = teal_nl_check_authorized(info);
     if (rc)
-        return rc;
-    if (!info->attrs[TEAL_ATTR_EPOCH])
-        return -EINVAL;
-
-    new_epoch = nla_get_u32(info->attrs[TEAL_ATTR_EPOCH]);
-    mutex_lock(&teal_ticket_update_mutex);
-
-    old_epoch = (u32)atomic_read(&teal_current_epoch);
-    /* 0(未同期)からもlast_epoch+1のみ許す。旧番号を再使用しない。 */
-    if (new_epoch == 0 || teal_last_epoch == U32_MAX ||
+        goto out_unlock;
+    if (!new_epoch || teal_last_epoch == U32_MAX ||
         new_epoch != teal_last_epoch + 1) {
-        rc = -EINVAL;
+        rc = -ESTALE;
         goto out_unlock;
     }
+    old = rcu_dereference_protected(teal_guard_active,
+                                    lockdep_is_held(&teal_guard_update_mutex));
+    stage = teal_guard_staging;
+    if (legacy) {
+        /* Compatibility for the existing daemon's initial AUDIT sync only.
+         * A READY Guard can NEVER be bypassed by an epoch-only update.
+         */
+        if (old || stage) {
+            rc = -EPERM;
+            goto out_unlock;
+        }
+    } else if (reuse) {
+        if (!old || old->state != TEAL_GUARD_READY ||
+            old->epoch != teal_last_epoch || stage ||
+            memcmp(nla_data(info->attrs[TEAL_ATTR_GUARD_SHA256]),
+                   old->sha256, 32)) {
+            rc = -ESTALE;
+            goto out_unlock;
+        }
+        next = teal_guard_clone_active(old, new_epoch);
+        if (IS_ERR(next)) {
+            rc = PTR_ERR(next);
+            next = NULL;
+            goto out_unlock;
+        }
+    } else {
+        if (!stage || stage->tx_id != nla_get_u64(info->attrs[TEAL_ATTR_GUARD_TX_ID]) ||
+            stage->owner_portid != info->snd_portid ||
+            stage->owner_generation != atomic64_read(&teal_guard_daemon_generation) ||
+            stage->base_epoch != teal_last_epoch ||
+            stage->next_epoch != new_epoch) {
+            rc = -ESTALE;
+            goto out_unlock;
+        }
+        if (stage->received_count != stage->expected_count ||
+            stage->received_bytes != stage->total_bytes) {
+            rc = -ENODATA;
+            goto out_unlock;
+        }
+        rc = teal_guard_digest_entries(stage->entries,
+                                       stage->expected_count, calculated);
+        if (rc)
+            goto out_unlock;
+        if (memcmp(calculated, stage->expected_sha256, 32) ||
+            memcmp(calculated, nla_data(info->attrs[TEAL_ATTR_GUARD_SHA256]), 32)) {
+            rc = -EBADMSG;
+            goto out_unlock;
+        }
+        next = kzalloc(sizeof(*next), GFP_KERNEL);
+        if (!next) {
+            rc = -ENOMEM;
+            goto out_unlock;
+        }
+        next->epoch = new_epoch;
+        next->entry_count = stage->expected_count;
+        next->state = TEAL_GUARD_READY;
+        memcpy(next->sha256, calculated, 32);
+        /* entries and path allocations transferred ONLY after commit checks. */
+    }
 
-    /* 切断との競合に備え、セッションの照合とEpoch公開を
-     * notifierと同じspinlockで不可分に行う。
-     */
+    old_epoch = (u32)atomic_read(&teal_current_epoch);
     spin_lock_irqsave(&teal_daemon_state_lock, flags);
-
     tx_portid = (u32)atomic_read(&teal_daemon_tx_portid);
-
-    if (tx_portid == 0) {
+    if (!tx_portid) {
         rc = -ENOTCONN;
     } else if (genl_info_net(info) != &init_net ||
                info->snd_portid != tx_portid) {
         rc = -EPERM;
     } else {
-        teal_last_epoch = new_epoch;
+        if (staged_commit) {
+            next->entries = stage->entries;
+            stage->entries = NULL;
+            stage->expected_count = 0; /* staging destructor must not free moved paths */
+        }
+        /* Readers accepting either epoch before/after this point must see
+         * a matching immutable snapshot or classify UNKNOWN (DENY).
+         */
+        if (!legacy)
+            rcu_assign_pointer(teal_guard_active, next);
+        WRITE_ONCE(teal_last_epoch, new_epoch);
         atomic_set(&teal_current_epoch, new_epoch);
         rc = 0;
     }
-
     spin_unlock_irqrestore(&teal_daemon_state_lock, flags);
     if (rc)
-        goto out_unlock;
+        goto out_free_next;
 
     teal_flush_all_queues_locked();
-    pr_info("TEAL: Policy epoch %u -> %u\n", old_epoch, new_epoch);
+    if (staged_commit)
+        teal_guard_free_staging_locked();
+    if (next && old)
+        call_rcu(&old->rcu, teal_guard_free_active_rcu);
+    pr_info("TEAL: Guard epoch %u -> %u, %s, entries=%u\n",
+            old_epoch, new_epoch, legacy ? "legacy AUDIT" :
+            reuse ? "REUSE" : "COMMIT", next ? next->entry_count : 0);
+    goto out_unlock;
 
+out_free_next:
+    if (next)
+        teal_guard_free_active_rcu(&next->rcu);
 out_unlock:
+    mutex_unlock(&teal_guard_update_mutex);
     mutex_unlock(&teal_ticket_update_mutex);
+    mutex_unlock(&teal_daemon_lifecycle_mutex);
     return rc;
 }
 
@@ -3367,6 +4413,19 @@ static void __exit teal_exit(void)
     // これをしないと、判定待ちの sh や cat が rmmod 後にフリーズします
     teal_verified_sessions_clear();
     teal_flush_all_queues();
+    cancel_delayed_work_sync(&teal_guard_expiry_work);
+    teal_guard_discard_staging();
+    {
+        struct teal_mpa_guard_snapshot *active;
+
+        mutex_lock(&teal_guard_update_mutex);
+        active = rcu_dereference_protected(teal_guard_active,
+                                  lockdep_is_held(&teal_guard_update_mutex));
+        RCU_INIT_POINTER(teal_guard_active, NULL);
+        if (active)
+            call_rcu(&active->rcu, teal_guard_free_active_rcu);
+        mutex_unlock(&teal_guard_update_mutex);
+    }
 
     // 2. Netlink 通知の解除
     netlink_unregister_notifier(&teal_nl_nb);

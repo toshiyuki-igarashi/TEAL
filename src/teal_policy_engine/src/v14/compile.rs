@@ -701,6 +701,97 @@ fn validate_pre_approval_for_rule(
     Ok(())
 }
 
+/// effect と MPA / pre_approval の組み合わせを検証する。
+///
+/// - MPA は need_approval 専用（かつ必須、threshold > 0）。
+/// - pre_approval.enabled は allow / need_approval のみ許可。
+/// - pre_approval.enabled=false は deny / audit_only でも許容する。
+fn validate_rule_approval_semantics(
+    rule_id: &str,
+    effect: Effect,
+    has_mpa: bool,
+    mpa_threshold_positive: bool,
+    pre_approval_enabled: bool,
+) -> Result<(), CompileError> {
+    match effect {
+        Effect::NeedApproval => {
+            if !has_mpa {
+                return Err(CompileError::InvalidValue(format!(
+                    "rule {}: effect=need_approval requires mpa configuration",
+                    rule_id
+                )));
+            }
+            if !mpa_threshold_positive {
+                return Err(CompileError::InvalidValue(format!(
+                    "rule {}: mpa.threshold must be >= 1 for effect=need_approval",
+                    rule_id
+                )));
+            }
+        }
+        Effect::Allow | Effect::Deny | Effect::AuditOnly => {
+            if has_mpa {
+                return Err(CompileError::InvalidValue(format!(
+                    "rule {}: mpa is only allowed when effect=need_approval",
+                    rule_id
+                )));
+            }
+        }
+    }
+
+    if pre_approval_enabled && matches!(effect, Effect::Deny | Effect::AuditOnly) {
+        return Err(CompileError::InvalidValue(format!(
+            "rule {}: pre_approval.enabled=true requires effect=allow or need_approval",
+            rule_id
+        )));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod approval_semantics_tests {
+    use super::*;
+
+    fn valid(effect: Effect, has_mpa: bool, threshold_ok: bool, pre: bool) -> bool {
+        validate_rule_approval_semantics("test-rule", effect, has_mpa, threshold_ok, pre).is_ok()
+    }
+
+    #[test]
+    fn allow_may_enable_preapproval_but_not_mpa() {
+        assert!(valid(Effect::Allow, false, false, false));
+        assert!(valid(Effect::Allow, false, false, true));
+        assert!(!valid(Effect::Allow, true, true, false));
+        assert!(!valid(Effect::Allow, true, true, true));
+    }
+
+    #[test]
+    fn need_approval_requires_valid_mpa_and_may_enable_preapproval() {
+        assert!(valid(Effect::NeedApproval, true, true, false));
+        assert!(valid(Effect::NeedApproval, true, true, true));
+        assert!(!valid(Effect::NeedApproval, false, false, false));
+        assert!(!valid(Effect::NeedApproval, true, false, false));
+    }
+
+    #[test]
+    fn deny_and_audit_only_cannot_enable_mpa_or_preapproval() {
+        for effect in [Effect::Deny, Effect::AuditOnly] {
+            assert!(valid(effect, false, false, false));
+            assert!(!valid(effect, false, false, true));
+            assert!(!valid(effect, true, true, false));
+            assert!(!valid(effect, true, true, true));
+        }
+    }
+
+    #[test]
+    fn errors_identify_rule_and_invalid_configuration() {
+        let err =
+            validate_rule_approval_semantics("vm-allow-read", Effect::Allow, true, true, false)
+                .unwrap_err();
+        assert!(matches!(err, CompileError::InvalidValue(msg) if
+            msg.contains("vm-allow-read") && msg.contains("mpa")));
+    }
+}
+
 /// RawRule(v1.4) -> CompiledRule 1件
 ///
 /// - roles: roles.json からコンパイル済みロール定義（未知ロール検出などに使う）
@@ -714,7 +805,15 @@ pub fn compile_rule_v14(
     roles: &CompiledRoles,
     warnings: &mut CompileWarnings,
 ) -> Result<CompiledRule, CompileError> {
-    // --- semantic validate (pre_approval) ---
+    // --- semantic validate (effect / mpa / pre_approval) ---
+    validate_rule_approval_semantics(
+        &rule.id,
+        rule.effect,
+        rule.mpa.is_some(),
+        rule.mpa.as_ref().is_some_and(|m| m.threshold > 0),
+        rule.pre_approval.as_ref().is_some_and(|p| p.enabled),
+    )?;
+
     if let Some(p) = &rule.pre_approval {
         validate_pre_approval_for_rule(&rule.id, p, warnings)?;
     }
@@ -727,27 +826,11 @@ pub fn compile_rule_v14(
 
     // --- approval / audit ---
 
-    // 1. RawRule から値を取り出し、デフォルト値を適用
-    //    スキーマで "need_approval" 時は必須だが、Rust上は Option なので unwrap_or で安全策をとる
-    let raw_threshold = rule.mpa.as_ref().map(|m| m.threshold).unwrap_or(0);
-    let raw_roles = rule
-        .mpa
-        .as_ref()
-        .map(|m| m.approver_roles.clone())
-        .unwrap_or_default();
-
-    // 2. MpaMatcher の構築
-    //    threshold が 1以上、または required_roles が指定されている場合に MpaMatcher を作成する
-    //    (effect=Deny でも値が書いてあれば構造体には詰める方針)
-    let mpa: Option<MpaMatcher> = if raw_threshold > 0 || !raw_roles.is_empty() {
-        Some(MpaMatcher {
-            threshold: raw_threshold,
-            // Vec<String> -> HashSet<String> へ変換
-            approver_roles: raw_roles.into_iter().collect(),
-        })
-    } else {
-        None
-    };
+    // MPAはneed_approval専用。検証済みの定義だけをIRへ反映する。
+    let mpa: Option<MpaMatcher> = rule.mpa.as_ref().map(|raw| MpaMatcher {
+        threshold: raw.threshold,
+        approver_roles: raw.approver_roles.iter().cloned().collect(),
+    });
 
     // AuditCfg も RawRule 側に無いので、安全側デフォルトを採用
     let audit: AuditCfg = AuditCfg::default();
